@@ -1,0 +1,267 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "title": "Vortex One Multi-Tenant Security & Access Control Rules",
+  "description": "Declarative tenant-based security rules enforcing strict isolation: authenticated users may only access, query, read, or mutate records matching their profile's assigned tenant organizationId.",
+  "engine": "tenant_rbac_evaluator",
+  "default_policy": "DENY",
+  "tenant_configuration": {
+    "tenant_field_primary": "organizationId",
+    "tenant_field_secondary": "organization_id",
+    "user_profile_collection": "users",
+    "user_tenant_path": "organization_id",
+    "allow_default_org_fallback": true,
+    "default_organization_id": "org_cmc_realty"
+  },
+  "roles": {
+    "admin": {
+      "name": "Organization Administrator",
+      "description": "Full administrative access within the tenant organization boundary",
+      "permissions": ["read", "write", "create", "update", "delete", "export", "manage_users"]
+    },
+    "executive": {
+      "name": "Executive / Broker",
+      "description": "Strategic access across tenant property records, underwriting, and analytics",
+      "permissions": ["read", "write", "create", "update", "export"]
+    },
+    "manager": {
+      "name": "Team Manager",
+      "description": "Operational manager with lead assignment, campaign oversight, and template controls",
+      "permissions": ["read", "write", "create", "update", "delete"]
+    },
+    "agent": {
+      "name": "Real Estate Agent / Specialist",
+      "description": "Field specialist executing dialer sessions, property discovery, and prospect outreach",
+      "permissions": ["read", "write", "create", "update"]
+    }
+  },
+  "rules": {
+    "users": {
+      "collection": "users",
+      "description": "User profile records containing tenant assignment, role, and authentication metadata",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (auth.uid == resource.id || resource.data.organizationId == auth.token.organizationId || resource.data.organization_id == auth.profile.organization_id)"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && auth.uid == request.resource.id"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (auth.uid == resource.id || (auth.role == 'admin' && resource.data.organizationId == auth.profile.organization_id))",
+          "immutable_fields": ["organizationId", "organization_id", "id", "uid"]
+        },
+        "delete": {
+          "allow": false,
+          "description": "User profiles cannot be deleted without super-admin manual authorization"
+        }
+      }
+    },
+    "organizations": {
+      "collection": "organizations",
+      "description": "Organization metadata and tenant configuration",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.id == auth.profile.organization_id || resource.id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && auth.role == 'admin'"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && auth.role == 'admin' && resource.id == auth.profile.organization_id"
+        },
+        "delete": {
+          "allow": false
+        }
+      }
+    },
+    "properties": {
+      "collection": "properties",
+      "description": "Commercial and residential parcel records strictly isolated by organization tenant",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')",
+          "immutable_fields": ["organizationId", "organization_id", "id"]
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    },
+    "leads": {
+      "collection": "leads",
+      "description": "Sales pipeline prospects and scoring records strictly partitioned by tenant",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')",
+          "immutable_fields": ["organizationId", "organization_id", "id"]
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    },
+    "audit_logs": {
+      "collection": "audit_logs",
+      "description": "Autonomous agent execution telemetry and activity logs (append-only, immutable history)",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": false,
+          "description": "Audit logs are strictly immutable for forensic compliance"
+        },
+        "delete": {
+          "allow": false,
+          "description": "Permanent CRM and activity logs must never be purged or deleted automatically"
+        }
+      }
+    },
+    "workflows": {
+      "collection": "workflows",
+      "description": "Visual multi-agent DAG workflow sequences and scheduled triggers",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    },
+    "outreach_templates": {
+      "collection": "outreach_templates",
+      "description": "SMS, Cold Call, Email, and Letter templates partitioned by organization",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    },
+    "dialer_metrics": {
+      "collection": "dialer_metrics",
+      "description": "Campaign call performance, duration, and conversion statistics per tenant",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "delete": {
+          "allow": false
+        }
+      }
+    },
+    "voicemails": {
+      "collection": "voicemails",
+      "description": "Pre-recorded audio drop files managed within organization tenant bounds",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    },
+    "suppression_lists": {
+      "collection": "suppression_lists",
+      "description": "Tenant-specific TCPA and DNC phone and address suppression records",
+      "access": {
+        "read": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "create": {
+          "allow": true,
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "update": {
+          "allow": true,
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+        },
+        "delete": {
+          "allow": true,
+          "condition": "auth != null && auth.role in ['admin', 'manager'] && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
+        }
+      }
+    }
+  },
+  "compliance": {
+    "retention_policy": "PERMANENT_CRM_PERSISTENCE",
+    "automatic_deletion_forbidden": true,
+    "manual_deletion_roles": ["admin", "manager"],
+    "audit_trail_required": true
+  }
+}

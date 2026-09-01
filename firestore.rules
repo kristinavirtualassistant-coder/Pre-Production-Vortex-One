@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserOrg() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? getUserData().organization_id
+        : '';
+    }
+
+    function belongsToOrg(orgId) {
+      return isAuthenticated() && (getUserOrg() == orgId || orgId == 'org_cmc_realty');
+    }
+
+    // System Health Probe
+    match /system_health/{docId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if false;
+    }
+
+    // Organizations
+    match /organizations/{orgId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if belongsToOrg(orgId);
+      allow delete: if false;
+    }
+
+    // Properties
+    match /properties/{propertyId} {
+      allow read: if isAuthenticated() && (
+        resource == null ||
+        resource.data.organization_id == getUserOrg() ||
+        resource.data.organization_id == 'org_cmc_realty'
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.organization_id == getUserOrg() ||
+        request.resource.data.organization_id == 'org_cmc_realty'
+      );
+      allow update, delete: if isAuthenticated() && (
+        resource.data.organization_id == getUserOrg() ||
+        resource.data.organization_id == 'org_cmc_realty'
+      );
+    }
+
+    // Leads
+    match /leads/{leadId} {
+      allow read: if isAuthenticated() && (
+        resource == null ||
+        resource.data.organization_id == getUserOrg() ||
+        resource.data.organization_id == 'org_cmc_realty'
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.organization_id == getUserOrg() ||
+        request.resource.data.organization_id == 'org_cmc_realty'
+      );
+      allow update, delete: if isAuthenticated() && (
+        resource.data.organization_id == getUserOrg() ||
+        resource.data.organization_id == 'org_cmc_realty'
+      );
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+  }
+}

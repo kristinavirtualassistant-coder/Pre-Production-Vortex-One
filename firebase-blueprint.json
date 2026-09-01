@@ -1,0 +1,164 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User identity, role, and organization tenant association",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "executive", "manager", "agent"] },
+        "organization_id": { "type": "string" },
+        "organization_name": { "type": "string" },
+        "tenant_ids": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "organization_id"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Multi-tenant company or real estate firm account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "created_by": { "type": "string" },
+        "plan": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "created_by"]
+    },
+    "PropertyRecord": {
+      "title": "PropertyRecord",
+      "description": "Commercial or residential real estate parcel with owner intelligence",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organization_id": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "zip": { "type": "string" },
+        "county": { "type": "string" },
+        "apn": { "type": "string" },
+        "property_type": { "type": "string" },
+        "estimated_value": { "type": "number" },
+        "owner_name": { "type": "string" },
+        "owner_id": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "organization_id", "address"]
+    },
+    "LeadRecord": {
+      "title": "LeadRecord",
+      "description": "Qualified property prospect with score and contact pipeline status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organization_id": { "type": "string" },
+        "property_id": { "type": "string" },
+        "property_address": { "type": "string" },
+        "owner_name": { "type": "string" },
+        "status": { "type": "string" },
+        "qualification_score": { "type": "number" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "organization_id", "property_address", "owner_name"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Multi-agent autonomous action and telemetry audit trail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organization_id": { "type": "string" },
+        "agent": { "type": "string" },
+        "action": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "organization_id", "action", "timestamp"]
+    },
+    "TaskRecord": {
+      "title": "TaskRecord",
+      "description": "System tasks and agent assignments",
+      "type": "object",
+      "properties": {
+        "task_id": { "type": "string" },
+        "objective": { "type": "string" },
+        "priority": { "type": "string" },
+        "assigned_agent": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" },
+        "due_date": { "type": "string" }
+      },
+      "required": ["task_id", "objective", "priority", "assigned_agent", "status", "created_at"]
+    },
+    "VoicemailFile": {
+      "title": "VoicemailFile",
+      "description": "Pre-recorded voicemail files",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organization_id": { "type": "string" },
+        "label": { "type": "string" },
+        "url": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "organization_id", "label", "url", "created_at"]
+    },
+    "DialerMetrics": {
+      "title": "DialerMetrics",
+      "description": "Dialer campaign metrics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organization_id": { "type": "string" },
+        "campaign_id": { "type": "string" },
+        "call_volume": { "type": "number" },
+        "success_rate": { "type": "number" },
+        "avg_talk_time": { "type": "number" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "organization_id", "campaign_id", "call_volume", "success_rate", "avg_talk_time", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile with role and organization tenant membership"
+    },
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Organization metadata and tenant configuration"
+    },
+    "/properties/{propertyId}": {
+      "schema": "PropertyRecord",
+      "description": "Tenant-isolated property intelligence records"
+    },
+    "/leads/{leadId}": {
+      "schema": "LeadRecord",
+      "description": "Tenant-isolated sales and acquisition leads"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Tenant-isolated multi-agent audit logs"
+    },
+    "/tasks/{taskId}": {
+      "schema": "TaskRecord",
+      "description": "Tenant-isolated task records"
+    },
+    "/voicemails/{voicemailId}": {
+      "schema": "VoicemailFile",
+      "description": "Tenant-isolated voicemail library"
+    },
+    "/dialer_metrics/{metricId}": {
+      "schema": "DialerMetrics",
+      "description": "Tenant-isolated dialer metrics"
+    }
+  }
+}

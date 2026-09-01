@@ -1,0 +1,7 @@
+{
+  "name": "Vortex One Multi-Agent Intelligence",
+  "description": "Enterprise multi-agent AI orchestration platform for property intelligence, CRM, research, dialing, and automated workflows.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
