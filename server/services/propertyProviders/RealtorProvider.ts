@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Realtor.com Open Property Search Provider
  * Off-market listings, tax records, neighborhood trends, and multi-family property details.
@@ -26,7 +27,7 @@ export class RealtorProvider implements IPropertyDataProvider {
   public async search(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {
     const searchLoc = query.address || query.apn || `${query.city || 'Costa Mesa'}, ${query.state || 'CA'}${query.zip ? ' ' + query.zip : ''}`;
     const retrievedAt = new Date().toISOString();
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const limit = query.limit || 10;
 
     let propsList: any[] = [];

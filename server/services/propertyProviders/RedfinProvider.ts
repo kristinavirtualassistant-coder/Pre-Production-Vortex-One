@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Redfin Open Property Search & Valuation Provider
  * Redfin Estimate, Walk Score, lot size, multi-family unit counts, and market trends.
@@ -26,7 +27,7 @@ export class RedfinProvider implements IPropertyDataProvider {
   public async search(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {
     const searchLoc = query.address || query.apn || `${query.city || 'Costa Mesa'}, ${query.state || 'CA'}${query.zip ? ' ' + query.zip : ''}`;
     const retrievedAt = new Date().toISOString();
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const limit = query.limit || 10;
 
     let propsList: any[] = [];

@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../services/organizationContext';
 /**
  * Vortex One - Standardized Agent Tool Execution Layer
  */
@@ -366,7 +367,7 @@ export const TOOLS: Record<string, ToolDefinition> = {
       enforce_dnc: 'boolean',
     },
     execute: async (args, context) => {
-      const orgId = context.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId(context.organizationId);
       if (args.sync_from_production_feed || !args.records || args.records.length === 0) {
         const result = await DataImportService.syncProductionCrmSource(orgId, {
           autoScoreLeads: args.auto_score_leads ?? true,

@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - San Diego County (SanGIS / SANDAG) GIS MapServer Provider
  * Queries official San Diego County Assessor parcel rolls and cadastral spatial records.
@@ -130,7 +131,7 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
       return [];
     }
 
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {
@@ -322,7 +323,7 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
     const features = data.features || [];
     if (features.length === 0) return [];
 
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {

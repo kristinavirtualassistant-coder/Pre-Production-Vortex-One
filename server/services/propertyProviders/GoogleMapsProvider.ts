@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Google Maps Geocoding & Places API Provider
  * High-accuracy address resolution, geocoding coordinates, place details, and county boundary verification.
@@ -55,7 +56,7 @@ export class GoogleMapsProvider implements IPropertyDataProvider {
     }
 
     const resultsList = data.results || [];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
 
     return resultsList.map((item: any, idx: number): NormalizedPropertyResult => {
       const placeId = item.place_id || `gmaps_${idx}_${Date.now()}`;

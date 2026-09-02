@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Unified Property Data Provider Architecture
  * Orchestrates government GIS/Assessor and commercial data providers.
@@ -347,7 +348,7 @@ export class UnifiedPropertyDataProvider {
         const shouldPersist = query.persist !== false;
 
         if (shouldPersist && results.length > 0) {
-          const persisted = await this.persistResults(results, query.organizationId || 'org_cmc_realty');
+          const persisted = await this.persistResults(results, requireOrganizationId(query.organizationId));
           persistedCount = persisted.savedCount;
           newlyDiscovered = persisted.newlyDiscovered;
         }
@@ -369,7 +370,7 @@ export class UnifiedPropertyDataProvider {
     );
 
     if (!isCached && result.newlyDiscovered?.length > 0) {
-      const orgId = query.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId(query.organizationId);
       void Promise.all(result.newlyDiscovered.map((item) =>
         externalWebhookService.publish(
           orgId,

@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - ZoomInfo Corporate Entity & Owner Intelligence API Provider
  * Resolves commercial property ownership entities (LLCs, Corporations, REITs, Family Offices) to C-suite contacts & decision-makers.
@@ -56,7 +57,7 @@ export class ZoomInfoProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const list = Array.isArray(data.companies) ? data.companies : [data];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
 
     return list.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.companyId || `zoominfo_${idx}_${Date.now()}`;

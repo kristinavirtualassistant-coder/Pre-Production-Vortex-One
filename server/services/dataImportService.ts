@@ -1,3 +1,4 @@
+import { requireOrganizationId } from './organizationContext';
 /**
  * Vortex One - Automated CRM & Property Data Import Reconciliation Service
  * Reconciles real property and owner records from production CRM sources into PostgreSQL / datastore
@@ -124,7 +125,7 @@ export class DataImportService {
       options = indexOrOptions;
       index = options.recordIndex ?? 0;
     }
-    const targetOrgId = (options.organizationId || 'org_cmc_realty').trim();
+    const targetOrgId = (requireOrganizationId(options.organizationId)).trim();
     const errors: string[] = [];
     const warnings: string[] = [];
     const normalizedPhones: Array<{ original: string; normalized: string; formatted: string; isDnc: boolean; isValid: boolean }> = [];
@@ -1462,7 +1463,7 @@ export class DataImportService {
    * 5. Owner rollup metrics (properties_owned_count, total_portfolio_value, total_portfolio_equity).
    */
   public static async validateReferentialIntegrity(
-    organizationId: string = 'org_cmc_realty'
+    organizationId: string
   ): Promise<{
     isValid: boolean;
     organization_id: string;
@@ -1485,7 +1486,7 @@ export class DataImportService {
     }>;
     validated_at: string;
   }> {
-    const cleanOrgId = organizationId ? organizationId.trim() : 'org_cmc_realty';
+    const cleanOrgId = requireOrganizationId(organizationId);
     const pool = getPgPool();
 
     let properties: Property[] = [];

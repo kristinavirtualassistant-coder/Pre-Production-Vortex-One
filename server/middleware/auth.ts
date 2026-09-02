@@ -24,6 +24,10 @@ export class AuthorizationError extends Error {
   }
 }
 
+export function shouldBypassApiAuth(path: string): boolean {
+  return path === '/health' || path.startsWith('/telephony/webhook/');
+}
+
 export function resolveAuthenticatedOrganizationId(
   dbUser: AuthRequest['dbUser'],
   requestedOrganizationId?: string,
@@ -37,6 +41,46 @@ export function resolveAuthenticatedOrganizationId(
   }
 
   return dbUser.organization_id;
+}
+
+/**
+ * Make the authenticated organization the only tenant context available to
+ * downstream handlers. Legacy handlers still read organizationId from query,
+ * body, or headers, so those values must be validated and then canonicalized.
+ */
+export function canonicalizeOrganizationContext(req: AuthRequest): string {
+  const organizationId = resolveAuthenticatedOrganizationId(req.dbUser);
+
+  const queryOrganizationId = req.query.organizationId;
+  const body = req.body && typeof req.body === 'object' ? req.body : undefined;
+  const bodyOrganizationId = body?.organizationId;
+  const bodyOrganization_id = body?.organization_id;
+  const headerOrganizationId = req.headers['x-organization-id'];
+
+  const requestedValues = [
+    queryOrganizationId,
+    bodyOrganizationId,
+    bodyOrganization_id,
+    headerOrganizationId,
+  ].flatMap((value) => Array.isArray(value) ? value : [value]).filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+
+  if (requestedValues.some((value) => value !== organizationId)) {
+    throw new AuthorizationError('Forbidden: Organization does not match authenticated user');
+  }
+
+  // Preserve compatibility with legacy handlers while preventing tenant
+  // selection by request payloads after authentication has succeeded.
+  req.headers['x-organization-id'] = organizationId;
+  req.query.organizationId = organizationId;
+
+  if (body) {
+    body.organizationId = organizationId;
+    body.organization_id = organizationId;
+  }
+
+  return organizationId;
 }
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -73,7 +117,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       }
 
       req.dbUser = rows[0];
-      resolveAuthenticatedOrganizationId(req.dbUser, requestedOrgId);
+      canonicalizeOrganizationContext(req);
     } finally {
       client.release();
     }

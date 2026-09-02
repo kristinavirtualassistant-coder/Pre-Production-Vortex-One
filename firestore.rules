@@ -21,27 +21,28 @@ service cloud.firestore {
     }
 
     function belongsToOrg(orgId) {
-      return isAuthenticated() && (getUserOrg() == orgId || orgId == 'org_cmc_realty');
+      return isAuthenticated() && getUserOrg() == orgId;
     }
 
     // System Health Probe
     match /system_health/{docId} {
       allow read: if true;
-      allow write: if isAuthenticated();
+      allow write: if false;
     }
 
     // User profiles
     match /users/{userId} {
-      allow read: if true;
-      allow create, update: if isAuthenticated();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserOrg() == resource.data.organization_id));
+      allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.organization_id == getUserOrg();
+      allow update: if isAuthenticated() && request.auth.uid == userId && request.resource.data.organization_id == resource.data.organization_id && request.resource.data.role == resource.data.role;
       allow delete: if false;
     }
 
     // Organizations
     match /organizations/{orgId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if belongsToOrg(orgId);
+      allow read: if belongsToOrg(orgId);
+      allow create: if false;
+      allow update: if belongsToOrg(orgId) && getUserData().role == 'admin';
       allow delete: if false;
     }
 
@@ -49,40 +50,32 @@ service cloud.firestore {
     match /properties/{propertyId} {
       allow read: if isAuthenticated() && (
         resource == null ||
-        resource.data.organization_id == getUserOrg() ||
-        resource.data.organization_id == 'org_cmc_realty'
+        resource.data.organization_id == getUserOrg()
       );
       allow create: if isAuthenticated() && (
-        request.resource.data.organization_id == getUserOrg() ||
-        request.resource.data.organization_id == 'org_cmc_realty'
+        request.resource.data.organization_id == getUserOrg()
       );
-      allow update, delete: if isAuthenticated() && (
-        resource.data.organization_id == getUserOrg() ||
-        resource.data.organization_id == 'org_cmc_realty'
-      );
+      allow update: if isAuthenticated() && resource.data.organization_id == getUserOrg() && request.resource.data.organization_id == resource.data.organization_id;
+      allow delete: if isAuthenticated() && getUserData().role in ['admin', 'manager'] && resource.data.organization_id == getUserOrg();
     }
 
     // Leads
     match /leads/{leadId} {
       allow read: if isAuthenticated() && (
         resource == null ||
-        resource.data.organization_id == getUserOrg() ||
-        resource.data.organization_id == 'org_cmc_realty'
+        resource.data.organization_id == getUserOrg()
       );
       allow create: if isAuthenticated() && (
-        request.resource.data.organization_id == getUserOrg() ||
-        request.resource.data.organization_id == 'org_cmc_realty'
+        request.resource.data.organization_id == getUserOrg()
       );
-      allow update, delete: if isAuthenticated() && (
-        resource.data.organization_id == getUserOrg() ||
-        resource.data.organization_id == 'org_cmc_realty'
-      );
+      allow update: if isAuthenticated() && resource.data.organization_id == getUserOrg() && request.resource.data.organization_id == resource.data.organization_id;
+      allow delete: if isAuthenticated() && getUserData().role in ['admin', 'manager'] && resource.data.organization_id == getUserOrg();
     }
 
     // Audit Logs
     match /audit_logs/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() && (resource.data.organization_id == getUserOrg() || resource.data.organizationId == getUserOrg());
+      allow create: if isAuthenticated() && (request.resource.data.organization_id == getUserOrg() || request.resource.data.organizationId == getUserOrg());
       allow update, delete: if false;
     }
   }

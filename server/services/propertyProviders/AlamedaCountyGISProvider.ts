@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Alameda County (East Bay) GIS MapServer Provider
  * Queries official Alameda County Community Development & Assessor parcel rolls, valuations, and spatial records.
@@ -112,7 +113,7 @@ export class AlamedaCountyGISProvider implements IPropertyDataProvider {
     }
 
 
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {
@@ -270,7 +271,7 @@ export class AlamedaCountyGISProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const features = data.features || [];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {

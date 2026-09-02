@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Los Angeles County Office of the Assessor & GIS MapServer Provider
  * Queries official Assessor parcel rolls, structural characteristics, and roll valuations.
@@ -96,7 +97,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
 
 
       const features = data.features || [];
-      const orgId = query.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId(query.organizationId);
       const retrievedAt = new Date().toISOString();
 
       return features.map((feat: any, idx: number): NormalizedPropertyResult => {

@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Property & Owner Data Synthesis Helpers
  * Generates realistic unredacted owner names, entity types, and unique contact details
@@ -136,7 +137,7 @@ export function generateSyntheticCountyParcels(
   endpointUrl: string
 ): NormalizedPropertyResult[] {
   const cleanCounty = countyName.replace(/ County$/i, '').trim();
-  const orgId = query.organizationId || 'org_cmc_realty';
+  const orgId = requireOrganizationId(query.organizationId);
   const retrievedAt = new Date().toISOString();
 
   // County-specific presets

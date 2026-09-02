@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - ArcGIS Server REST Property & GIS API Provider
  * Universal ArcGIS Server MapServer / FeatureServer REST endpoint query engine for county cadastral layers.
@@ -60,7 +61,7 @@ export class ArcGISServerProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const features = data.features || [];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {
       const attrs = feat.attributes || {};

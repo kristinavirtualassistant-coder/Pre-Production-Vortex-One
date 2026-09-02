@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Zillow Open Property & Zestimate Search Provider
  * Off-market valuation, MLS listing status, Zestimates, and multi-family characteristics.
@@ -27,7 +28,7 @@ export class ZillowProvider implements IPropertyDataProvider {
   public async search(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {
     const searchLoc = query.address || query.apn || `${query.city || 'Costa Mesa'}, ${query.state || 'CA'}${query.zip ? ' ' + query.zip : ''}`;
     const retrievedAt = new Date().toISOString();
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const limit = query.limit || 10;
 
     let propsList: any[] = [];

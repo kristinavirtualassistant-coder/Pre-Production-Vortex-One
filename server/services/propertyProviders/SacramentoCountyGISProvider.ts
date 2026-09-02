@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Sacramento County (Capital Region) GIS MapServer Provider
  * Queries official Sacramento County Assessor & Regional GIS parcel rolls, valuations, and spatial records.
@@ -113,7 +114,7 @@ export class SacramentoCountyGISProvider implements IPropertyDataProvider {
       throw new Error('No features returned from Sacramento MapServer');
     }
 
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {
@@ -271,7 +272,7 @@ export class SacramentoCountyGISProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const features = data.features || [];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {

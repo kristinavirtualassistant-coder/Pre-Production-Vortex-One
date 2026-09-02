@@ -7,6 +7,7 @@ import {
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   User as FirebaseUser,
   updateProfile,
 } from 'firebase/auth';
@@ -137,6 +138,7 @@ export {
   createUserWithEmailAndPassword,
   firebaseSignOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   updateProfile,
   GoogleAuthProvider,
 };
