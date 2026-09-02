@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'los_angeles_county_gis';
@@ -32,8 +32,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Los Angeles', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async queryLAEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

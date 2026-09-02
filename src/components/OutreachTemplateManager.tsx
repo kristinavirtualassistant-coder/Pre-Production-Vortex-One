@@ -79,7 +79,7 @@ const CATEGORY_LABELS: Record<TemplateCategory, string> = {
 const DEFAULT_OUTREACH_TEMPLATES: OutreachTemplate[] = [
   {
     id: 'tpl_email_absentee_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'Absentee Landlord Multi-Family Management Proposal',
     description: 'High-touch value proposition targeting out-of-area multi-family owners with estimated equity over $1M.',
     channel: 'email',
@@ -129,7 +129,7 @@ Email: {{agent_email}}`,
   },
   {
     id: 'tpl_sms_absentee_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'Absentee Owner Quick SMS Inquiry (Costa Mesa / OC)',
     description: 'Concise, TCPA-compliant SMS text to initiate conversational interest with absentee landlords.',
     channel: 'sms',
@@ -150,7 +150,7 @@ Email: {{agent_email}}`,
   },
   {
     id: 'tpl_email_high_equity_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'High-Equity Portfolio Cash-Flow Optimization',
     description: 'Strategic proposal highlighting cap rate optimization and operating expense reduction.',
     channel: 'email',
@@ -194,7 +194,7 @@ Warm regards,
   },
   {
     id: 'tpl_sms_off_market_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'Off-Market Acquisition & Valuation Inquiry',
     description: 'Fast-response SMS inquiring if owner would consider off-market acquisition or management review.',
     channel: 'sms',
@@ -215,7 +215,7 @@ Warm regards,
   },
   {
     id: 'tpl_email_tax_delinq_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'County Assessor Valuation & Tax Relief Consultation',
     description: 'Educates owners on recent county tax assessments and potential operational expense reductions.',
     channel: 'email',
@@ -258,7 +258,7 @@ Sincerely,
   },
   {
     id: 'tpl_call_script_01',
-    organization_id: 'org_cmc_realty',
+    organization_id: '',
     name: 'Cold Inbound/Outbound Discovery Call Script',
     description: 'Structured telephony pitch script for multi-family property owners in Costa Mesa/Orange County.',
     channel: 'call_script',
@@ -300,7 +300,7 @@ Sincerely,
 
 export const OutreachTemplateManager: React.FC<OutreachTemplateManagerProps> = ({
   onSelectTemplateForOutreach,
-  organizationId = 'org_cmc_realty',
+  organizationId = '',
   className = '',
 }) => {
   const [templates, setTemplates] = useState<OutreachTemplate[]>(DEFAULT_OUTREACH_TEMPLATES);

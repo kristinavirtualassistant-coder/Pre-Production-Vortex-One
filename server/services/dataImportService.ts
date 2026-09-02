@@ -175,7 +175,7 @@ export class DataImportService {
       normalizedRaw.city ||
       normalizedRaw.property_city ||
       normalizedRaw.municipality ||
-      'Costa Mesa'
+      ''
     ).toString().trim();
 
     const state = (
@@ -188,33 +188,21 @@ export class DataImportService {
       normalizedRaw.zip ||
       normalizedRaw.zip_code ||
       normalizedRaw.postal_code ||
-      '92627'
+      ''
     ).toString().trim();
 
     const county = (
       normalizedRaw.county ||
       normalizedRaw.jurisdiction ||
-      'Orange County'
+      ''
     ).toString().trim();
 
     if (!apn) {
-      if (address) {
-        // Synthesize APN from address hash if missing
-        let hash = 0;
-        for (let i = 0; i < address.length; i++) hash = ((hash << 5) - hash) + address.charCodeAt(i);
-        apn = `APN-${Math.abs(hash).toString().slice(0, 8)}`;
-        warnings.push(`Record index ${index} (${address}): No APN provided; synthesized parcel ID '${apn}'`);
-      } else {
-        errors.push(`Record index ${index}: Missing required property identifier: 'property_id', 'apn', or 'address' is required`);
-      }
+      errors.push(`Record index ${index}: Missing required property identifier: 'property_id' or 'apn' is required`);
     }
 
     if (!address) {
-      if (apn) {
-        warnings.push(`Record index ${index} (APN ${apn}): Street address is missing; using placeholder`);
-      } else {
-        errors.push(`Record index ${index}: Street address is required`);
-      }
+      errors.push(`Record index ${index}: Street address is required`);
     }
 
     // 2. Owner Identifier & Name Check
@@ -224,7 +212,6 @@ export class DataImportService {
       normalizedRaw.owner_name ||
       normalizedRaw.owner_id ||
       normalizedRaw.taxpayer_name ||
-      normalizedRaw.owner ||
       normalizedRaw.contact_name ||
       normalizedRaw.grantee ||
       (typeof normalizedRaw.owner === 'string' ? normalizedRaw.owner : '')
@@ -330,12 +317,12 @@ export class DataImportService {
     const is_corporate = normalizedRaw.is_corporate_owned ?? (entity_type === 'llc' || entity_type === 'corporation' || entity_type === 'trust');
 
     const sanitizedRecord: RawPropertyRecord = {
-      apn: apn || `APN-${index + 1}-${Date.now().toString().slice(-4)}`,
-      address: address || '100 Newport Blvd',
-      city: city || 'Costa Mesa',
+      apn,
+      address,
+      city,
       state: state || 'CA',
-      zip: zip || '92627',
-      county: county || 'Orange County',
+      zip,
+      county,
       property_type: normalizedRaw.property_type || normalizedRaw.use_type || 'Multi-Family',
       units_count,
       square_feet,
@@ -352,7 +339,7 @@ export class DataImportService {
       source_provenance: normalizedRaw.source_provenance || 'Vortex One Validated Ingestion Pipeline',
       source_record_id: normalizedRaw.source_record_id || normalizedRaw.id || normalizedRaw.lead_id,
       owner: {
-        name: ownerName || 'Private Landlord',
+        name: ownerName,
         entity_type,
         mailing_address: ownerObj?.mailing_address || normalizedRaw.mailing_address || normalizedRaw.owner_address || '',
         mailing_city: ownerObj?.mailing_city || normalizedRaw.mailing_city || normalizedRaw.owner_city || '',

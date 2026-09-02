@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class SanBernardinoCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'san_bernardino_county_gis';
@@ -42,8 +42,7 @@ export class SanBernardinoCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('San Bernardino', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async querySanBernardinoEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

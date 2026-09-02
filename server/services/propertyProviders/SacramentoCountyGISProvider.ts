@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class SacramentoCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'sacramento_county_gis';
@@ -42,8 +42,7 @@ export class SacramentoCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Sacramento', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async querySacramentoEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

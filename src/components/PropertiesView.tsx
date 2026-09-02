@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Building2,
   Search,
@@ -448,6 +449,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
   initialSearchTerm = '',
   initialSelectedPropertyId,
 }) => {
+  const { activeTenant } = useAuth();
   const { addToast } = useToast();
   const googleMapsApiKey = (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || '';
   const [showGoogleSheetsModal, setShowGoogleSheetsModal] = useState(false);
@@ -672,7 +674,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
         body: JSON.stringify({
           propertyIds: selectedPropertyIds,
           updates,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
         }),
       });
       if (!res.ok) {
@@ -821,9 +823,11 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
       }
 
       params.append('persist', 'true');
-      params.append('organizationId', 'org_cmc_realty');
+      if (activeTenant?.id) {
+        params.append('organizationId', activeTenant.id);
+      }
 
-      const res = await fetch(`/api/property-search?${params.toString()}`);
+      const res = await fetch(`/api/property-search/live?${params.toString()}`);
       if (!res.ok) {
         throw new Error(`County GIS search returned HTTP ${res.status}`);
       }
@@ -853,7 +857,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: 'org_cmc_realty',
+          organization_id: '',
           autoScoreLeads: true,
           enforceDncVerification: true,
         }),
@@ -908,7 +912,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
           propertyIds: targetIds,
           tags: tagsToApply,
           mode,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
         }),
       });
 
@@ -962,7 +966,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
         body: JSON.stringify({
           tags: [tagName],
           mode,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
         }),
       });
 

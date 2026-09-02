@@ -28,7 +28,7 @@ import {
   normalizePhone,
   formatPhoneDisplay,
   validateReferentialIntegrity,
-  DEFAULT_ORG_ID,
+  TEST_ORG_ID,
 } from '../../src/services/dataImportService';
 
 let passedTests = 0;
@@ -54,7 +54,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 5, 'Migration count is 5', `Expected 5, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 9, 'Migration count is 9', `Expected 9, got ${MIGRATIONS.length}`);
   
   const migrationNames = MIGRATIONS.map(m => m.name);
   assert(
@@ -382,7 +382,7 @@ async function runAllTests() {
   // Test Group 10: Client Data Import Service Parsing & Utilities (src/services/dataImportService.ts)
   console.log('\n[Group 10: Client Data Import Service Parsing & Normalization]');
 
-  assert(DEFAULT_ORG_ID === 'org_cmc_realty', 'Default organization_id is org_cmc_realty');
+  assert(TEST_ORG_ID === 'org_cmc_realty', 'Explicit test organization fixture is org_cmc_realty');
   assert(normalizePhone('(949) 555-1234') === '9495551234', 'Phone normalization strips non-digits');
   assert(normalizePhone('+1 949 555 1234') === '9495551234', 'Phone normalization strips leading US country code +1');
   assert(formatPhoneDisplay('9495551234') === '(949) 555-1234', 'Phone formatting produces US display standard');
@@ -426,7 +426,7 @@ async function runAllTests() {
   assert(parsedJson[0].owner.phone_numbers?.[0].number === '(949) 555-7711', 'JSON parser formatted owner phone');
 
   // Reconcile the parsed CSV into datastore through the backend reconciler to verify end-to-end idempotency
-  const csvReconcileResult = await DataImportService.reconcileBatch(DEFAULT_ORG_ID, parsedCsv);
+  const csvReconcileResult = await DataImportService.reconcileBatch(TEST_ORG_ID, parsedCsv);
   assert(csvReconcileResult.total_records_processed === 2, 'Parsed CSV records reconciled through engine');
   assert(csvReconcileResult.owners_created === 1, 'Owner Pacific Coast Investments LLC deduplicated across CSV rows');
 
@@ -441,7 +441,7 @@ async function runAllTests() {
     {
       id: 'owner_test_1',
       name: 'Laguna Coast Properties LLC',
-      organization_id: DEFAULT_ORG_ID,
+      organization_id: TEST_ORG_ID,
       entity_type: 'llc',
       mailing_address: '100 Ocean Blvd',
       mailing_city: 'Laguna Beach',
@@ -476,7 +476,7 @@ async function runAllTests() {
       mortgage_balance: 900000,
       owner_id: 'owner_test_1',
       owner_name: 'Laguna Coast Properties LLC',
-      organization_id: DEFAULT_ORG_ID,
+      organization_id: TEST_ORG_ID,
       is_absentee_owner: true,
       is_corporate_owned: true,
       tax_delinquent: false,
@@ -508,7 +508,7 @@ async function runAllTests() {
       mortgage_balance: 900000,
       owner_id: 'owner_test_1',
       owner_name: 'Laguna Coast Properties LLC',
-      organization_id: DEFAULT_ORG_ID,
+      organization_id: TEST_ORG_ID,
       is_absentee_owner: true,
       is_corporate_owned: true,
       tax_delinquent: false,
@@ -530,7 +530,7 @@ async function runAllTests() {
       primary_property_id: 'prop_test_1',
       property_id: 'prop_test_1',
       owner_id: 'owner_test_1',
-      organization_id: DEFAULT_ORG_ID,
+      organization_id: TEST_ORG_ID,
       status: 'new' as const,
       stage: 'identified' as const,
       classification: 'high_priority' as const,
@@ -552,7 +552,7 @@ async function runAllTests() {
     properties: validProperties,
     owners: validOwners,
     leads: validLeads,
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: TEST_ORG_ID,
   });
 
   assert(validReport.isValid === true, 'Valid dataset passes referential integrity validation');
@@ -572,7 +572,7 @@ async function runAllTests() {
     properties: [orphanProperty],
     owners: validOwners,
     leads: [],
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: TEST_ORG_ID,
   });
 
   assert(orphanPropReport.isValid === false, 'Orphan property correctly triggers validation failure');
@@ -590,7 +590,7 @@ async function runAllTests() {
     properties: [missingOwnerProp],
     owners: validOwners,
     leads: [],
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: TEST_ORG_ID,
   });
 
   assert(missingOwnerReport.isValid === false, 'Property missing owner_id fails validation');
@@ -607,7 +607,7 @@ async function runAllTests() {
     properties: validProperties,
     owners: validOwners,
     leads: [orphanLead],
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: TEST_ORG_ID,
   });
 
   assert(orphanLeadReport.isValid === false, 'Orphan lead correctly triggers validation failure');
@@ -635,7 +635,7 @@ async function runAllTests() {
     properties: validProperties,
     owners: mismatchedOwners,
     leads: [mismatchedLead],
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: TEST_ORG_ID,
   });
 
   assert(mismatchReport.isValid === false, 'Mismatched lead-property-owner link fails validation');
@@ -654,6 +654,7 @@ async function runAllTests() {
     properties: [crossTenantProp],
     owners: validOwners,
     leads: [],
+    organizationId: 'org_tenant_b',
   });
 
   assert(crossTenantReport.isValid === false, 'Cross-tenant link triggers isolation violation');
@@ -661,9 +662,9 @@ async function runAllTests() {
   assert(crossTenantReport.issues.some((i) => i.type === 'tenant_isolation_violation'), 'Tenant isolation violation issue recorded');
 
   // 7. Backend Server-side Referential Integrity Service
-  const serverIntegrityReport = await DataImportService.validateReferentialIntegrity(DEFAULT_ORG_ID);
+  const serverIntegrityReport = await DataImportService.validateReferentialIntegrity(TEST_ORG_ID);
   assert(typeof serverIntegrityReport === 'object', 'Server-side validateReferentialIntegrity returns report');
-  assert(serverIntegrityReport.organization_id === DEFAULT_ORG_ID, 'Server integrity report scoped to default org');
+  assert(serverIntegrityReport.organization_id === TEST_ORG_ID, 'Server integrity report scoped to default org');
   assert(serverIntegrityReport.total_properties > 0, 'Server datastore has properties checked');
   assert(serverIntegrityReport.total_owners > 0, 'Server datastore has owners checked');
   assert(serverIntegrityReport.isValid === true, 'Authoritative server datastore passes referential integrity check');
@@ -684,7 +685,7 @@ async function runAllTests() {
     owner: { name: 'Pacific Coast LLC' },
   };
 
-  const validationResult1 = DataImportService.validateImportRecord(invalidRecordMissingApn, 0, { enforceDnc: true });
+  const validationResult1 = DataImportService.validateImportRecord(invalidRecordMissingApn, { recordIndex: 0, enforceDnc: true, organizationId: TEST_ORG_ID });
   assert(validationResult1.isValid === false, 'Validation middleware catches missing APN / property_id');
   assert(validationResult1.errors.some((e: string) => e.toLowerCase().includes('apn') || e.toLowerCase().includes('parcel')), 'Error mentions missing parcel / APN identifier');
 
@@ -699,7 +700,7 @@ async function runAllTests() {
     owner: { name: '' },
   };
 
-  const validationResult2 = DataImportService.validateImportRecord(invalidRecordMissingOwner, 1, { enforceDnc: true });
+  const validationResult2 = DataImportService.validateImportRecord(invalidRecordMissingOwner, { recordIndex: 1, enforceDnc: true, organizationId: TEST_ORG_ID });
   assert(validationResult2.isValid === false, 'Validation middleware catches missing owner name / owner_id');
   assert(validationResult2.errors.some((e: string) => e.toLowerCase().includes('owner')), 'Error mentions missing owner');
 
@@ -720,7 +721,7 @@ async function runAllTests() {
     },
   };
 
-  const validationResult3 = DataImportService.validateImportRecord(recordWithPhones, 2, { enforceDnc: true });
+  const validationResult3 = DataImportService.validateImportRecord(recordWithPhones, { recordIndex: 2, enforceDnc: true, organizationId: TEST_ORG_ID });
   assert(validationResult3.isValid === true, 'Valid record with formatted phones passes validation');
   assert(validationResult3.normalizedPhones.length === 2, 'Both phone numbers extracted and normalized');
   assert(validationResult3.normalizedPhones[0].normalized === '9495550199', 'Phone normalized to 10 digits');
@@ -730,7 +731,7 @@ async function runAllTests() {
   // 4. Batch Validation summary calculation
   const batchValidation = DataImportService.validateBatch(
     [invalidRecordMissingApn, invalidRecordMissingOwner, recordWithPhones],
-    { enforceDnc: true, organizationId: DEFAULT_ORG_ID }
+    { enforceDnc: true, organizationId: TEST_ORG_ID }
   );
 
   assert(batchValidation.totalRecords === 3, 'Batch validation records count is 3');
@@ -764,7 +765,7 @@ async function runAllTests() {
 
   // 7. Audit Logging Metrics Verification (Success, Failure & Suppression counts)
   const reconciliationSummary = await DataImportService.reconcileBatch(
-    DEFAULT_ORG_ID,
+    TEST_ORG_ID,
     [
       {
         apn: '888-001-01',

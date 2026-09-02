@@ -35,7 +35,7 @@ export const PortfoliosView: React.FC<PortfoliosViewProps> = ({
   const portfolios: PortfolioRecord[] = [
     {
       id: 'port_1',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       owner_id: 'owner_1',
       owner_name: 'John Smith (CMC Coastal Holdings)',
       entity_type: 'individual',
@@ -51,7 +51,7 @@ export const PortfoliosView: React.FC<PortfoliosViewProps> = ({
     },
     {
       id: 'port_2',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       owner_id: 'owner_2',
       owner_name: 'Marcus Aurelius Properties LLC',
       entity_type: 'llc',
@@ -67,7 +67,7 @@ export const PortfoliosView: React.FC<PortfoliosViewProps> = ({
     },
     {
       id: 'port_3',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       owner_id: 'owner_3',
       owner_name: 'Elena Rostova Family Trust',
       entity_type: 'trust',

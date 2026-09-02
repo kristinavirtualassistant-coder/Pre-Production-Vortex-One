@@ -32,7 +32,7 @@ export const SyncStatusFooter: React.FC<SyncStatusFooterProps> = ({
   onForceResync,
   isSyncingData = false,
   dbStatus,
-  organizationId = 'org_cmc_realty',
+  organizationId = '',
 }) => {
   const { theme, toggleTheme } = useTheme();
   const [latency, setLatency] = useState<number | null>(null);

@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class VenturaCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'ventura_county_gis';
@@ -42,8 +42,7 @@ export class VenturaCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Ventura', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async queryVenturaEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

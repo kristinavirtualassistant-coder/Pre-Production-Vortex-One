@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class OrangeCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'california_gis';
@@ -95,7 +95,7 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
 
       const features = data.features || [];
       if (features.length === 0) {
-        return generateSyntheticCountyParcels(targetCounty, query, this.providerName, this.primaryEndpoint);
+    return [];
       }
 
       const orgId = requireOrganizationId(query.organizationId);
@@ -195,7 +195,7 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
         };
       });
     } catch {
-      return generateSyntheticCountyParcels(targetCounty, query, this.providerName, this.primaryEndpoint);
+    return [];
     }
   }
 }

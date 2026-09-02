@@ -1531,7 +1531,7 @@ const VisualWorkflowBuilderInner: React.FC<VisualWorkflowBuilderProps> = ({
         body: JSON.stringify({
           workflow_id: 'custom_dag_run',
           steps,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
         }),
       });
 
@@ -1727,7 +1727,7 @@ const VisualWorkflowBuilderInner: React.FC<VisualWorkflowBuilderProps> = ({
           body: JSON.stringify({
             workflow_id: 'custom_dag_run',
             steps,
-            organizationId: 'org_cmc_realty',
+            organizationId: '',
           }),
         });
         const fallbackData = await fallbackRes.json();

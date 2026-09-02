@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class RiversideCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'riverside_county_gis';
@@ -42,8 +42,7 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Riverside', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async queryRiversideEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

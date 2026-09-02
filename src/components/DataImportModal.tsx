@@ -108,7 +108,7 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   const { userProfile, getAuthHeaders } = useAuth();
   const { addToast } = useToast();
 
-  const organizationId = userProfile?.organization_id || 'org_cmc_realty';
+  const organizationId = userProfile?.organization_id || '';
   const orgName = userProfile?.organization_name || 'CMC Realty & Property Management';
 
   const resetState = () => {

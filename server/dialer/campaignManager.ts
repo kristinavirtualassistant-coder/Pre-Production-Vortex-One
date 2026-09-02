@@ -13,6 +13,7 @@ import {
 } from './types';
 import { SuppressionService } from './suppressionService';
 import { getTelephonyAdapter } from './telephonyAdapter';
+import { requireOrganizationId } from '../services/organizationContext';
 
 export class CampaignManager {
   /**
@@ -48,6 +49,10 @@ export class CampaignManager {
       scheduled_at: params.scheduledAt,
       scheduled_by: params.scheduledBy || 'Operations Lead',
       timezone: params.timezone || 'America/Los_Angeles',
+      concurrency_limit: 3,
+      retry_limit: 3,
+      calling_hours_start: '08:00',
+      calling_hours_end: '20:00',
       created_at: now,
       updated_at: now,
     };
@@ -56,8 +61,8 @@ export class CampaignManager {
     if (pool) {
       try {
         await pool.query(
-          `INSERT INTO campaign (id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          `INSERT INTO campaign (id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             id,
             campaign.organization_id,
@@ -70,6 +75,11 @@ export class CampaignManager {
             0,
             0,
             0,
+            campaign.concurrency_limit,
+            campaign.retry_limit,
+            campaign.calling_hours_start,
+            campaign.calling_hours_end,
+            campaign.timezone,
             now,
             now,
           ]
@@ -341,6 +351,7 @@ export class CampaignManager {
       }
 
       createdRecords.push(record);
+      inMemoryStore.campaignContacts.unshift(record);
     }
 
     // Update campaign total contacts count
@@ -384,44 +395,56 @@ export class CampaignManager {
   }> {
     const { organizationId, campaignId, sessionId, customBrief, provider = 'ringcentral' } = params;
 
-    // Get next queued contact
+    // Claim the next eligible contact atomically. PostgreSQL is authoritative in production.
     let contact: CampaignContactRecord | null = null;
     const pool = getPgPool();
-
     if (pool) {
-      try {
-        const res = await pool.query(
-          `SELECT cc.id, cc.organization_id, cc.campaign_id, cc.lead_id, cc.contact_name, cc.phone_number, cc.property_address, cc.dial_status, cc.attempts, cc.priority, cc.created_at 
-           FROM campaign_contact cc
-           LEFT JOIN lead_record lr ON cc.lead_id = lr.id
-           WHERE cc.campaign_id = $1 AND cc.organization_id = $2 AND cc.dial_status = 'queued'
-           ORDER BY lr.lead_score DESC, lr.last_activity_date ASC, cc.priority DESC, cc.created_at ASC 
-           LIMIT 1`,
-          [campaignId, organizationId]
-        );
-        if (res.rows.length > 0) {
-          contact = res.rows[0];
-        }
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch contact fallback:', err.message);
+      const campaignRow = await pool.query(
+        `SELECT retry_limit, timezone, calling_hours_start, calling_hours_end FROM campaign WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [campaignId, organizationId]
+      );
+      if (campaignRow.rows.length === 0) return { status: 'queue_empty' };
+      const retryLimit = Math.max(1, Number(campaignRow.rows[0].retry_limit || 3));
+      const claim = await pool.query(
+        `WITH candidate AS (
+          SELECT cc.id
+          FROM campaign_contact cc
+          JOIN campaign c ON c.id = cc.campaign_id AND c.organization_id = cc.organization_id
+          LEFT JOIN leads l ON l.id = cc.lead_id AND l.organization_id = cc.organization_id
+          WHERE cc.organization_id = $1 AND cc.campaign_id = $2
+            AND cc.dial_status = 'queued' AND cc.attempts < $3 AND c.status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM suppression_record sr
+              WHERE sr.organization_id = cc.organization_id
+                AND regexp_replace(sr.phone_number, '\\D', '', 'g') = regexp_replace(cc.phone_number, '\\D', '', 'g')
+                AND (sr.expires_at IS NULL OR sr.expires_at > CURRENT_TIMESTAMP)
+            )
+            AND (l.dnc_compliant IS NULL OR l.dnc_compliant = TRUE)
+            AND (CURRENT_TIME AT TIME ZONE c.timezone) BETWEEN c.calling_hours_start AND c.calling_hours_end
+          ORDER BY COALESCE(l.lead_score, 0) DESC, cc.priority DESC, cc.created_at ASC
+          FOR UPDATE SKIP LOCKED LIMIT 1
+        )
+        UPDATE campaign_contact cc
+        SET dial_status = 'dialing', attempts = attempts + 1, last_dialed_at = CURRENT_TIMESTAMP
+        FROM candidate WHERE cc.id = candidate.id
+        RETURNING cc.id, cc.organization_id, cc.campaign_id, cc.lead_id, cc.contact_name, cc.phone_number, cc.property_address, cc.dial_status, cc.attempts, cc.priority, cc.created_at, cc.last_dialed_at`,
+        [organizationId, campaignId, retryLimit]
+      );
+      if (claim.rows.length > 0) contact = claim.rows[0];
+    } else {
+      const orgId = requireOrganizationId(organizationId);
+      const candidates = (inMemoryStore.campaignContacts || []).filter((c) =>
+        c.organization_id === orgId && c.campaign_id === campaignId && c.dial_status === 'queued' && c.attempts < 3
+      ).sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
+      contact = candidates[0] || null;
+      if (contact) {
+        contact.dial_status = 'dialing';
+        contact.attempts += 1;
+        contact.last_dialed_at = new Date().toISOString();
       }
     }
 
-    // If no contacts in DB, create dynamic qualified prospect
-    if (!contact) {
-      contact = {
-        id: `ccon_${Date.now()}`,
-        organization_id: organizationId,
-        campaign_id: campaignId,
-        contact_name: 'Jonathan Sterling (Sterling West Holdings LLC)',
-        phone_number: '(949) 555-0182',
-        property_address: '1420 Newport Blvd, Costa Mesa, CA',
-        dial_status: 'queued',
-        attempts: 0,
-        priority: 1,
-        created_at: new Date().toISOString(),
-      };
-    }
+    if (!contact) return { status: 'queue_empty' };
 
     // Step 2: Auto-check DNC / Suppression List
     const suppressionCheck = await SuppressionService.isSuppressed(organizationId, contact.phone_number);
@@ -479,14 +502,14 @@ export class CampaignManager {
       contact_name: contact.contact_name,
       phone_number: contact.phone_number,
       direction: 'outbound',
-      status: 'completed',
-      disposition: 'interested',
-      duration_seconds: Math.floor(Math.random() * 80) + 45,
+      status: telephonyResult.success ? 'initiated' : 'failed',
+      disposition: undefined,
+      duration_seconds: 0,
       call_strategy_brief: customBrief || 'CMC Multi-Family Management Outreach with local vendor cost reduction brief.',
-      recording_url: `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`,
-      notes: `Telephony call placed via ${provider.toUpperCase()}. Owner engaged, discussed rent roll and maintenance dispatch.`,
+      recording_url: undefined,
+      notes: telephonyResult.success ? `Telephony call initiated via ${provider.toUpperCase()}.` : `Telephony call failed: ${telephonyResult.error || 'unknown provider error'}`,
       created_at: now,
-      ended_at: new Date(Date.now() + 65000).toISOString(),
+      ended_at: telephonyResult.success ? undefined : now,
     };
 
     // Update database
@@ -529,13 +552,13 @@ export class CampaignManager {
 
         // Update contact dial_status and attempts
         await pool.query(
-          `UPDATE campaign_contact SET dial_status = 'completed', attempts = attempts + 1, last_dialed_at = $1 WHERE id = $2`,
-          [now, contact.id]
+          `UPDATE campaign_contact SET dial_status = $1, last_dialed_at = $2 WHERE id = $3`,
+          [telephonyResult.success ? 'dialing' : 'failed', now, contact.id]
         );
 
         // Update campaign counters
         await pool.query(
-          `UPDATE campaign SET dialed_count = dialed_count + 1, connected_count = connected_count + 1, updated_at = $1 WHERE id = $2`,
+          `UPDATE campaign SET dialed_count = dialed_count + 1, updated_at = $1 WHERE id = $2`,
           [now, campaignId]
         );
 
@@ -551,11 +574,12 @@ export class CampaignManager {
     }
 
     // Update in-memory stores
+    contact.dial_status = telephonyResult.success ? 'dialing' : 'failed';
     inMemoryStore.calls.unshift(callRecord as any);
     const memCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
     if (memCamp) {
       memCamp.dialed_count = (memCamp.dialed_count || 0) + 1;
-      memCamp.connected_count = (memCamp.connected_count || 0) + 1;
+      if (telephonyResult.success) memCamp.connected_count = (memCamp.connected_count || 0) + 1;
     }
 
     return {

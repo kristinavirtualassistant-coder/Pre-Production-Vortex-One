@@ -135,7 +135,7 @@ export const BulkOutreachScheduleModal: React.FC<BulkOutreachScheduleModalProps>
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            organization_id: 'org_cmc_realty',
+            organization_id: '',
             scheduled_at: new Date(scheduledDateTime).toISOString(),
             timezone: 'America/Los_Angeles',
             scheduled_by: 'Operations Executive',
@@ -166,7 +166,7 @@ export const BulkOutreachScheduleModal: React.FC<BulkOutreachScheduleModalProps>
         executionMode === 'scheduled' ? new Date(scheduledDateTime).toISOString() : undefined;
 
       const campaignPayload = {
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         name: campaignName,
         description: callBrief,
         target_market: targetMarket,
@@ -197,7 +197,7 @@ export const BulkOutreachScheduleModal: React.FC<BulkOutreachScheduleModalProps>
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            organizationId: 'org_cmc_realty',
+            organizationId: '',
             agentUserId: 'agent_1',
           }),
         });

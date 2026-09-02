@@ -116,8 +116,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return updatedProfile;
         } else {
           // Initialize fresh profile
-          const orgId = customOrgName ? `org_${customOrgName.toLowerCase().replace(/[^a-z0-9]/g, '_')}` : DEFAULT_TENANT.id;
-          const orgName = customOrgName || DEFAULT_TENANT.name;
+          if (!customOrgName?.trim()) {
+            throw new Error('Organization membership is required before creating a Vortex One user profile');
+          }
+          const orgId = `org_${customOrgName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+          const orgName = customOrgName.trim();
 
           const newProfile: UserProfile = {
             uid: fbUser.uid,
@@ -127,7 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             role: fallbackRole,
             organization_id: orgId,
             organization_name: orgName,
-            tenant_ids: [orgId, DEFAULT_TENANT.id],
+            tenant_ids: [orgId],
             createdAt: new Date().toISOString(),
             lastLoginAt: new Date().toISOString(),
           };
@@ -159,20 +162,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return newProfile;
         }
       } catch (err: any) {
-        console.warn('[Firestore] Error fetching user profile, using fallback:', err);
-        const fallbackProfile: UserProfile = {
-          uid: fbUser.uid,
-          email: fbUser.email || '',
-          displayName: fbUser.displayName || 'Vortex User',
-          photoURL: fbUser.photoURL || undefined,
-          role: fallbackRole,
-          organization_id: DEFAULT_TENANT.id,
-          organization_name: DEFAULT_TENANT.name,
-          tenant_ids: [DEFAULT_TENANT.id],
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-        };
-        return fallbackProfile;
+        console.error('[Firestore] Unable to resolve authenticated user organization:', err);
+        throw new Error('Unable to resolve organization membership for this account');
       }
     },
     []

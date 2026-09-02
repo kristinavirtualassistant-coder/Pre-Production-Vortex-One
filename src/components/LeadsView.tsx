@@ -159,7 +159,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       const res = await fetch('/api/leads/scoring-service/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+        body: JSON.stringify({ organizationId: '' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to recalculate');

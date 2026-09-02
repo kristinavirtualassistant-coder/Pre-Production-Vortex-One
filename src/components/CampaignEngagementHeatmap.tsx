@@ -105,7 +105,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
     const baseLeads: LeadRecord[] = leads.length > 0 ? leads : [
       {
         id: 'lead-101',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-1',
         primary_property_id: 'prop-1',
         owner_name: 'Jonathan Sterling',
@@ -126,7 +126,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-102',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-2',
         primary_property_id: 'prop-2',
         owner_name: 'Elena Rostova & Associates',
@@ -147,7 +147,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-103',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-3',
         primary_property_id: 'prop-3',
         owner_name: 'Marcus Vance Trust',
@@ -168,7 +168,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-104',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-4',
         primary_property_id: 'prop-4',
         owner_name: 'David & Sarah Chen',
@@ -189,7 +189,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-105',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-5',
         primary_property_id: 'prop-5',
         owner_name: 'Pacific Horizon Holdings LLC',
@@ -210,7 +210,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-106',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-6',
         primary_property_id: 'prop-6',
         owner_name: 'Robert K. Gallagher',
@@ -231,7 +231,7 @@ export const CampaignEngagementHeatmap: React.FC<CampaignEngagementHeatmapProps>
       },
       {
         id: 'lead-107',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner-7',
         primary_property_id: 'prop-7',
         owner_name: 'Katherine & William Hayes',

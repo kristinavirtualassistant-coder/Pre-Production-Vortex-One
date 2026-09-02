@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Database,
   CheckCircle2,
@@ -155,6 +156,7 @@ const TARGET_COLUMNS: Array<{ key: string; label: string; required: boolean; cat
 ];
 
 export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh }) => {
+  const { activeTenant } = useAuth();
   const [activeTab, setActiveTab] = useState<'tables' | 'mapper' | 'monitor' | 'health' | 'audits' | 'webhooks'>('mapper');
   const [rawJsonText, setRawJsonText] = useState<string>(
     JSON.stringify(SAMPLE_PRESETS.orange_county_gis.data, null, 2)
@@ -284,7 +286,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
   const fetchAuditLogs = async () => {
     setIsLoadingAudits(true);
     try {
-      const res = await fetch('/api/import/audit-logs?organizationId=org_cmc_realty');
+      const res = await fetch('/api/import/audit-logs');
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -353,7 +355,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
 
       const transformed = DataImportService.applyFieldMappings(records, mappingDefs);
       const validation = DataImportService.validateBatch(transformed, {
-        organizationId: 'org_cmc_realty',
+        organizationId: '',
         enforceDnc: true,
       });
 
@@ -407,7 +409,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: 'org_cmc_realty',
+          organization_id: '',
           records: transformed,
           options: {
             autoScoreLeads: true,
@@ -446,7 +448,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
           <div>
             <h1 className="text-lg font-bold text-slate-900 tracking-tight">PostgreSQL Datastore &amp; Batch Ingestion</h1>
             <p className="text-xs text-slate-500">
-              Multi-tenant 'org_cmc_realty' data import with validation middleware, field mapping, phone normalization, and audit logging.
+              Multi-tenant data import with validation middleware, field mapping, phone normalization, and audit logging.
             </p>
           </div>
         </div>
@@ -543,7 +545,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-slate-500">Active Organization Partition</span>
-          <div className="text-sm font-bold text-blue-700 font-mono">org_cmc_realty</div>
+          <div className="text-sm font-bold text-blue-700 font-mono">{activeTenant?.id || 'Unavailable'}</div>
           <div className="text-xs text-slate-500">Tenant Isolation Enforced</div>
         </div>
 
@@ -894,7 +896,7 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
             {/* Ingestion Trigger Button */}
             <div className="flex items-center justify-between pt-3 border-t border-slate-100">
               <div className="text-xs text-slate-500">
-                Target Partition: <span className="font-mono font-semibold text-slate-700">org_cmc_realty</span> &bull; Authoritative PostgreSQL Store
+                Target Partition: <span className="font-mono font-semibold text-slate-700">{activeTenant?.id || 'Unavailable'}</span> &bull; Authoritative PostgreSQL Store
               </div>
 
               <button

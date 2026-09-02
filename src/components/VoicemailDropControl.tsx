@@ -43,7 +43,7 @@ export const VoicemailDropControl: React.FC<VoicemailDropControlProps> = ({
       id: 'default_vm',
       label: 'Standard Professional Voicemail',
       url: 'https://actions.google.com/sounds/v1/speech/greeting.ogg',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       created_at: new Date().toISOString(),
     };
 

@@ -101,6 +101,29 @@ function getViewFromUrl(): string {
 
 export default function App() {
   const { user, userProfile, activeTenant, loading: authLoading, getAuthHeaders, getAccessToken } = useAuth();
+
+  const searchPropertiesFromApi = useCallback(async (query: Record<string, unknown>): Promise<Property[]> => {
+    const tenantId = activeTenant?.id || userProfile?.organization_id;
+    if (!tenantId) return [];
+    const params = new URLSearchParams();
+    params.set('page', '1');
+    params.set('pageSize', '200');
+    params.set('organizationId', tenantId);
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '' && value !== false) params.set(key, String(value));
+    });
+    const res = await fetch(`/api/property-search?${params.toString()}`, { headers: { ...getAuthHeaders(), 'x-organization-id': tenantId } });
+    if (!res.ok) throw new Error(`Property search returned HTTP ${res.status}`);
+    const data = await res.json();
+    return (data.rows || []).map((row: any) => ({
+      id: row.id, organization_id: row.organization_id, address: row.address, city: row.city, state: row.state, zip: row.zip, county: row.county, apn: row.apn,
+      property_type: row.property_type, units_count: Number(row.units_count || 0), square_feet: Number(row.square_feet || 0), year_built: Number(row.year_built || 0),
+      estimated_value: Number(row.estimated_value || 0), assessed_tax_value: Number(row.assessed_tax_value || 0), estimated_equity: Number(row.estimated_equity || 0),
+      mortgage_balance: Number(row.mortgage_balance || 0), owner_id: row.owner_id || '', owner_name: row.owner_name || '', is_absentee_owner: Boolean(row.is_absentee_owner),
+      is_corporate_owned: Boolean(row.is_corporate_owned), tax_delinquent: Boolean(row.tax_delinquent), last_sale_date: row.last_sale_date || undefined,
+      last_sale_price: row.last_sale_price == null ? undefined : Number(row.last_sale_price), provenance: row.provenance || {}, latitude: row.latitude, longitude: row.longitude,
+    }));
+  }, [activeTenant?.id, userProfile?.organization_id, getAuthHeaders]);
   const [currentView, setCurrentView] = useState<string>(() => getViewFromUrl());
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isCreateLeadModalOpen, setIsCreateLeadModalOpen] = useState<boolean>(false);
@@ -261,7 +284,7 @@ export default function App() {
 
   // Fetch initial datasets partitioned by activeTenant with race-condition prevention
   const fetchAllData = useCallback(async (forcedTenantId?: string) => {
-    const tenantIdToFetch = forcedTenantId || activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+    const tenantIdToFetch = forcedTenantId || activeTenant?.id || userProfile?.organization_id;
     if (!tenantIdToFetch) return;
 
     // Abort prior in-flight request to prevent stale overwrite
@@ -351,7 +374,7 @@ export default function App() {
 
   // Safe helper to obtain active tenant ID
   const getActiveOrgId = useCallback(() => {
-    return activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+    return activeTenant?.id || userProfile?.organization_id || '';
   }, [activeTenant?.id, userProfile?.organization_id]);
 
   // Orchestration Handler
@@ -628,6 +651,7 @@ export default function App() {
           {currentView === 'property_search' && (
             <PropertySearchView
               properties={properties}
+              onSearchProperties={searchPropertiesFromApi}
               onSelectProperty={(prop) => {
                 setSelectedPropertyId(prop.id);
                 handleOpenInspector('property', prop);
@@ -989,7 +1013,7 @@ export default function App() {
           fetchAllData();
           handleNavigate('leads');
         }}
-        organizationId={activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty'}
+        organizationId={getActiveOrgId()}
       />
 
       {/* Easy Help & Jargon Buster Modal */}

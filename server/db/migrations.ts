@@ -393,4 +393,66 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 6,
+    name: '006_add_property_search_indexes',
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_properties_org_apn ON properties(organization_id, apn);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_value_equity ON properties(organization_id, estimated_value, estimated_equity);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_flags ON properties(organization_id, is_absentee_owner, is_corporate_owned, tax_delinquent);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_type_year ON properties(organization_id, property_type, year_built);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_zip ON properties(organization_id, zip);
+      CREATE INDEX IF NOT EXISTS idx_property_owners_org_state ON property_owners(organization_id, mailing_state);
+      CREATE INDEX IF NOT EXISTS idx_property_owners_org_portfolio ON property_owners(organization_id, properties_owned_count);
+    `,
+  },
+  {
+    version: 7,
+    name: '007_add_campaign_dialer_controls',
+    sql: `
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER DEFAULT 3 NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS retry_limit INTEGER DEFAULT 3 NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS calling_hours_start TIME DEFAULT '08:00' NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS calling_hours_end TIME DEFAULT '20:00' NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS timezone VARCHAR(100) DEFAULT 'America/Los_Angeles' NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_campaign_contact_queue ON campaign_contact(organization_id, campaign_id, dial_status, priority DESC, created_at ASC);
+    `,
+  },
+  {
+    version: 8,
+    name: '008_create_crm_contacts_activities',
+    sql: `
+      CREATE TABLE IF NOT EXISTS contacts (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL, lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        full_name VARCHAR(255) NOT NULL, phone_numbers JSONB DEFAULT '[]'::jsonb NOT NULL, email_addresses JSONB DEFAULT '[]'::jsonb NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        CONSTRAINT uq_contacts_org_name UNIQUE(organization_id, full_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_contacts_org_owner ON contacts(organization_id, owner_id);
+      CREATE INDEX IF NOT EXISTS idx_contacts_org_lead ON contacts(organization_id, lead_id);
+
+      CREATE TABLE IF NOT EXISTS activities (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE CASCADE, contact_id VARCHAR(64) REFERENCES contacts(id) ON DELETE SET NULL,
+        activity_type VARCHAR(50) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_by VARCHAR(64), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_activities_org_lead_created ON activities(organization_id, lead_id, created_at DESC);
+    `,
+  },
+  {
+    version: 9,
+    name: '009_create_durable_jobs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS jobs (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        job_type VARCHAR(100) NOT NULL, payload JSONB DEFAULT '{}'::jsonb NOT NULL, status VARCHAR(30) DEFAULT 'queued' NOT NULL,
+        attempts INTEGER DEFAULT 0 NOT NULL, max_attempts INTEGER DEFAULT 3 NOT NULL, available_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        locked_at TIMESTAMP WITH TIME ZONE, locked_by VARCHAR(128), last_error TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE
+      );
+      CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(organization_id, status, available_at);
+    `,
+  },
 ];
