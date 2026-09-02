@@ -14,56 +14,75 @@ export interface AuthRequest extends Request {
   };
 }
 
+export class AuthorizationError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 403) {
+    super(message);
+    this.name = 'AuthorizationError';
+    this.statusCode = statusCode;
+  }
+}
+
+export function resolveAuthenticatedOrganizationId(
+  dbUser: AuthRequest['dbUser'],
+  requestedOrganizationId?: string,
+): string {
+  if (!dbUser?.organization_id) {
+    throw new AuthorizationError('Forbidden: No organization is associated with the authenticated user');
+  }
+
+  if (requestedOrganizationId && requestedOrganizationId !== dbUser.organization_id) {
+    throw new AuthorizationError('Forbidden: Organization does not match authenticated user');
+  }
+
+  return dbUser.organization_id;
+}
+
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
-  const token = authHeader.split('Bearer ')[1];
+  const token = authHeader.slice('Bearer '.length);
   try {
     const decodedToken = await adminAuth.verifyIdToken(token);
     req.user = decodedToken;
-    
-    // Check PostgreSQL for user authorization
+
     const pool = getPgPool();
     if (!pool) {
       return res.status(503).json({ error: 'Database unavailable' });
     }
-    
-    // Extract organization from request headers or default
-    const orgId = req.headers['x-organization-id'] as string;
-    if (!orgId) {
+
+    const requestedOrgId = req.headers['x-organization-id'] as string | undefined;
+    if (!requestedOrgId) {
       return res.status(400).json({ error: 'Missing organization context' });
     }
-    
+
     const client = await pool.connect();
     try {
-      // Find user in this org
-      const { rows } = await client.query('SELECT * FROM users WHERE email = $1 AND organization_id = $2', [decodedToken.email, orgId]);
-      
+      const { rows } = await client.query(
+        'SELECT id, organization_id, email, name, role FROM users WHERE email = $1 AND organization_id = $2',
+        [decodedToken.email, requestedOrgId],
+      );
+
       if (rows.length === 0) {
-        // Auto-provision user in DB for demo purposes if they log in via Google
-        // In a real app this would be an invitation/signup flow
-        const userId = decodedToken.uid; 
-        await client.query(`
-          INSERT INTO users (id, organization_id, email, name, role) 
-          VALUES ($1, $2, $3, $4, $5)
-          ON CONFLICT (organization_id, email) DO NOTHING
-        `, [userId, orgId, decodedToken.email, decodedToken.name || 'Unknown', 'member']);
-        
-        const { rows: newRows } = await client.query('SELECT * FROM users WHERE email = $1 AND organization_id = $2', [decodedToken.email, orgId]);
-        req.dbUser = newRows[0];
-      } else {
-        req.dbUser = rows[0];
+        return res.status(403).json({ error: 'Forbidden: User is not a member of this organization' });
       }
+
+      req.dbUser = rows[0];
+      resolveAuthenticatedOrganizationId(req.dbUser, requestedOrgId);
     } finally {
       client.release();
     }
-    
+
     next();
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof AuthorizationError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('Error verifying Firebase ID token:', error);
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
