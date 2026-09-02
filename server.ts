@@ -25,6 +25,7 @@ import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
 import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
+import { externalWebhookService } from './server/services/externalWebhookService';
 import { taskCacheService } from './server/services/cacheService';
 import { leadScoringService } from './server/leadScoringService';
 
@@ -969,6 +970,69 @@ async function startServer() {
   // Property Intelligence APIs
   // Property Intelligence & Live County GIS Search APIs
   const propertyDataProvider = new UnifiedPropertyDataProvider();
+
+  // External HTTP/HTTPS Webhook Management APIs
+  app.get('/api/webhooks', async (req, res) => {
+    try {
+      const organizationId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      res.json(await externalWebhookService.listEndpoints(organizationId));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to list webhook endpoints' });
+    }
+  });
+
+  app.post('/api/webhooks', async (req, res) => {
+    try {
+      const organizationId = req.body.organizationId || req.body.organization_id || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
+      res.status(201).json(endpoint);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to create webhook endpoint' });
+    }
+  });
+
+  app.put('/api/webhooks/:id', async (req, res) => {
+    try {
+      const organizationId = req.body.organizationId || req.body.organization_id || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: 'Webhook endpoint not found' });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update webhook endpoint' });
+    }
+  });
+
+  app.delete('/api/webhooks/:id', async (req, res) => {
+    try {
+      const organizationId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Webhook endpoint not found' });
+      res.json({ success: true, deletedId: req.params.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to delete webhook endpoint' });
+    }
+  });
+
+  app.post('/api/webhooks/:id/test', async (req, res) => {
+    try {
+      const organizationId = req.body.organizationId || req.body.organization_id || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
+      if (!delivery) return res.status(404).json({ error: 'Webhook endpoint not found' });
+      res.json(delivery);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Webhook test failed' });
+    }
+  });
+
+  app.get('/api/webhooks/:id/deliveries', async (req, res) => {
+    try {
+      const organizationId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const limit = Math.max(1, Number(req.query.limit) || 50);
+      res.json(await externalWebhookService.listDeliveries(organizationId, req.params.id, limit));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to list webhook deliveries' });
+    }
+  });
 
   app.get('/api/property-search', async (req, res) => {
     try {
