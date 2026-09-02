@@ -742,6 +742,7 @@ export default function App() {
             <DialerView
               campaigns={campaigns}
               calls={calls}
+              leads={leads}
               onDialCall={handleDialCall}
               onRefreshCampaigns={() => fetchAllData()}
               onAddTask={handleAddTask}

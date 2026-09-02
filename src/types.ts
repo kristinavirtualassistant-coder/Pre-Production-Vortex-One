@@ -284,6 +284,36 @@ export interface LeadActivityLog {
   notes?: string;
 }
 
+export interface LeadEngagementMetrics {
+  total_calls_count?: number;
+  connected_calls_count?: number;
+  total_talk_duration_seconds?: number;
+  avg_call_duration_seconds?: number;
+  recent_call_date?: string;
+  call_engagement_score?: number; // 0 - 35 pts
+
+  email_sent_count?: number;
+  email_opened_count?: number;
+  email_clicked_count?: number;
+  email_replied_count?: number;
+  recent_email_open_date?: string;
+  email_engagement_score?: number; // 0 - 30 pts
+
+  property_views_count?: number;
+  gis_parcel_searches_count?: number;
+  saved_searches_count?: number;
+  underwriting_pdf_views_count?: number;
+  recent_search_date?: string;
+  property_search_score?: number; // 0 - 35 pts
+
+  dynamic_engagement_score?: number; // 0 - 100 pts
+  score_trend?: 'up' | 'down' | 'stable';
+  score_delta?: number; // e.g. +14, -3
+  last_recalculated_at?: string;
+  recalculation_reason?: string;
+  engagement_tier?: 'blazing' | 'warm' | 'nurture' | 'cold';
+}
+
 export interface LeadRecord {
   id: string;
   organization_id: string;
@@ -310,6 +340,7 @@ export interface LeadRecord {
   data_quality_notes?: string;
   notes?: string;
   tags?: string[];
+  lead_source?: string;
   disposition?: 'uncontacted' | 'interested' | 'not_interested' | 'call_back_later' | 'wrong_number' | 'do_not_call' | 'under_contract';
   estimated_equity?: number;
   estimated_value?: number;
@@ -317,6 +348,7 @@ export interface LeadRecord {
   property_type?: string;
   city?: string;
   activity_log?: LeadActivityLog[];
+  engagement_metrics?: LeadEngagementMetrics;
 }
 
 export interface DialerCampaign {
@@ -364,10 +396,18 @@ export interface CallRecord {
   duration_seconds: number;
   disposition?: 'interested' | 'not_interested' | 'call_back_later' | 'wrong_number' | 'do_not_call';
   call_strategy_brief?: string;
+  lead_source?: string;
   recording_url?: string;
   audio_tts_url?: string;
   notes?: string;
   created_at: string;
+}
+
+export interface QuickSnippet {
+  id: string;
+  title: string;
+  content: string;
+  category: 'objection' | 'info' | 'closing' | 'other';
 }
 
 export interface VoicemailFile {
@@ -385,6 +425,7 @@ export interface DialerMetrics {
   call_volume: number;
   success_rate: number;
   avg_talk_time: number;
+  abandonment_rate?: number;
   date: string;
 }
 

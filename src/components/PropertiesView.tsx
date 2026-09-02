@@ -53,7 +53,7 @@ import {
 import { Property } from '../types';
 import { useToast } from '../contexts/ToastContext';
 import { generatePropertyPdfReport } from '../utils/propertyReportPdf';
-import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
+import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { Tooltip, InfoTooltip, GLOSSARY } from './Tooltip';
 import { SkipTraceModal } from './SkipTraceModal';
 import { AutomatedSkipTracePipelineModal } from './AutomatedSkipTracePipelineModal';
@@ -1820,7 +1820,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
           </div>
         ) : (
           <APIProvider apiKey={googleMapsApiKey}>
-            <Map
+            <GoogleMap
               mapId="DEMO_MAP_ID"
               style={{ width: '100%', height: '100%' }}
               defaultCenter={
@@ -1855,7 +1855,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
                 }
                 return null;
               })}
-            </Map>
+            </GoogleMap>
           </APIProvider>
         )}
       </div>
@@ -1985,39 +1985,9 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
             <div className="flex items-center flex-wrap gap-2">
               {/* Column Toggle Menu */}
               <ColumnToggleDropdown
+                columns={PROPERTY_TABLE_COLUMNS}
                 visibility={columnVisibility}
-                onToggleColumn={(colId) => {
-                  setColumnVisibility(prev => ({
-                    ...prev,
-                    [colId]: !prev[colId],
-                  }));
-                }}
-                onResetVisibility={() => setColumnVisibility(DEFAULT_COLUMN_VISIBILITY)}
-                onSetPreset={(preset) => {
-                  if (preset === 'all') {
-                    const allTrue = PROPERTY_TABLE_COLUMNS.reduce((acc, col) => {
-                      acc[col.id] = true;
-                      return acc;
-                    }, {} as ColumnVisibilityState);
-                    setColumnVisibility(allTrue);
-                  } else if (preset === 'compact') {
-                    setColumnVisibility({
-                      address: true,
-                      apn: true,
-                      property_type: false,
-                      tax_status: true,
-                      estimated_value: true,
-                      estimated_equity: true,
-                      owner_name: true,
-                      owner_phone: false,
-                      last_contacted: false,
-                      tags: false,
-                      assigned_agent: false,
-                    });
-                  } else {
-                    setColumnVisibility(DEFAULT_COLUMN_VISIBILITY);
-                  }
-                }}
+                onChange={setColumnVisibility}
               />
 
               {/* Group By Selector */}

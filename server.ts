@@ -26,6 +26,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { taskCacheService } from './server/services/cacheService';
+import { leadScoringService } from './server/leadScoringService';
 
 async function startServer() {
   const app = express();
@@ -40,6 +41,13 @@ async function startServer() {
     console.log(`Vortex One database initialized (${dbStatus.type}). Migrations count: ${dbStatus.appliedMigrationsCount}`);
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
+  }
+
+  // Start Automated Lead Scoring Background Engine (Recalculates every 30s based on calls, email opens, and property searches)
+  try {
+    leadScoringService.start();
+  } catch (scoreErr: any) {
+    console.error('[LeadScoringService] Startup error:', scoreErr.message);
   }
 
   // --- API Routes ---
@@ -890,6 +898,71 @@ async function startServer() {
       console.error('Workflow stream error:', err);
       sendEvent('error', { error: err.message || 'Streaming execution failed' });
       res.end();
+    }
+  });
+
+  // Agent State Manager for Predictive Dialing
+  const agentState = {
+    status: 'idle' as 'idle' | 'busy' | 'wrapping_up',
+    currentLeadId: null as string | null,
+  };
+
+  app.post('/api/agent/state', (req, res) => {
+    const { status, leadId } = req.body;
+    agentState.status = status;
+    agentState.currentLeadId = leadId;
+    res.json({ success: true });
+  });
+
+  // Predictive Dialing Trigger
+  app.post('/api/predictive/trigger', async (req, res) => {
+      if (agentState.status === 'wrapping_up') {
+          // Trigger next call logic
+          res.json({ status: 'triggered' });
+      } else {
+          res.status(400).json({ error: 'Agent not ready for predictive dialing' });
+      }
+  });
+
+  // Smart Forwarding API
+  app.get('/api/settings/smart-forwarding', (req, res) => {
+    res.json(inMemoryStore.smartForwarding);
+  });
+
+  app.post('/api/settings/smart-forwarding', (req, res) => {
+    const { enabled, rules } = req.body;
+    if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
+    if (Array.isArray(rules)) inMemoryStore.smartForwarding.rules = rules;
+    res.json(inMemoryStore.smartForwarding);
+  });
+
+  // Audit Logging API
+  app.get('/api/audit/logs', (req, res) => {
+    try {
+      res.json(inMemoryStore.auditLogs);
+    } catch (err: any) {
+      console.error('Failed to get audit logs:', err);
+      res.status(500).json({ error: 'Failed to get audit logs' });
+    }
+  });
+
+  app.post('/api/audit/log', (req, res) => {
+    try {
+      const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
+      inMemoryStore.auditLogs.unshift({
+        id: `audit_call_${Date.now()}`,
+        timestamp: timestamp || new Date().toISOString(),
+        agent: 'agent_1',
+        action: action || 'call_log',
+        input: { callerId, durationSeconds },
+        status: 'success',
+        latency_ms: 0,
+        organization_id: organizationId || 'org_cmc_realty',
+      });
+      res.status(201).json({ success: true });
+    } catch (err: any) {
+      console.error('Audit logging failed:', err);
+      res.status(500).json({ error: 'Audit logging failed' });
     }
   });
 
@@ -2343,6 +2416,79 @@ async function startServer() {
     }
   });
 
+  // Automated Lead Scoring Service API Routes
+  app.get('/api/leads/scoring-service/status', (req, res) => {
+    try {
+      const status = leadScoringService.getStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch scoring service status' });
+    }
+  });
+
+  app.post('/api/leads/scoring-service/toggle', (req, res) => {
+    try {
+      const isRunning = leadScoringService.toggle();
+      res.json({
+        success: true,
+        isRunning,
+        message: isRunning ? 'Automated Lead Scoring background service activated' : 'Automated Lead Scoring background service paused',
+        status: leadScoringService.getStatus(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to toggle scoring service' });
+    }
+  });
+
+  app.post('/api/leads/scoring-service/trigger', (req, res) => {
+    try {
+      const orgId = req.body.organizationId || req.body.organization_id;
+      const result = leadScoringService.recalculateAll(orgId);
+      res.json({
+        success: true,
+        updatedCount: result.updatedCount,
+        leads: result.leads,
+        status: leadScoringService.getStatus(),
+        message: `Dynamic engagement scores recalculated across ${result.updatedCount} leads based on recent call duration, email opens, and property searches.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to recalculate lead scores' });
+    }
+  });
+
+  app.post('/api/leads/scoring-service/simulate-event', (req, res) => {
+    try {
+      const { leadId, eventType, payload } = req.body;
+      if (!leadId || !eventType) {
+        return res.status(400).json({ error: 'leadId and eventType are required' });
+      }
+
+      const result = leadScoringService.simulateEngagementEvent(leadId, eventType, payload);
+      if (!result.success) {
+        return res.status(404).json({ error: result.message });
+      }
+
+      res.json({
+        success: true,
+        lead: result.lead,
+        delta: result.delta,
+        message: result.message,
+        status: leadScoringService.getStatus(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to simulate engagement event' });
+    }
+  });
+
+  app.get('/api/leads/scoring-service/history', (req, res) => {
+    try {
+      const status = leadScoringService.getStatus();
+      res.json(status.latestScoreAdjustments || []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch scoring history' });
+    }
+  });
+
   // Create Lead Manually
   app.post('/api/leads/create', (req, res) => {
     try {
@@ -2756,6 +2902,16 @@ async function startServer() {
     }
   });
 
+  app.post('/api/campaigns/:id/shuffle', async (req, res) => {
+    try {
+      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Call Records & Telephony FSM APIs
   app.get('/api/calls', async (req, res) => {
     const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
@@ -3051,8 +3207,8 @@ async function startServer() {
       
       // Fallback mock metrics if Firestore is unconfigured
       const defaultMetrics = [
-        { id: 'met_1', organization_id: orgId, date: new Date().toISOString().split('T')[0], call_volume: 142, success_rate: 68.4, avg_talk_time: 84 },
-        { id: 'met_2', organization_id: orgId, date: new Date(Date.now() - 86400000).toISOString().split('T')[0], call_volume: 118, success_rate: 64.2, avg_talk_time: 79 },
+        { id: 'met_1', organization_id: orgId, date: new Date().toISOString().split('T')[0], call_volume: 142, success_rate: 68.4, avg_talk_time: 84, abandonment_rate: 4.2 },
+        { id: 'met_2', organization_id: orgId, date: new Date(Date.now() - 86400000).toISOString().split('T')[0], call_volume: 118, success_rate: 64.2, avg_talk_time: 79, abandonment_rate: 3.8 },
       ];
 
       try {
@@ -3119,15 +3275,125 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/dialer/voicemails/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      try {
+        await firestore.collection('voicemails').doc(id).delete();
+      } catch (fsErr) {}
+      res.json({ success: true, deletedId: id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { voicemailId, voicemailLabel, voicemailUrl, callerId, organizationId, durationSeconds } = req.body;
+      const orgId = organizationId || 'org_cmc_realty';
+      const label = voicemailLabel || 'Pre-recorded Professional Voicemail';
+      const pool = getPgPool();
+      
+      const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
+      
+      try {
+        await pool.query(
+          `UPDATE call 
+           SET disposition = 'voicemail', 
+               status = 'completed', 
+               notes = COALESCE(notes || E'\n' || $1, $1),
+               updated_at = NOW() 
+           WHERE id = $2`,
+          [dropNote, id]
+        );
+      } catch (dbErr) {
+        console.warn('Postgres call update skipped:', dbErr);
+      }
+
+      // Log to audit log
+      try {
+        await pool.query(
+          `INSERT INTO audit_log (action, user_id, organization_id, metadata, timestamp) 
+           VALUES ($1, $2, $3, $4, NOW())`,
+          [
+            'voicemail_dropped',
+            'agent_active',
+            orgId,
+            JSON.stringify({
+              callId: id,
+              voicemailId,
+              voicemailLabel: label,
+              voicemailUrl,
+              callerId,
+              durationSeconds: durationSeconds || 0,
+            }),
+          ]
+        );
+      } catch (auditErr) {}
+
+      res.json({
+        success: true,
+        callId: id,
+        status: 'voicemail_dropped',
+        message: `Voicemail "${label}" dropped successfully. Call disconnected for agent.`,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.patch('/api/calls/:id', async (req, res) => {
     try {
       const { id } = req.params;
       const { notes } = req.body;
       const pool = getPgPool();
       await pool.query(
-        'UPDATE call SET notes = $1 WHERE id = $2',
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
         [notes, id]
       );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/calls/:id/notes', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const pool = getPgPool();
+      await pool.query(
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
+        [notes, id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/calls/:id/disposition', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { disposition, followUpAt } = req.body;
+      const pool = getPgPool();
+      
+      // We try to update follow_up_at if it exists, otherwise just disposition
+      try {
+        await pool.query(
+          'UPDATE call SET disposition = $1, follow_up_at = $2, updated_at = NOW() WHERE id = $3',
+          [disposition, followUpAt || null, id]
+        );
+      } catch (dbErr) {
+        // Fallback if follow_up_at column doesn't exist
+        await pool.query(
+          'UPDATE call SET disposition = $1, updated_at = NOW() WHERE id = $2',
+          [disposition, id]
+        );
+      }
+      
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

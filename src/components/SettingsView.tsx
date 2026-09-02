@@ -39,6 +39,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [tcpaDailyCap, setTcpaDailyCap] = useState('150');
   const [timezone, setTimezone] = useState('America/Los_Angeles');
   const [minLeadScore, setMinLeadScore] = useState('65');
+  const [smartForwarding, setSmartForwarding] = useState({ enabled: false, rules: [] as Array<{ leadSource: string; extension: string }> });
+
+  React.useEffect(() => {
+    fetch('/api/settings/smart-forwarding')
+      .then(res => res.json())
+      .then(setSmartForwarding);
+  }, []);
+
+  const toggleSmartForwarding = async () => {
+    const nextEnabled = !smartForwarding.enabled;
+    const nextSettings = { ...smartForwarding, enabled: nextEnabled };
+    setSmartForwarding(nextSettings);
+    await fetch('/api/settings/smart-forwarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    });
+    addToast(`Smart Forwarding ${nextEnabled ? 'enabled' : 'disabled'}.`, 'success');
+  };
 
   const handleSaveGeneral = (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,6 +215,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </p>
                 <div className="text-xs font-semibold text-emerald-700">Automated Scrubbing Enabled</div>
               </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+              <div>
+                <h4 className="text-xs font-bold text-slate-800">Smart Forwarding</h4>
+                <p className="text-[11px] text-slate-500">Route incoming calls based on lead source tags.</p>
+              </div>
+              <button 
+                onClick={toggleSmartForwarding}
+                className={`w-10 h-6 rounded-full transition-colors ${smartForwarding.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
+              >
+                  <div className={`w-4 h-4 rounded-full bg-white transition-transform ${smartForwarding.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+              </button>
             </div>
 
             <div>

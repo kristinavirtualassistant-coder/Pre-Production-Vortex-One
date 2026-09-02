@@ -13,6 +13,8 @@ export interface Toast {
 interface ToastContextType {
   addToast: (message: string, type?: ToastType) => void;
   removeToast: (id: string) => void;
+  setNotificationsPaused: (paused: boolean) => void;
+  isPaused: boolean;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -27,22 +29,33 @@ export const useToast = () => {
 
 export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [isPaused, setIsPaused] = useState(false);
 
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
+    // Suppress info and success toasts if paused, keep errors (critical)
+    if (isPaused && type !== 'error') {
+      console.log(`[Smart Pause] Suppressed notification: ${message}`);
+      return;
+    }
+
     const id = Math.random().toString(36).substring(2, 11);
     setToasts((prev) => [...prev, { id, message, type }]);
 
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 5000);
-  }, []);
+  }, [isPaused]);
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
+  const setNotificationsPaused = useCallback((paused: boolean) => {
+    setIsPaused(paused);
+  }, []);
+
   return (
-    <ToastContext.Provider value={{ addToast, removeToast }}>
+    <ToastContext.Provider value={{ addToast, removeToast, setNotificationsPaused, isPaused }}>
       {children}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
         <AnimatePresence>

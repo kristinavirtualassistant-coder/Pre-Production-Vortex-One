@@ -30,6 +30,7 @@ interface LeadDetailDrawerProps {
   onDialLead?: (lead: LeadRecord) => void;
   onScheduleOutreach: (lead: LeadRecord) => void;
   onSkipTrace: (lead: LeadRecord) => void;
+  onOpenScoreBreakdown?: (lead: LeadRecord) => void;
 }
 
 const STAGES: Array<{ id: LeadRecord['stage']; label: string }> = [
@@ -51,6 +52,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   onDialLead,
   onScheduleOutreach,
   onSkipTrace,
+  onOpenScoreBreakdown,
 }) => {
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState<'details' | 'factors' | 'activity' | 'notes'>('details');
@@ -202,19 +204,61 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
           </div>
 
           <div className="text-right">
-            <span
-              className={`text-sm font-bold font-mono px-2.5 py-1 rounded-full border ${
+            <button
+              id="drawer-open-score-breakdown-btn"
+              type="button"
+              onClick={() => onOpenScoreBreakdown && onOpenScoreBreakdown(lead)}
+              className={`text-sm font-bold font-mono px-2.5 py-1 rounded-full border transition hover:opacity-80 cursor-pointer flex items-center space-x-1.5 ${
                 isHigh
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                   : isMid
-                  ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                  ? 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
               }`}
+              title="Click to view full explainable lead score breakdown & live activity simulator"
             >
-              {lead.lead_score}/100
-            </span>
+              <span>{lead.lead_score}/100</span>
+              {lead.engagement_metrics?.score_delta ? (
+                <span className="text-[10px] font-bold">
+                  {lead.engagement_metrics.score_delta > 0 ? `+${lead.engagement_metrics.score_delta}` : lead.engagement_metrics.score_delta}
+                </span>
+              ) : null}
+            </button>
+            <div className="text-[9px] text-slate-400 mt-0.5 font-medium">Dynamic Score</div>
           </div>
         </div>
+
+        {/* Dynamic Engagement Telemetry Strip */}
+        {lead.engagement_metrics && (
+          <div
+            onClick={() => onOpenScoreBreakdown && onOpenScoreBreakdown(lead)}
+            className="bg-slate-50 hover:bg-cyan-50/50 border border-slate-200 hover:border-cyan-300 rounded-xl p-2.5 transition cursor-pointer flex items-center justify-between text-xs"
+            title="Click to view full breakdown"
+          >
+            <div className="flex items-center space-x-3 text-[11px]">
+              <span className="flex items-center space-x-1 text-cyan-800 font-medium">
+                <PhoneCall className="w-3 h-3 text-cyan-600" />
+                <span>
+                  {Math.floor((lead.engagement_metrics.total_talk_duration_seconds || 0) / 60)}m{' '}
+                  {(lead.engagement_metrics.total_talk_duration_seconds || 0) % 60}s talk
+                </span>
+              </span>
+              <span className="flex items-center space-x-1 text-indigo-800 font-medium">
+                <Mail className="w-3 h-3 text-indigo-600" />
+                <span>{lead.engagement_metrics.email_opened_count || 0} opens</span>
+              </span>
+              <span className="flex items-center space-x-1 text-emerald-800 font-medium">
+                <Sparkles className="w-3 h-3 text-emerald-600" />
+                <span>
+                  {(lead.engagement_metrics.gis_parcel_searches_count || 0) +
+                    (lead.engagement_metrics.property_views_count || 0)}{' '}
+                  searches
+                </span>
+              </span>
+            </div>
+            <span className="text-[10px] text-cyan-700 font-bold uppercase tracking-wider">Breakdown →</span>
+          </div>
+        )}
 
         {/* Quick Stage Stepper / Transition Dropdown */}
         <div className="space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200">

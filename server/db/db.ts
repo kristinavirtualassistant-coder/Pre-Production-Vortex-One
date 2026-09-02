@@ -65,6 +65,10 @@ export const inMemoryStore = {
   approvals: [] as ApprovalRequest[],
   auditLogs: [] as AuditLogEntry[],
   suppressionRecords: [] as Array<{ id: string; phone_number: string; reason: string; suppressed_at: string }>,
+  smartForwarding: {
+    enabled: false,
+    rules: [] as Array<{ leadSource: string; extension: string }>,
+  },
   propertyRefreshSchedules: [] as PropertyRefreshSchedule[],
   propertyRefreshLogs: [] as PropertyRefreshLog[],
   outreachTemplates: [] as OutreachTemplate[],

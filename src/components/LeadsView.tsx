@@ -52,6 +52,8 @@ import { CrmKanbanBoard } from './CrmKanbanBoard';
 import { CrmAnalyticsView } from './CrmAnalyticsView';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
+import { LeadScoringControlBanner, ScoringFilterPreset } from './LeadScoringControlBanner';
+import { LeadScoreBreakdownModal } from './LeadScoreBreakdownModal';
 import { useToast } from '../contexts/ToastContext';
 
 interface LeadsViewProps {
@@ -95,9 +97,13 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   const [onlyTcpaSafe, setOnlyTcpaSafe] = useState(false);
   const [minScore, setMinScore] = useState<number>(0);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [scoringFilterPreset, setScoringFilterPreset] = useState<ScoringFilterPreset>('all');
+  const [isRecalculatingScores, setIsRecalculatingScores] = useState(false);
 
   // Sorting State
-  const [sortBy, setSortBy] = useState<'score_desc' | 'score_asc' | 'activity_desc' | 'created_desc' | 'name_asc'>('score_desc');
+  const [sortBy, setSortBy] = useState<
+    'score_desc' | 'score_asc' | 'delta_desc' | 'talk_desc' | 'emails_desc' | 'searches_desc' | 'activity_desc' | 'created_desc' | 'name_asc'
+  >('score_desc');
 
   // Selected Lead & Bulk Selections
   const [selectedLead, setSelectedLead] = useState<LeadRecord | null>(() => {
@@ -121,6 +127,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   const [isAutoFollowUpModalOpen, setIsAutoFollowUpModalOpen] = useState(false);
   const [showGoogleSheetsModal, setShowGoogleSheetsModal] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [scoreBreakdownModalLead, setScoreBreakdownModalLead] = useState<LeadRecord | null>(null);
 
   const [skipTraceModalLead, setSkipTraceModalLead] = useState<LeadRecord | null>(null);
   const [deepEnrichModalLead, setDeepEnrichModalLead] = useState<LeadRecord | null>(null);
@@ -139,6 +146,76 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       if (match) setSelectedLead(match);
     }
   }, [initialSelectedLeadId, leadsList]);
+
+  // Surging Leads Count
+  const surgingLeadsCount = useMemo(() => {
+    return leadsList.filter((l) => (l.engagement_metrics?.score_delta || 0) > 0 || l.engagement_metrics?.score_trend === 'up').length;
+  }, [leadsList]);
+
+  // Recalculate Dynamic Engagement Scores Handler
+  const handleRecalculateScores = async () => {
+    try {
+      setIsRecalculatingScores(true);
+      const res = await fetch('/api/leads/scoring-service/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to recalculate');
+      if (data.leads && Array.isArray(data.leads)) {
+        setLeadsList(data.leads);
+        if (selectedLead) {
+          const updatedMatch = data.leads.find((l: LeadRecord) => l.id === selectedLead.id);
+          if (updatedMatch) setSelectedLead(updatedMatch);
+        }
+      }
+      addToast(data.message || 'Dynamic lead engagement scores recalculation complete', 'success');
+      if (onRefreshLeads) onRefreshLeads();
+    } catch (err: any) {
+      addToast(err.message || 'Recalculation failed', 'error');
+    } finally {
+      setIsRecalculatingScores(false);
+    }
+  };
+
+  // Simulate Activity Wave Handler
+  const handleSimulateGlobalWave = async () => {
+    try {
+      setIsRecalculatingScores(true);
+      const targetLeads = leadsList.slice(0, 4);
+      for (const lead of targetLeads) {
+        const eventType = Math.random() > 0.5 ? 'call' : 'email_open';
+        await fetch('/api/leads/scoring-service/simulate-event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leadId: lead.id,
+            eventType,
+            payload: eventType === 'call' ? { duration_seconds: 180 } : undefined,
+          }),
+        });
+      }
+      const res = await fetch('/api/leads/scoring-service/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (data.leads) {
+        setLeadsList(data.leads);
+        if (selectedLead) {
+          const updatedMatch = data.leads.find((l: LeadRecord) => l.id === selectedLead.id);
+          if (updatedMatch) setSelectedLead(updatedMatch);
+        }
+      }
+      addToast('Simulated incoming engagement events -> Lead scores surging!', 'success');
+      if (onRefreshLeads) onRefreshLeads();
+    } catch (err: any) {
+      addToast(err.message || 'Simulation failed', 'error');
+    } finally {
+      setIsRecalculatingScores(false);
+    }
+  };
 
   // Filtered & Sorted Leads
   const filteredLeads = useMemo(() => {
@@ -177,6 +254,20 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         // Min Score Filter
         const matchesMinScore = (lead.lead_score || 0) >= minScore;
 
+        // Dynamic Scoring Preset Filter
+        let matchesScoringPreset = true;
+        if (scoringFilterPreset === 'surging') {
+          matchesScoringPreset = (lead.engagement_metrics?.score_delta || 0) > 0 || lead.engagement_metrics?.score_trend === 'up';
+        } else if (scoringFilterPreset === 'high_calls') {
+          matchesScoringPreset = (lead.engagement_metrics?.total_talk_duration_seconds || 0) >= 90;
+        } else if (scoringFilterPreset === 'active_emails') {
+          matchesScoringPreset = (lead.engagement_metrics?.email_opened_count || 0) >= 2;
+        } else if (scoringFilterPreset === 'active_searches') {
+          matchesScoringPreset =
+            (lead.engagement_metrics?.gis_parcel_searches_count || 0) >= 2 ||
+            (lead.engagement_metrics?.property_views_count || 0) >= 3;
+        }
+
         return (
           matchesSearch &&
           matchesClassification &&
@@ -185,12 +276,30 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
           matchesDisposition &&
           matchesQuality &&
           matchesTcpa &&
-          matchesMinScore
+          matchesMinScore &&
+          matchesScoringPreset
         );
       })
       .sort((a, b) => {
         if (sortBy === 'score_desc') return (b.lead_score || 0) - (a.lead_score || 0);
         if (sortBy === 'score_asc') return (a.lead_score || 0) - (b.lead_score || 0);
+        if (sortBy === 'delta_desc') {
+          return (b.engagement_metrics?.score_delta || 0) - (a.engagement_metrics?.score_delta || 0);
+        }
+        if (sortBy === 'talk_desc') {
+          return (
+            (b.engagement_metrics?.total_talk_duration_seconds || 0) -
+            (a.engagement_metrics?.total_talk_duration_seconds || 0)
+          );
+        }
+        if (sortBy === 'emails_desc') {
+          return (b.engagement_metrics?.email_opened_count || 0) - (a.engagement_metrics?.email_opened_count || 0);
+        }
+        if (sortBy === 'searches_desc') {
+          const bTotal = (b.engagement_metrics?.gis_parcel_searches_count || 0) + (b.engagement_metrics?.property_views_count || 0);
+          const aTotal = (a.engagement_metrics?.gis_parcel_searches_count || 0) + (a.engagement_metrics?.property_views_count || 0);
+          return bTotal - aTotal;
+        }
         if (sortBy === 'activity_desc') {
           return new Date(b.last_activity_date || 0).getTime() - new Date(a.last_activity_date || 0).getTime();
         }
@@ -212,6 +321,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
     selectedQuality,
     onlyTcpaSafe,
     minScore,
+    scoringFilterPreset,
     sortBy,
   ]);
 
@@ -665,14 +775,16 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
             <span>Google Sheets</span>
           </button>
 
-          {/* Import CSV / Sync CRM */}
+          {/* Bulk Import Leads CSV */}
           <button
+            id="btn-bulk-import-leads"
             type="button"
             onClick={() => setIsImportModalOpen(true)}
             className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition flex items-center space-x-1.5 cursor-pointer"
+            title="Import external lead lists efficiently via CSV"
           >
             <Upload className="w-3.5 h-3.5 text-slate-600" />
-            <span>Import / Sync</span>
+            <span>Bulk Import Leads</span>
           </button>
 
           {/* Automated Skip Trace Pipeline */}
@@ -765,6 +877,16 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         </div>
       </div>
 
+      {/* Automated Lead Scoring Background Engine Controller */}
+      <LeadScoringControlBanner
+        activePreset={scoringFilterPreset}
+        onSelectPreset={(p) => setScoringFilterPreset(p)}
+        onRecalculateAll={handleRecalculateScores}
+        onSimulateGlobalActivity={handleSimulateGlobalWave}
+        isRecalculating={isRecalculatingScores}
+        surgingLeadsCount={surgingLeadsCount}
+      />
+
       {/* Multi-Option Filter & Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
@@ -822,8 +944,12 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
               className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-cyan-600 cursor-pointer font-medium"
               title="Sort Leads"
             >
-              <option value="score_desc">Score ↓ (High)</option>
-              <option value="score_asc">Score ↑ (Low)</option>
+              <option value="score_desc">⚡ Score ↓ (Highest)</option>
+              <option value="score_asc">⚡ Score ↑ (Lowest)</option>
+              <option value="delta_desc">🔥 Surging Delta (Top Gain)</option>
+              <option value="talk_desc">📞 Call Talk Time (Longest)</option>
+              <option value="emails_desc">✉️ Email Opens (Most)</option>
+              <option value="searches_desc">🔍 GIS Searches (Most)</option>
               <option value="activity_desc">Recent Activity</option>
               <option value="created_desc">Newest Added</option>
               <option value="name_asc">Name (A-Z)</option>
@@ -1235,18 +1361,74 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                     </div>
                   </div>
 
-                  <span
-                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full border ${
-                      isHigh
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : isMid
-                        ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                        : 'bg-slate-100 text-slate-700 border-slate-200'
-                    }`}
-                  >
-                    {lead.lead_score} pts
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <button
+                      id={`card-score-btn-${lead.id}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScoreBreakdownModalLead(lead);
+                      }}
+                      className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full border transition hover:opacity-80 cursor-pointer flex items-center space-x-1.5 shadow-2xs ${
+                        isHigh
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                          : isMid
+                          ? 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                      }`}
+                      title="Click to view full explainable lead score breakdown & activity simulation"
+                    >
+                      <Zap className="w-3 h-3 text-cyan-600" />
+                      <span>{lead.lead_score} pts</span>
+                      {lead.engagement_metrics?.score_delta ? (
+                        <span
+                          className={`text-[10px] font-bold ${
+                            lead.engagement_metrics.score_delta > 0 ? 'text-emerald-700' : 'text-rose-600'
+                          }`}
+                        >
+                          {lead.engagement_metrics.score_delta > 0
+                            ? `+${lead.engagement_metrics.score_delta}`
+                            : lead.engagement_metrics.score_delta}
+                        </span>
+                      ) : null}
+                    </button>
+                    <span className="text-[9px] text-slate-400 font-medium mt-0.5">Dynamic Score</span>
+                  </div>
                 </div>
+
+                {/* Telemetry Micro-Pills */}
+                {lead.engagement_metrics && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScoreBreakdownModalLead(lead);
+                    }}
+                    className="flex flex-wrap items-center gap-1.5 py-1 px-2 bg-slate-50 hover:bg-cyan-50/60 rounded-xl border border-slate-150 text-[10px] text-slate-600 transition cursor-pointer"
+                    title="Telemetry signals impacting dynamic score"
+                  >
+                    <span className="flex items-center space-x-1 font-mono text-cyan-800 font-semibold">
+                      <PhoneCall className="w-2.5 h-2.5 text-cyan-600" />
+                      <span>
+                        {Math.floor((lead.engagement_metrics.total_talk_duration_seconds || 0) / 60)}m{' '}
+                        {(lead.engagement_metrics.total_talk_duration_seconds || 0) % 60}s
+                      </span>
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span className="flex items-center space-x-1 font-mono text-indigo-800 font-semibold">
+                      <Mail className="w-2.5 h-2.5 text-indigo-600" />
+                      <span>{lead.engagement_metrics.email_opened_count || 0} opens</span>
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span className="flex items-center space-x-1 font-mono text-emerald-800 font-semibold">
+                      <Search className="w-2.5 h-2.5 text-emerald-600" />
+                      <span>
+                        {(lead.engagement_metrics.gis_parcel_searches_count || 0) +
+                          (lead.engagement_metrics.property_views_count || 0)}{' '}
+                        GIS
+                      </span>
+                    </span>
+                  </div>
+                )}
 
                 {/* Badges */}
                 <div className="flex flex-wrap gap-1 text-[10px]">
@@ -1331,7 +1513,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                         </button>
                       </th>
                       <th className="p-3">Prospect &amp; Subject Asset</th>
-                      <th className="p-3">Score &amp; Tier</th>
+                      <th className="p-3">Dynamic Score &amp; Engagement</th>
                       <th className="p-3">Stage</th>
                       <th className="p-3">Assigned Agent</th>
                       <th className="p-3">TCPA</th>
@@ -1354,6 +1536,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                               setSelectedDisposition('all');
                               setMinScore(0);
                               setOnlyTcpaSafe(false);
+                              setScoringFilterPreset('all');
                             }}
                             className="mt-2 text-xs text-cyan-600 hover:underline font-semibold cursor-pointer"
                           >
@@ -1413,19 +1596,75 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                               </div>
                             </td>
 
-                            {/* Score & Tier */}
+                            {/* Dynamic Score & Telemetry */}
                             <td className="p-3">
-                              <span
-                                className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-full border ${
-                                  isHigh
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                    : isMid
-                                    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                                }`}
-                              >
-                                {lead.lead_score}/100
-                              </span>
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-1.5">
+                                  <button
+                                    id={`row-score-btn-${lead.id}`}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setScoreBreakdownModalLead(lead);
+                                    }}
+                                    className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-full border transition hover:opacity-80 cursor-pointer flex items-center space-x-1 ${
+                                      isHigh
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                        : isMid
+                                        ? 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                                        : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                                    }`}
+                                    title="Click to view explainable score breakdown & simulator"
+                                  >
+                                    <span>{lead.lead_score}/100</span>
+                                    {lead.engagement_metrics?.score_delta ? (
+                                      <span
+                                        className={`text-[9px] font-bold ${
+                                          lead.engagement_metrics.score_delta > 0
+                                            ? 'text-emerald-700'
+                                            : 'text-rose-600'
+                                        }`}
+                                      >
+                                        {lead.engagement_metrics.score_delta > 0
+                                          ? `+${lead.engagement_metrics.score_delta}`
+                                          : lead.engagement_metrics.score_delta}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                </div>
+
+                                {/* Micro-signals */}
+                                {lead.engagement_metrics && (
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setScoreBreakdownModalLead(lead);
+                                    }}
+                                    className="flex items-center space-x-1.5 text-[10px] text-slate-500 hover:text-cyan-800 transition cursor-pointer"
+                                    title="Engagement breakdown: Phone talk time, Email opens, GIS parcel lookups"
+                                  >
+                                    <span className="flex items-center space-x-0.5 text-cyan-800 font-medium">
+                                      <PhoneCall className="w-2.5 h-2.5 text-cyan-600" />
+                                      <span>
+                                        {Math.floor((lead.engagement_metrics.total_talk_duration_seconds || 0) / 60)}m
+                                      </span>
+                                    </span>
+                                    <span>•</span>
+                                    <span className="flex items-center space-x-0.5 text-indigo-800 font-medium">
+                                      <Mail className="w-2.5 h-2.5 text-indigo-600" />
+                                      <span>{lead.engagement_metrics.email_opened_count || 0}</span>
+                                    </span>
+                                    <span>•</span>
+                                    <span className="flex items-center space-x-0.5 text-emerald-800 font-medium">
+                                      <Search className="w-2.5 h-2.5 text-emerald-600" />
+                                      <span>
+                                        {(lead.engagement_metrics.gis_parcel_searches_count || 0) +
+                                          (lead.engagement_metrics.property_views_count || 0)}
+                                      </span>
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </td>
 
                             {/* Stage */}
@@ -1511,6 +1750,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                   setIsBulkModalOpen(true);
                 }}
                 onSkipTrace={(l) => setSkipTraceModalLead(l)}
+                onOpenScoreBreakdown={(l) => setScoreBreakdownModalLead(l)}
               />
             </div>
           )}
@@ -1588,7 +1828,8 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       <DataImportModal
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
-        onImportSuccess={() => {
+        defaultMode="leads"
+        onSuccess={() => {
           if (onRefreshLeads) onRefreshLeads();
         }}
       />
@@ -1631,6 +1872,33 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
           leads={leadsList}
           selectedLeadIds={selectedLeadIds}
           initialMode="leads"
+        />
+      )}
+
+      {/* 12. Lead Dynamic Score & Engagement Breakdown Modal */}
+      {scoreBreakdownModalLead && (
+        <LeadScoreBreakdownModal
+          isOpen={Boolean(scoreBreakdownModalLead)}
+          onClose={() => setScoreBreakdownModalLead(null)}
+          lead={scoreBreakdownModalLead}
+          onSimulateEvent={async (leadId, eventType, payload) => {
+            try {
+              const res = await fetch('/api/leads/scoring-service/simulate-event', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ leadId, eventType, payload }),
+              });
+              const data = await res.json();
+              if (data.lead) {
+                setLeadsList((prev) => prev.map((l) => (l.id === data.lead.id ? data.lead : l)));
+                setScoreBreakdownModalLead(data.lead);
+                if (selectedLead?.id === data.lead.id) setSelectedLead(data.lead);
+                addToast(`Simulated ${eventType} event successfully! New dynamic score: ${data.lead.lead_score}`, 'success');
+              }
+            } catch (err: any) {
+              addToast(err.message || 'Event simulation failed', 'error');
+            }
+          }}
         />
       )}
     </div>
