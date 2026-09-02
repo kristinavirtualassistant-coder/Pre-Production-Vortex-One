@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { DialerCallStateMachine } from '../dialer/callStateMachine';
+const fsm = new DialerCallStateMachine();
+for (const state of ['DIALING','RINGING','HUMAN','CONNECTED','IN_CALL','WRAP_UP','DISPOSITIONED','COMPLETED'] as const) fsm.transition(state);
+assert.equal(fsm.state, 'COMPLETED');
+assert.throws(() => fsm.transition('RINGING'), /Invalid call transition/);
+const terminal = new DialerCallStateMachine('DIALING');
+terminal.transition('VOICEMAIL'); terminal.transition('COMPLETED');
+assert.equal(terminal.state, 'COMPLETED');
+console.log('call state machine tests passed');

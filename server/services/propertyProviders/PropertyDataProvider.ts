@@ -343,6 +343,15 @@ export class UnifiedPropertyDataProvider {
     }
 
     if (isCached && result) {
+      if (query.persist !== false && result.results?.length > 0) {
+        const orgId = requireOrganizationId(query.organizationId);
+        const persisted = await this.persistResults(result.results, orgId);
+        return {
+          ...result,
+          persistedCount: persisted.savedCount,
+          providerUsed: `${result.providerUsed} (Cached)`,
+        };
+      }
       return {
         ...result,
         providerUsed: `${result.providerUsed} (Cached)`,

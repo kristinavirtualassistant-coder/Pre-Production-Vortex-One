@@ -406,4 +406,39 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_property_owners_org_portfolio ON property_owners(organization_id, properties_owned_count);
     `,
   },
+  {
+    version: 7,
+    name: '007_add_campaign_dialer_controls',
+    sql: `
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS concurrency_limit INTEGER DEFAULT 3 NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS retry_limit INTEGER DEFAULT 3 NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS calling_hours_start TIME DEFAULT '08:00' NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS calling_hours_end TIME DEFAULT '20:00' NOT NULL;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS timezone VARCHAR(100) DEFAULT 'America/Los_Angeles' NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_campaign_contact_queue ON campaign_contact(organization_id, campaign_id, dial_status, priority DESC, created_at ASC);
+    `,
+  },
+  {
+    version: 8,
+    name: '008_create_crm_contacts_activities',
+    sql: `
+      CREATE TABLE IF NOT EXISTS contacts (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL, lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        full_name VARCHAR(255) NOT NULL, phone_numbers JSONB DEFAULT '[]'::jsonb NOT NULL, email_addresses JSONB DEFAULT '[]'::jsonb NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        CONSTRAINT uq_contacts_org_name UNIQUE(organization_id, full_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_contacts_org_owner ON contacts(organization_id, owner_id);
+      CREATE INDEX IF NOT EXISTS idx_contacts_org_lead ON contacts(organization_id, lead_id);
+
+      CREATE TABLE IF NOT EXISTS activities (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE CASCADE, contact_id VARCHAR(64) REFERENCES contacts(id) ON DELETE SET NULL,
+        activity_type VARCHAR(50) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_by VARCHAR(64), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_activities_org_lead_created ON activities(organization_id, lead_id, created_at DESC);
+    `,
+  },
 ];

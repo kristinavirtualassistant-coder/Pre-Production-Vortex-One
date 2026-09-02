@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { verifyWebhookSecret } from '../dialer/webhookHandler';
+process.env.NODE_ENV = 'test';
+delete process.env.RINGCENTRAL_WEBHOOK_SECRET;
+assert.equal(verifyWebhookSecret({}), true);
+process.env.RINGCENTRAL_WEBHOOK_SECRET = 'secret';
+assert.equal(verifyWebhookSecret({}), false);
+assert.equal(verifyWebhookSecret({ 'x-vortex-webhook-secret': 'wrong' }), false);
+assert.equal(verifyWebhookSecret({ 'x-vortex-webhook-secret': 'secret' }), true);
+console.log('webhook secret tests passed');

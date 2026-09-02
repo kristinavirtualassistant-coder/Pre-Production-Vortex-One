@@ -56,6 +56,10 @@ export interface CampaignRecord {
   scheduled_at?: string;
   scheduled_by?: string;
   timezone?: string;
+  concurrency_limit?: number;
+  retry_limit?: number;
+  calling_hours_start?: string;
+  calling_hours_end?: string;
   created_at: string;
   updated_at: string;
 }

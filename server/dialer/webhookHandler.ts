@@ -21,6 +21,13 @@ export interface WebhookProcessResult {
   error?: string;
 }
 
+export function verifyWebhookSecret(headers: Record<string, any> = {}): boolean {
+  const configured = process.env.RINGCENTRAL_WEBHOOK_SECRET?.trim();
+  if (!configured) return process.env.NODE_ENV === 'test';
+  const supplied = String(headers['x-vortex-webhook-secret'] || headers['X-Vortex-Webhook-Secret'] || '');
+  return supplied.length > 0 && supplied === configured;
+}
+
 export class WebhookHandler {
   private static requireTenant(organizationId: string): string {
     return requireOrganizationId(organizationId);

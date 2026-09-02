@@ -4,6 +4,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import { MIGRATIONS } from './migrations';
+import type { CampaignContactRecord } from '../dialer/types';
 import {
   Property,
   PropertyOwner,
@@ -56,6 +57,7 @@ export const inMemoryStore = {
   propertyOwners: [] as PropertyOwner[],
   leads: [] as LeadRecord[],
   campaigns: [] as DialerCampaign[],
+  campaignContacts: [] as CampaignContactRecord[],
   sessions: [] as DialingSession[],
   calls: [] as CallRecord[],
   agentConfigs: [] as AgentDefinition[],
