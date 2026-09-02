@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   BrainCircuit,
   Send,
@@ -37,6 +38,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
   onOrchestrate,
   defaultPrompt = '',
 }) => {
+  const { activeTenant } = useAuth();
   const [studioMode, setStudioMode] = useState<'orchestrator' | 'templates' | 'batch_monitor'>('orchestrator');
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -232,7 +234,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
         <div className="rounded-2xl border border-slate-800 overflow-hidden shadow-sm">
           <OutreachTemplateManager
             onSelectTemplateForOutreach={handleSelectTemplateForOutreach}
-            organizationId="org_cmc_realty"
+            organizationId={activeTenant?.id || ''}
           />
         </div>
       )}

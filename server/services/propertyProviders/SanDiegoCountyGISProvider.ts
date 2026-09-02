@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'san_diego_county_gis';
@@ -57,12 +57,7 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
     }
 
     // 4. Reliable Local Cadastral Generator fallback
-    return generateSyntheticCountyParcels(
-      'San Diego',
-      query,
-      this.providerName,
-      this.primaryEndpoint
-    );
+    return [];
   }
 
   private async querySanDiegoEndpoint(endpoint: string, query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

@@ -42,7 +42,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
   const owners: PropertyOwner[] = [
     {
       id: 'owner_1',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       name: 'John Smith',
       entity_type: 'individual',
       mailing_address: '1420 Newport Blvd, Costa Mesa, CA',
@@ -63,7 +63,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
     },
     {
       id: 'owner_2',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       name: 'Marcus Aurelius Properties LLC',
       entity_type: 'llc',
       mailing_address: '880 Ocean Ave, Long Beach, CA',
@@ -83,7 +83,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
     },
     {
       id: 'owner_3',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       name: 'Elena Rostova Family Trust',
       entity_type: 'trust',
       mailing_address: '2200 E 4th St, Santa Ana, CA',

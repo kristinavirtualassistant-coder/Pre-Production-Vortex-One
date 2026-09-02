@@ -824,7 +824,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({ onRunWorkflow }) =
         body: JSON.stringify({
           workflow_id: activeWorkflow.workflow_id,
           steps: activeWorkflow.steps,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
         }),
       });
 

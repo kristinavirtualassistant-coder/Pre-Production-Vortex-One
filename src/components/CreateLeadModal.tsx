@@ -14,7 +14,7 @@ export const CreateLeadModal: React.FC<CreateLeadModalProps> = ({
   isOpen,
   onClose,
   onLeadCreated,
-  organizationId = 'org_cmc_realty',
+  organizationId = '',
 }) => {
   const { addToast } = useToast();
   const [ownerName, setOwnerName] = useState('');

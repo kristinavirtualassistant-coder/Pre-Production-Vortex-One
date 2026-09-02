@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'santa_clara_county_gis';
@@ -42,8 +42,7 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Santa Clara', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async querySantaClaraEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

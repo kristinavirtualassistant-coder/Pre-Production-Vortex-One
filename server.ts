@@ -27,6 +27,7 @@ import { externalWebhookService } from './server/services/externalWebhookService
 import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { leadScoringService } from './server/leadScoringService';
+import { requireOrganizationId } from './server/services/organizationContext';
 
 async function startServer() {
   const app = express();
@@ -131,9 +132,9 @@ async function startServer() {
         return res.status(400).json({ error: 'Prompt is required' });
       }
 
-      const orchestrator = new MasterOrchestrator(organizationId || 'org_cmc_realty');
+      const orchestrator = new MasterOrchestrator(requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
       const result = await orchestrator.orchestrateRequest({
-        organizationId: organizationId || 'org_cmc_realty',
+        organizationId: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
         userPrompt: prompt,
       });
 
@@ -169,7 +170,7 @@ async function startServer() {
       input: { agentId: body.id, name: body.name },
       status: 'success',
       latency_ms: 10,
-      organization_id: 'org_cmc_realty',
+      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
     });
     res.status(201).json(created);
   });
@@ -182,15 +183,15 @@ async function startServer() {
 
   // Tasks & Workflow APIs
   app.get('/api/tasks', (req, res) => {
-    const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.tasks || []).filter(
-      (t) => !orgId || (t as any).organization_id === orgId || !(t as any).organization_id || orgId === 'org_cmc_realty'
+      (t) => (t as any).organization_id === orgId
     );
     res.json(filtered);
   });
 
   app.post('/api/tasks', (req, res) => {
-    const orgId = req.body.organization_id || req.body.organizationId || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const { objective, priority, due_date } = req.body;
     if (!objective || !priority) {
       return res.status(400).json({ error: 'Objective and priority are required' });
@@ -310,7 +311,7 @@ async function startServer() {
       input: { workflow_id: newWorkflow.workflow_id, name: newWorkflow.name, stepCount: newWorkflow.steps.length },
       status: 'success',
       latency_ms: 12,
-      organization_id: 'org_cmc_realty',
+      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
     });
 
     res.status(existingIndex !== -1 ? 200 : 201).json(newWorkflow);
@@ -337,7 +338,7 @@ async function startServer() {
       input: { workflow_id: updated.workflow_id, stepCount: updated.steps.length },
       status: 'success',
       latency_ms: 10,
-      organization_id: 'org_cmc_realty',
+      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
     });
 
     res.json(updated);
@@ -414,7 +415,7 @@ async function startServer() {
   app.post('/api/workflows/execute', async (req, res) => {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
-      const orgId = organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
@@ -638,7 +639,7 @@ async function startServer() {
 
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
-      const orgId = organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
@@ -966,7 +967,7 @@ async function startServer() {
         input: { callerId, durationSeconds },
         status: 'success',
         latency_ms: 0,
-        organization_id: organizationId || 'org_cmc_realty',
+        organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
       });
       res.status(201).json({ success: true });
     } catch (err: any) {
@@ -1067,7 +1068,7 @@ async function startServer() {
         county: county ? String(county) : undefined,
         state: state ? String(state) : undefined,
         ownerName: ownerName ? String(ownerName) : undefined,
-        organizationId: organizationId ? String(organizationId) : 'org_cmc_realty',
+        organizationId: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
         preferredProvider: preferredProvider as any,
         persist,
         limit: limit ? Number(limit) : 10,
@@ -1104,7 +1105,7 @@ async function startServer() {
         county,
         state,
         ownerName,
-        organizationId: organizationId || 'org_cmc_realty',
+        organizationId: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
         preferredProvider,
         persist: persist !== false,
         limit: limit || 10,
@@ -1240,7 +1241,7 @@ async function startServer() {
   });
 
   app.get('/api/properties', (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.properties || []).filter((p) => !orgId || p.organization_id === orgId);
     res.json(filtered);
   });
@@ -1248,7 +1249,7 @@ async function startServer() {
   // Bulk Apply / Remove Tags on Selected Properties
   app.post('/api/properties/bulk-tags', async (req, res) => {
     try {
-      const orgId = req.body.organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], tags = [], mode = 'add' } = req.body;
 
       if (!Array.isArray(propertyIds) || propertyIds.length === 0) {
@@ -1355,7 +1356,7 @@ async function startServer() {
   // Batch Update Properties (Status, Assigned Agent, Property Type, Tax Status, etc.)
   app.post('/api/properties/batch-update', async (req, res) => {
     try {
-      const orgId = req.body.organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], updates = {} } = req.body;
 
       if (!Array.isArray(propertyIds) || propertyIds.length === 0) {
@@ -1426,7 +1427,7 @@ async function startServer() {
   // Single Property Tag Update (Add / Remove / Set)
   app.patch('/api/properties/:id/tags', async (req, res) => {
     try {
-      const orgId = req.body.organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const propId = req.params.id;
       const { tags = [], mode = 'add' } = req.body;
 
@@ -1479,7 +1480,7 @@ async function startServer() {
   });
 
   app.get('/api/owners', (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.propertyOwners || []).filter((o) => !orgId || o.organization_id === orgId);
     res.json(filtered);
   });
@@ -1490,7 +1491,7 @@ async function startServer() {
   app.post('/api/skip-trace/execute', async (req, res) => {
     try {
       const { propertyId, address, apn, city, county, state, organizationId } = req.body;
-      const orgId = organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       const result = await SkipTraceService.execute5StepSkipTrace({
         propertyId,
@@ -1516,7 +1517,7 @@ async function startServer() {
       const phoneNumbers = req.body.phoneNumbers || req.body.phone_numbers || [];
       const emailAddresses = req.body.emailAddresses || req.body.email_addresses || [];
       const notes = req.body.notes;
-      const orgId = req.body.organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!ownerId) {
         return res.status(400).json({ error: 'ownerId is required to save discovered contacts' });
@@ -1670,7 +1671,7 @@ async function startServer() {
         createLeads,
       } = req.body;
 
-      const orgId = organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const targetCounty = county || 'Orange County';
 
       const pipelineResult = await SkipTraceService.executeAutomatedPipeline({
@@ -1704,7 +1705,7 @@ async function startServer() {
   app.post('/api/skip-trace/batch', async (req, res) => {
     try {
       const { propertyIds, organizationId } = req.body;
-      const orgId = organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!propertyIds || !Array.isArray(propertyIds) || propertyIds.length === 0) {
         return res.status(400).json({ error: 'propertyIds array is required for batch skip trace' });
@@ -1722,7 +1723,7 @@ async function startServer() {
   app.post('/api/skip-trace/auto-enrich', async (req, res) => {
     try {
       const { ownerId, propertyId, organizationId } = req.body;
-      const orgId = organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!ownerId) {
         return res.status(400).json({ error: 'ownerId is required for auto-enrichment' });
@@ -1744,7 +1745,7 @@ async function startServer() {
   // Automation & Skip Trace Telemetry Stats
   app.get('/api/skip-trace/automation-stats', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const stats = SkipTraceService.getAutomationStats(orgId);
       res.json(stats);
     } catch (err: any) {
@@ -1756,7 +1757,7 @@ async function startServer() {
   app.post('/api/leads/deep-enrich', async (req, res) => {
     try {
       const { leadIds, organizationId } = req.body;
-      const orgId = organizationId || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
         return res.status(400).json({ error: 'leadIds array is required' });
@@ -1812,7 +1813,7 @@ async function startServer() {
   // ==========================================
   // Property Background Task Scheduler Engine
   // ==========================================
-  const executePropertyRefreshTask = async (scheduleId: string, orgId: string = 'org_cmc_realty') => {
+  const executePropertyRefreshTask = async (scheduleId: string, orgId: string) => {
     const startTime = Date.now();
     const scheduleIndex = inMemoryStore.propertyRefreshSchedules.findIndex(
       (s) => s.id === scheduleId && s.organization_id === orgId
@@ -2033,7 +2034,7 @@ async function startServer() {
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const schedules = (inMemoryStore.propertyRefreshSchedules || []).filter(
       (s) => !orgId || s.organization_id === orgId
     );
@@ -2042,7 +2043,7 @@ async function startServer() {
 
   app.post('/api/scheduler/schedules', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
         name,
         description,
@@ -2105,7 +2106,7 @@ async function startServer() {
 
   app.put('/api/scheduler/schedules/:id', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
       const index = inMemoryStore.propertyRefreshSchedules.findIndex(
         (s) => s.id === scheduleId && s.organization_id === orgId
@@ -2133,7 +2134,7 @@ async function startServer() {
 
   app.post('/api/scheduler/schedules/:id/toggle', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
       const index = inMemoryStore.propertyRefreshSchedules.findIndex(
         (s) => s.id === scheduleId && s.organization_id === orgId
@@ -2157,7 +2158,7 @@ async function startServer() {
 
   app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
       const result = await executePropertyRefreshTask(scheduleId, orgId);
       res.json(result);
@@ -2169,7 +2170,7 @@ async function startServer() {
 
   app.delete('/api/scheduler/schedules/:id', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
       const initialLength = inMemoryStore.propertyRefreshSchedules.length;
       inMemoryStore.propertyRefreshSchedules = inMemoryStore.propertyRefreshSchedules.filter(
@@ -2188,7 +2189,7 @@ async function startServer() {
 
   // Leads & CRM APIs
   app.get('/api/leads', (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.leads || []).filter((l) => !orgId || l.organization_id === orgId);
     res.json(filtered);
   });
@@ -2197,7 +2198,7 @@ async function startServer() {
   app.patch('/api/leads/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const orgId = (req.body.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updates = req.body;
 
       const index = inMemoryStore.leads.findIndex((l) => l.id === id && (!orgId || l.organization_id === orgId));
@@ -2281,7 +2282,7 @@ async function startServer() {
   app.post('/api/leads/batch-update', async (req, res) => {
     try {
       const { leadIds, updates, organizationId } = req.body;
-      const orgId = organizationId || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!Array.isArray(leadIds) || leadIds.length === 0) {
         return res.status(400).json({ error: 'leadIds array is required' });
@@ -2364,7 +2365,7 @@ async function startServer() {
   app.post('/api/leads/rescore', async (req, res) => {
     try {
       const { leadIds, customWeights, organizationId } = req.body;
-      const orgId = organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const targetIds: string[] = Array.isArray(leadIds) && leadIds.length > 0
         ? leadIds
         : inMemoryStore.leads.filter((l) => l.organization_id === orgId).map((l) => l.id);
@@ -2514,7 +2515,7 @@ async function startServer() {
 
   app.post('/api/leads/scoring-service/trigger', (req, res) => {
     try {
-      const orgId = req.body.organizationId || req.body.organization_id;
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = leadScoringService.recalculateAll(orgId);
       res.json({
         success: true,
@@ -2564,7 +2565,7 @@ async function startServer() {
   // Create Lead Manually
   app.post('/api/leads/create', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
         owner_name,
         property_address,
@@ -2642,7 +2643,7 @@ async function startServer() {
   app.delete('/api/leads/:id', (req, res) => {
     try {
       const { id } = req.params;
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const initialLength = inMemoryStore.leads.length;
 
       inMemoryStore.leads = inMemoryStore.leads.filter((l) => !(l.id === id && (!orgId || l.organization_id === orgId)));
@@ -2661,7 +2662,7 @@ async function startServer() {
   app.post('/api/leads/batch-delete', (req, res) => {
     try {
       const { leadIds, organizationId } = req.body;
-      const orgId = organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
 
       if (!Array.isArray(leadIds) || leadIds.length === 0) {
         return res.status(400).json({ error: 'leadIds array is required' });
@@ -2680,7 +2681,7 @@ async function startServer() {
   // Automated Data Import & CRM Reconciliation APIs
   app.post('/api/import/reconcile', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId;
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       if (!orgId) {
         return res.status(400).json({ error: 'organization_id is strictly required for tenant partition isolation' });
       }
@@ -2703,7 +2704,7 @@ async function startServer() {
 
   app.post('/api/import/sync-production', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await DataImportService.syncProductionCrmSource(orgId, {
         autoScoreLeads: req.body.autoScoreLeads ?? true,
         enforceDncVerification: req.body.enforceDncVerification ?? true,
@@ -2717,7 +2718,7 @@ async function startServer() {
   });
 
   app.get('/api/import/summary', (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === orgId);
     const owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === orgId);
     const leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === orgId);
@@ -2743,7 +2744,7 @@ async function startServer() {
 
   app.get('/api/import/validate-integrity', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const report = await DataImportService.validateReferentialIntegrity(orgId);
       res.json(report);
     } catch (err: any) {
@@ -2754,7 +2755,7 @@ async function startServer() {
 
   app.get('/api/import/audit-logs', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
       if (pool) {
         try {
@@ -2827,7 +2828,7 @@ async function startServer() {
 
   // Dialer & Campaign Lifecycle APIs
   app.get('/api/campaigns', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (pool) {
       try {
@@ -2848,7 +2849,7 @@ async function startServer() {
 
   app.post('/api/campaigns', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const camp = await CampaignManager.createCampaign({
         organizationId: orgId,
         name: req.body.name || 'Targeted Multi-Family Outreach Campaign',
@@ -2874,7 +2875,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/schedule', async (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduledAt = req.body.scheduled_at || req.body.scheduledAt;
       if (!scheduledAt) {
         return res.status(400).json({ error: 'scheduled_at ISO timestamp is required' });
@@ -2891,7 +2892,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/cancel-schedule', async (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
       res.json(updated);
     } catch (err: any) {
@@ -2901,7 +2902,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/start', async (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
       res.json(result);
     } catch (err: any) {
@@ -2911,7 +2912,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/pause', async (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.pauseCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'paused', campaignId: req.params.id });
     } catch (err: any) {
@@ -2921,7 +2922,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/stop', async (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.stopCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'completed', campaignId: req.params.id });
     } catch (err: any) {
@@ -2930,7 +2931,7 @@ async function startServer() {
   });
 
   app.get('/api/campaigns/:id/contacts', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (pool) {
       try {
@@ -2949,7 +2950,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/contacts', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const contacts = req.body.contacts || [req.body];
       const result = await CampaignManager.addContacts(orgId, req.params.id, contacts);
       res.status(201).json(result);
@@ -2960,7 +2961,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/dial-next', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.dialNextContact({
         organizationId: orgId,
         campaignId: req.params.id,
@@ -2976,7 +2977,7 @@ async function startServer() {
 
   app.post('/api/campaigns/:id/shuffle', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
       res.json(result);
     } catch (err: any) {
@@ -2986,7 +2987,7 @@ async function startServer() {
 
   // Call Records & Telephony FSM APIs
   app.get('/api/calls', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (pool) {
       try {
@@ -3006,7 +3007,7 @@ async function startServer() {
   });
 
   app.get('/api/calls/:id/events', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (pool) {
       try {
@@ -3038,7 +3039,7 @@ async function startServer() {
         telephony_provider 
       } = req.body;
       
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const cleanNumber = phone_number || '(949) 555-0100';
 
       // 1. Safe TCPA & DNC Pre-Dial Check (with defensive fallback)
@@ -3169,14 +3170,14 @@ async function startServer() {
 
   // DNC & Suppression List Management APIs
   app.get('/api/suppression', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const list = await SuppressionService.listSuppressions(orgId);
     res.json(list);
   });
 
   app.post('/api/suppression', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { phone_number, reason, source } = req.body;
       if (!phone_number) {
         return res.status(400).json({ error: 'phone_number is required' });
@@ -3195,7 +3196,7 @@ async function startServer() {
 
   app.delete('/api/suppression/:id', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const success = await SuppressionService.removeSuppression(orgId, req.params.id);
       res.json({ success, id: req.params.id });
     } catch (err: any) {
@@ -3205,7 +3206,11 @@ async function startServer() {
 
   // Telephony Webhook Ingestion & Idempotency API (RingCentral)
   app.post('/api/telephony/webhook/:provider', async (req, res) => {
-    const orgId = (req.query.organizationId as string) || (req.body.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId(
+      (req.query.organizationId as string) ||
+      (req.body?.organizationId as string) ||
+      (req.body?.organization_id as string),
+    );
 
     try {
       const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
@@ -3218,15 +3223,15 @@ async function startServer() {
 
   // Human Approval Center APIs
   app.get('/api/approvals', (req, res) => {
-    const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.approvals || []).filter(
-      (a) => !orgId || (a as any).organization_id === orgId || !(a as any).organization_id || orgId === 'org_cmc_realty'
+      (a) => (a as any).organization_id === orgId
     );
     res.json(filtered);
   });
 
   app.post('/api/approvals/:id/decide', (req, res) => {
-    const orgId = req.body.organizationId || req.body.organization_id || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const { decision, decided_by, modifications } = req.body;
     const approval = inMemoryStore.approvals.find((a) => a.approval_id === req.params.id);
     if (!approval) return res.status(404).json({ error: 'Approval request not found' });
@@ -3252,9 +3257,9 @@ async function startServer() {
 
   // Observability & Audit Logs
   app.get('/api/audit', (req, res) => {
-    const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const filtered = (inMemoryStore.auditLogs || []).filter(
-      (a) => !orgId || a.organization_id === orgId || !a.organization_id || orgId === 'org_cmc_realty'
+      (a) => a.organization_id === orgId
     );
     res.json(filtered);
   });
@@ -3275,7 +3280,7 @@ async function startServer() {
   // --- Dialer Metrics API (Single, Safe Implementation) ---
   app.get('/api/dialer/metrics', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       
       // Fallback mock metrics if Firestore is unconfigured
       const defaultMetrics = [
@@ -3305,7 +3310,7 @@ async function startServer() {
   // --- Voicemail Drop Library API ---
   app.get('/api/dialer/voicemails', async (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const defaultVoicemails = [
         { id: 'vm_1', organization_id: orgId, label: 'Standard Multi-Family Introduction', url: 'https://actions.google.com/sounds/v1/speech/greeting.ogg', created_at: new Date().toISOString() },
         { id: 'vm_2', organization_id: orgId, label: 'Off-Market Valuation Follow-Up', url: 'https://actions.google.com/sounds/v1/speech/followup.ogg', created_at: new Date().toISOString() }
@@ -3328,7 +3333,7 @@ async function startServer() {
 
   app.post('/api/dialer/voicemails', async (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { label, url } = req.body;
       const newVoicemail = {
         organization_id: orgId,
@@ -3363,7 +3368,7 @@ async function startServer() {
     try {
       const { id } = req.params;
       const { voicemailId, voicemailLabel, voicemailUrl, callerId, organizationId, durationSeconds } = req.body;
-      const orgId = organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const label = voicemailLabel || 'Pre-recorded Professional Voicemail';
       const pool = getPgPool();
       
@@ -3552,7 +3557,7 @@ ${transcript}`;
   // Import Data & Archive to Imported Files Folder
   app.post('/api/import-data', async (req, res) => {
     try {
-      const orgId = req.headers['x-organization-id'] as string || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { records, fileName, rawContent } = req.body;
       
       const result = await DataImportService.reconcileBatch(orgId, records);
@@ -3610,7 +3615,7 @@ ${transcript}`;
   // Ensure / Create Folder for Imported Files
   app.post('/api/imported-files/create-folder', (req, res) => {
     try {
-      const orgId = (req.body.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const baseDir = path.join(process.cwd(), 'data', 'imported_files');
       const orgDir = path.join(baseDir, orgId);
 
@@ -3639,7 +3644,7 @@ ${transcript}`;
   // List all files in the Imported Files folder
   app.get('/api/imported-files', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
 
       if (!fs.existsSync(orgDir)) {
@@ -3678,7 +3683,7 @@ ${transcript}`;
   // Download raw file from Imported Files folder
   app.get('/api/imported-files/:id/download', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
       const fileId = req.params.id;
 
@@ -3720,7 +3725,7 @@ ${transcript}`;
   // Delete a file from the Imported Files folder
   app.delete('/api/imported-files/:id', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || (req.headers['x-organization-id'] as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
       const fileId = req.params.id;
 
@@ -3797,7 +3802,7 @@ ${transcript}`;
       seedInitialData();
     }
 
-    const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const channel = req.query.channel as string;
     const category = req.query.category as string;
     const search = (req.query.search as string || '').toLowerCase().trim();
@@ -3807,7 +3812,7 @@ ${transcript}`;
 
     // If no templates specifically for this org, include standard default templates
     if (templates.length === 0) {
-      templates = allTemplates.filter((t) => t.is_default || t.organization_id === 'org_cmc_realty' || !t.organization_id);
+      templates = allTemplates.filter((t) => t.is_default || t.organization_id === orgId);
     }
     if (templates.length === 0 && allTemplates.length > 0) {
       templates = [...allTemplates];
@@ -3852,7 +3857,7 @@ ${transcript}`;
   // 3. Create template
   app.post('/api/outreach-templates', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { name, description, channel, category, subject, body, tags, is_default } = req.body;
 
       if (!name || !name.trim()) {
@@ -3918,7 +3923,7 @@ ${transcript}`;
   // 4. Update template
   app.put('/api/outreach-templates/:id', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
       const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
 
@@ -3974,7 +3979,7 @@ ${transcript}`;
   // 5. Delete template
   app.delete('/api/outreach-templates/:id', (req, res) => {
     try {
-      const orgId = (req.query.organizationId as string) || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
       const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
 
@@ -4006,7 +4011,7 @@ ${transcript}`;
   // 6. Duplicate template
   app.post('/api/outreach-templates/:id/duplicate', (req, res) => {
     try {
-      const orgId = req.body.organization_id || req.body.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
       const existing = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId);
 
@@ -4143,6 +4148,7 @@ ${transcript}`;
   // 8. Record usage & performance for a template
   app.post('/api/outreach-templates/:id/use', (req, res) => {
     try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
       const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
 
@@ -4171,7 +4177,7 @@ ${transcript}`;
         status: 'success',
         latency_ms: 10,
         confidence: 1.0,
-        organization_id: tpl.organization_id || 'org_cmc_realty',
+        organization_id: tpl.organization_id || orgId,
       });
 
       res.json(tpl);

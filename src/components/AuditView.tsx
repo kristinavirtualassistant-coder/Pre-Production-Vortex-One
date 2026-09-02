@@ -1572,7 +1572,7 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs, agents, onRefresh })
                                     {
                                       id: log.id,
                                       timestamp: log.timestamp,
-                                      organization_id: log.organization_id || 'org_cmc_realty',
+                                      organization_id: log.organization_id || '',
                                       agent: log.agent,
                                       action: log.action,
                                       task_id: log.task_id || null,

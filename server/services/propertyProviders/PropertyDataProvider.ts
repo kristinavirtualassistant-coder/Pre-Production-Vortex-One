@@ -256,47 +256,7 @@ export class UnifiedPropertyDataProvider {
           }
         }
 
-        // Tertiary fallback: Match in-memory store properties if live GIS returned 0 items
-        if (results.length === 0) {
-          const countyFilter = (query.county || '').toLowerCase();
-          const cityFilter = (query.city || '').toLowerCase();
-          const matched = inMemoryStore.properties.filter((p) => {
-            if (countyFilter && p.county && !p.county.toLowerCase().includes(countyFilter) && !countyFilter.includes(p.county.toLowerCase())) {
-              return false;
-            }
-            if (cityFilter && p.city && !p.city.toLowerCase().includes(cityFilter)) {
-              return false;
-            }
-            if (query.absenteeOnly && !p.is_absentee_owner) {
-              return false;
-            }
-            return true;
-          });
-
-          if (matched.length > 0) {
-            results = matched.slice(0, query.limit || 15).map((p) => {
-              const owner = inMemoryStore.propertyOwners.find((o) => o.id === p.owner_id);
-              return {
-                property: p,
-                owner,
-                geometry: p.latitude && p.longitude ? { type: 'Point' as const, centroid: { lat: p.latitude, lon: p.longitude } } : undefined,
-                provenance: {
-                  provider: 'Vortex One Local Assessor Cadastral Database',
-                  datasetName: 'Local California County Assessor Cadastral Dataset',
-                  endpointUrl: 'https://gis.data.ca.gov/',
-                  retrievedAt: new Date().toISOString(),
-                  queryFilter: `county=${query.county || ''}`,
-                  recordIdentifier: p.apn,
-                  isOfficialGovernmentSource: true,
-                  ownerIntelligenceStatus: 'commercial_enriched' as const,
-                  ownerIntelligenceNotes: 'Verified against local cadastral parcel inventory.',
-                  legalTermsNotes: 'California Public Records Act compliant cadastral parcel roll.',
-                },
-              };
-            });
-            providerNameUsed = 'Vortex One Local Assessor Cadastral Database';
-          }
-        }
+        // Provider failures produce no synthetic or in-memory substitute records.
 
         // Middleware Validation & Data Quality Enforcement Step
         const validatedResults: NormalizedPropertyResult[] = [];

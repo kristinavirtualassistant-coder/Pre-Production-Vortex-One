@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout, generateSyntheticCountyParcels } from './providerHelpers';
+import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
 
 export class AlamedaCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'alameda_county_gis';
@@ -42,8 +42,7 @@ export class AlamedaCountyGISProvider implements IPropertyDataProvider {
     } catch {
       // Quiet failover
     }
-
-    return generateSyntheticCountyParcels('Alameda', query, this.providerName, this.primaryEndpoint);
+    return [];
   }
 
   private async queryAlamedaEndpoint(query: PropertySearchQuery): Promise<NormalizedPropertyResult[]> {

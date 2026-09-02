@@ -261,7 +261,7 @@ export default function App() {
 
   // Fetch initial datasets partitioned by activeTenant with race-condition prevention
   const fetchAllData = useCallback(async (forcedTenantId?: string) => {
-    const tenantIdToFetch = forcedTenantId || activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+    const tenantIdToFetch = forcedTenantId || activeTenant?.id || userProfile?.organization_id;
     if (!tenantIdToFetch) return;
 
     // Abort prior in-flight request to prevent stale overwrite
@@ -351,7 +351,7 @@ export default function App() {
 
   // Safe helper to obtain active tenant ID
   const getActiveOrgId = useCallback(() => {
-    return activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+    return activeTenant?.id || userProfile?.organization_id || '';
   }, [activeTenant?.id, userProfile?.organization_id]);
 
   // Orchestration Handler
@@ -989,7 +989,7 @@ export default function App() {
           fetchAllData();
           handleNavigate('leads');
         }}
-        organizationId={activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty'}
+        organizationId={getActiveOrgId()}
       />
 
       {/* Easy Help & Jargon Buster Modal */}

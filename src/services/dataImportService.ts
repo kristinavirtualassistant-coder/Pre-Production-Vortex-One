@@ -2,12 +2,12 @@
  * Vortex One - Client & Frontend Data Import & CRM Ingestion Service
  * Idempotent batch-processing function to ingest property, owner, and lead records
  * from raw JSON or CSV data into the Cloud SQL database / datastore,
- * adhering strictly to organization_id partitioning ('org_cmc_realty') and DNC/TCPA suppression logic.
+ * adhering strictly to authenticated organization_id partitioning and DNC/TCPA suppression logic.
  */
 
 import { Property, PropertyOwner, LeadRecord, FieldMappingDefinition } from '../types';
 
-export const DEFAULT_ORG_ID = 'org_cmc_realty';
+export const TEST_ORG_ID = 'org_cmc_realty';
 
 export interface RawPhoneNumber {
   number: string;
@@ -60,7 +60,7 @@ export interface RawPropertyData {
 }
 
 export interface ImportBatchOptions {
-  organizationId?: string;
+  organizationId: string;
   batchSize?: number;
   autoScoreLeads?: boolean;
   enforceDncVerification?: boolean;
@@ -164,14 +164,14 @@ export interface ReferentialIntegrityReport {
   inconsistentRollupsCount: number;
   issues: ReferentialIntegrityIssue[];
   validatedAt: string;
-  organizationId?: string;
+  organizationId: string;
 }
 
 export interface ValidateReferentialIntegrityParams {
   properties: Property[];
   owners: PropertyOwner[];
   leads?: LeadRecord[];
-  organizationId?: string;
+  organizationId: string;
 }
 
 /**
@@ -456,24 +456,24 @@ export function parsePropertyJson(input: string | any[] | Record<string, any>): 
 /**
  * Automated, idempotent batch-processing ingestion function.
  * Ingests property, owner, and lead records from raw JSON or CSV into the Cloud SQL database / datastore.
- * Partitions by organization_id ('org_cmc_realty' by default) and applies TCPA/DNC suppression constraints.
+ * Partitions by the explicitly supplied organization_id and applies TCPA/DNC suppression constraints.
  */
 export async function ingestData(
   rawInput: string | any[] | Record<string, any>,
-  options: ImportBatchOptions = {}
+  options?: ImportBatchOptions
 ): Promise<IngestionResult> {
   const {
-    organizationId = DEFAULT_ORG_ID,
+    organizationId,
     batchSize = 25,
     autoScoreLeads = true,
     enforceDncVerification = true,
     sourceSystem = 'Vortex One Automated CRM Ingestion Pipeline',
     assignedAgent = 'sub_agent_2',
     onProgress,
-  } = options;
+  } = options ?? {};
 
   if (!organizationId || organizationId.trim() === '') {
-    throw new Error("Organization ID is strictly required for tenant partition isolation ('org_cmc_realty')");
+    throw new Error('Organization ID is strictly required for tenant partition isolation');
   }
 
   const cleanOrgId = organizationId.trim();
@@ -624,20 +624,20 @@ export async function ingestData(
 /**
  * Ingests and maps CRM JSON objects to property, property_owner, and lead entities
  * in the database, ensuring idempotency via unique constraints, phone normalization,
- * and DNC validation for org_cmc_realty.
+ * and DNC validation for the explicitly supplied organization.
  *
  * @param data Array of CRM JSON records or objects
  * @param options Optional import configuration overrides
  */
 export async function importCrmBatch(
   data: any[],
-  options: ImportBatchOptions = {}
+  options?: ImportBatchOptions
 ): Promise<IngestionResult> {
   const mergedOptions: ImportBatchOptions = {
-    organizationId: DEFAULT_ORG_ID,
+    organizationId: options?.organizationId || '',
     autoScoreLeads: true,
     enforceDncVerification: true,
-    sourceSystem: 'CRM Import Batch Service (org_cmc_realty)',
+    sourceSystem: 'CRM Import Batch Service',
     assignedAgent: 'sub_agent_2',
     ...options,
   };
@@ -699,7 +699,7 @@ export function validateReferentialIntegrity(
 
   // 1. Validate Property -> Owner Hierarchy
   filteredProperties.forEach((property) => {
-    const propOrgId = property.organization_id || DEFAULT_ORG_ID;
+    const propOrgId = property.organization_id || '';
 
     if (!property.owner_id) {
       orphanPropertiesCount++;
@@ -729,7 +729,7 @@ export function validateReferentialIntegrity(
       });
     } else {
       // Check multi-tenant boundary integrity
-      const ownerOrgId = parentOwner.organization_id || DEFAULT_ORG_ID;
+      const ownerOrgId = parentOwner.organization_id || '';
       if (propOrgId !== ownerOrgId) {
         tenantViolationsCount++;
         issues.push({
@@ -765,7 +765,7 @@ export function validateReferentialIntegrity(
 
   // 2. Validate Lead -> Property & Owner Hierarchy
   filteredLeads.forEach((lead) => {
-    const leadOrgId = lead.organization_id || DEFAULT_ORG_ID;
+    const leadOrgId = lead.organization_id || '';
 
     let leadProperty: Property | undefined;
     let leadOwner: PropertyOwner | undefined;
@@ -786,7 +786,7 @@ export function validateReferentialIntegrity(
           details: { leadId: lead.id, propertyId: propertyRefId },
         });
       } else {
-        const propOrgId = leadProperty.organization_id || DEFAULT_ORG_ID;
+        const propOrgId = leadProperty.organization_id || '';
         if (leadOrgId !== propOrgId) {
           tenantViolationsCount++;
           issues.push({
@@ -817,7 +817,7 @@ export function validateReferentialIntegrity(
           details: { leadId: lead.id, ownerId: lead.owner_id },
         });
       } else {
-        const ownerOrgId = leadOwner.organization_id || DEFAULT_ORG_ID;
+        const ownerOrgId = leadOwner.organization_id || '';
         if (leadOrgId !== ownerOrgId) {
           tenantViolationsCount++;
           issues.push({
@@ -857,7 +857,7 @@ export function validateReferentialIntegrity(
 
   // 3. Validate Owner Rollup Consistency
   filteredOwners.forEach((owner) => {
-    const ownerOrgId = owner.organization_id || DEFAULT_ORG_ID;
+    const ownerOrgId = owner.organization_id || '';
     const actualCount = ownerPropertyCounts.get(owner.id) || 0;
     const actualValue = ownerPortfolioValues.get(owner.id) || 0;
     const actualEquity = ownerPortfolioEquities.get(owner.id) || 0;
@@ -910,7 +910,7 @@ export function validateReferentialIntegrity(
  * Fetches current datastore records from backend and executes full referential integrity validation.
  */
 export async function validateDatabaseIntegrity(
-  organizationId: string = DEFAULT_ORG_ID
+  organizationId: string
 ): Promise<ReferentialIntegrityReport> {
   try {
     const res = await fetch(`/api/import/validate-integrity?organizationId=${encodeURIComponent(organizationId)}`);
@@ -958,7 +958,7 @@ export function validateImportRecord(
   options: { organizationId?: string; recordIndex?: number; enforceDnc?: boolean } = {}
 ): RecordValidationResult {
   const index = options.recordIndex ?? 0;
-  const targetOrgId = (options.organizationId || DEFAULT_ORG_ID).trim();
+  const targetOrgId = (options.organizationId || '').trim();
   const errors: string[] = [];
   const warnings: string[] = [];
   const normalizedPhones: Array<{
@@ -1339,7 +1339,7 @@ export function detectJsonKeys(rawInput: any): string[] {
  * Fetches batch import audit logs from the authoritative backend audit ledger
  */
 export async function getImportAuditLogs(
-  organizationId: string = DEFAULT_ORG_ID,
+  organizationId: string,
   limit: number = 50
 ): Promise<any[]> {
   try {
@@ -1358,7 +1358,7 @@ export async function getImportAuditLogs(
  */
 export async function getImportAuditLogById(
   id: string,
-  organizationId: string = DEFAULT_ORG_ID
+  organizationId: string
 ): Promise<any | null> {
   try {
     const res = await fetch(`/api/import/audit-logs/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}`);
@@ -1386,7 +1386,7 @@ export const DataImportService = {
   getImportAuditLogById,
   validateReferentialIntegrity,
   validateDatabaseIntegrity,
-  DEFAULT_ORG_ID,
+  TEST_ORG_ID,
 };
 
 export default DataImportService;

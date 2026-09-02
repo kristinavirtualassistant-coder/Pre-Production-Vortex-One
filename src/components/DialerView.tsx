@@ -166,7 +166,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
     () => [
       {
         id: 'lead_q1',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_1',
         primary_property_id: 'prop_1',
         owner_name: 'Jonathan Sterling (Sterling West Holdings LLC)',
@@ -186,7 +186,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q2',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_2',
         primary_property_id: 'prop_2',
         owner_name: 'Elena Rostova & Partners',
@@ -206,7 +206,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q3',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_3',
         primary_property_id: 'prop_3',
         owner_name: 'Arthur Vance Trust',
@@ -226,7 +226,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q4',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_4',
         primary_property_id: 'prop_4',
         owner_name: 'Miramar Real Estate Partners LP',
@@ -246,7 +246,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q5',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_5',
         primary_property_id: 'prop_5',
         owner_name: 'Pacific Crest Assets Inc',
@@ -266,7 +266,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q6',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_6',
         primary_property_id: 'prop_6',
         owner_name: 'Claire Kensington Properties',
@@ -286,7 +286,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q7',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_7',
         primary_property_id: 'prop_7',
         owner_name: 'David & Sharon Miller Family Trust',
@@ -306,7 +306,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       },
       {
         id: 'lead_q8',
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         owner_id: 'owner_8',
         primary_property_id: 'prop_8',
         owner_name: 'Beacon Bay Holdings LLC',
@@ -388,7 +388,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
         await fetch(`/api/campaigns/${selectedCampaign.id}/shuffle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ organization_id: 'org_cmc_realty' }),
+          body: JSON.stringify({ organization_id: '' }),
         });
       } catch (err) {
         console.warn('Backend campaign queue shuffle sync:', err);
@@ -478,7 +478,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
                     action: 'call_disposition',
                     callerId: dialResult.phoneNumber,
                     timestamp: new Date().toISOString(),
-                    organizationId: 'org_cmc_realty',
+                    organizationId: '',
                     input: { disposition }
                 })
             });
@@ -533,7 +533,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
           action: 'call_followup_scheduled',
           callerId: dialResult.phoneNumber,
           timestamp: new Date().toISOString(),
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
           input: { 
             disposition: 'follow_up',
             scheduledAt: `${followUpDate}T${followUpTime}:00` 
@@ -586,8 +586,8 @@ export const DialerView: React.FC<DialerViewProps> = ({
   const fetchDialerData = async () => {
     try {
       const [metricsRes, voicemailsRes] = await Promise.all([
-        fetch('/api/dialer/metrics?organizationId=org_cmc_realty'),
-        fetch('/api/dialer/voicemails?organizationId=org_cmc_realty')
+        fetch('/api/dialer/metrics'),
+        fetch('/api/dialer/voicemails')
       ]);
       if (metricsRes.ok) setMetrics(await metricsRes.json());
       if (voicemailsRes.ok) setVoicemails(await voicemailsRes.json());
@@ -602,7 +602,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: 'org_cmc_realty',
+          organization_id: '',
           label,
           url: `https://storage.googleapis.com/vortex-one-voicemails/${file.name}`,
         }),
@@ -643,7 +643,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
           voicemailLabel: vm.label,
           voicemailUrl: vm.url,
           callerId: phoneNumber,
-          organizationId: 'org_cmc_realty',
+          organizationId: '',
           durationSeconds,
         }),
       });
@@ -681,7 +681,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
 
   const fetchSuppressions = async () => {
     try {
-      const res = await fetch('/api/suppression?organizationId=org_cmc_realty');
+      const res = await fetch('/api/suppression');
       if (res.ok) {
         const data = await res.json();
         setSuppressions(data);
@@ -699,7 +699,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: 'org_cmc_realty',
+          organization_id: '',
           phone_number: newDncNumber,
           reason: newDncReason,
           source: 'manual_compliance_entry',
@@ -717,7 +717,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
 
   const handleRemoveSuppression = async (id: string) => {
     try {
-      const res = await fetch(`/api/suppression/${id}?organizationId=org_cmc_realty`, {
+      const res = await fetch(`/api/suppression/${id}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -736,7 +736,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
 
     try {
       const res = await onDialCall({
-        organization_id: 'org_cmc_realty',
+        organization_id: '',
         campaign_id: selectedCampaign?.id || 'camp_401',
         contact_name: contactName,
         phone_number: phoneNumber,
@@ -790,7 +790,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            organization_id: 'org_cmc_realty',
+            organization_id: '',
             telephony_provider: telephonyProvider,
           }),
         });
@@ -803,7 +803,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
         }
       } else {
         const res = await onDialCall({
-          organization_id: 'org_cmc_realty',
+          organization_id: '',
           campaign_id: 'camp_preview_queue',
           contact_name: targetLead?.owner_name || contactName,
           phone_number: targetLead?.phone_number || phoneNumber,
@@ -832,7 +832,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       const res = await fetch(`/api/campaigns/${selectedCampaign.id}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+        body: JSON.stringify({ organizationId: '' }),
       });
       if (res.ok) {
         const updated = { ...selectedCampaign, status: 'active' as const, scheduled_at: undefined };
@@ -851,7 +851,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       const res = await fetch(`/api/campaigns/${selectedCampaign.id}/pause`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+        body: JSON.stringify({ organizationId: '' }),
       });
       if (res.ok) {
         const updated = { ...selectedCampaign, status: 'paused' as const };
@@ -869,7 +869,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
       const res = await fetch(`/api/campaigns/${campaignId}/cancel-schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+        body: JSON.stringify({ organizationId: '' }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -932,7 +932,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
     };
 
     try {
-      const res = await fetch(`/api/telephony/webhook/${telephonyProvider}?organizationId=org_cmc_realty`, {
+      const res = await fetch(`/api/telephony/webhook/${telephonyProvider}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(rawPayload),
@@ -1597,7 +1597,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
                               callerId: phoneNumber,
                               durationSeconds,
                               timestamp: new Date().toISOString(),
-                              organizationId: 'org_cmc_realty',
+                              organizationId: '',
                               input: {
                                   callQualityRating
                               }

@@ -37,7 +37,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
   const opportunities: OpportunityRecord[] = [
     {
       id: 'opp_1',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       property_id: 'prop_1',
       property_address: '1420 Newport Blvd',
       city: 'Costa Mesa',
@@ -63,7 +63,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
     },
     {
       id: 'opp_2',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       property_id: 'prop_2',
       property_address: '880 Ocean Ave',
       city: 'Long Beach',
@@ -89,7 +89,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
     },
     {
       id: 'opp_3',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       property_id: 'prop_3',
       property_address: '2200 E 4th St',
       city: 'Santa Ana',
@@ -115,7 +115,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
     },
     {
       id: 'opp_4',
-      organization_id: 'org_cmc_realty',
+      organization_id: '',
       property_id: 'prop_4',
       property_address: '412 Magnolia Ave',
       city: 'Huntington Beach',
