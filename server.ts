@@ -28,6 +28,7 @@ import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middlewa
 import { taskCacheService } from './server/services/cacheService';
 import { leadScoringService } from './server/leadScoringService';
 import { requireOrganizationId } from './server/services/organizationContext';
+import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 
 async function startServer() {
   const app = express();
@@ -1045,21 +1046,86 @@ async function startServer() {
 
   app.get('/api/property-search', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) {
+        return res.status(503).json({
+          error: 'Property search requires the PostgreSQL database to be connected',
+          code: 'PROPERTY_SEARCH_DATABASE_UNAVAILABLE',
+        });
+      }
+
+      const query: PropertySearchQuery = {
+        searchText: req.query.searchText ? String(req.query.searchText) : undefined,
+        address: req.query.address ? String(req.query.address) : undefined,
+        apn: req.query.apn ? String(req.query.apn) : undefined,
+        ownerName: req.query.ownerName ? String(req.query.ownerName) : undefined,
+        city: req.query.city ? String(req.query.city) : undefined,
+        county: req.query.county ? String(req.query.county) : undefined,
+        state: req.query.state ? String(req.query.state) : undefined,
+        zip: req.query.zip ? String(req.query.zip) : undefined,
+        propertyType: req.query.propertyType ? String(req.query.propertyType) : undefined,
+        minUnits: req.query.minUnits ? Number(req.query.minUnits) : undefined,
+        maxUnits: req.query.maxUnits ? Number(req.query.maxUnits) : undefined,
+        minSquareFeet: req.query.minSquareFeet ? Number(req.query.minSquareFeet) : undefined,
+        maxSquareFeet: req.query.maxSquareFeet ? Number(req.query.maxSquareFeet) : undefined,
+        minYearBuilt: req.query.minYearBuilt ? Number(req.query.minYearBuilt) : undefined,
+        maxYearBuilt: req.query.maxYearBuilt ? Number(req.query.maxYearBuilt) : undefined,
+        minValue: req.query.minValue ? Number(req.query.minValue) : undefined,
+        maxValue: req.query.maxValue ? Number(req.query.maxValue) : undefined,
+        minEquity: req.query.minEquity ? Number(req.query.minEquity) : undefined,
+        maxMortgage: req.query.maxMortgage ? Number(req.query.maxMortgage) : undefined,
+        freeAndClear: req.query.freeAndClear === 'true',
+        absenteeOnly: req.query.absenteeOnly === 'true',
+        corporateOwnedOnly: req.query.corporateOwnedOnly === 'true',
+        taxDelinquentOnly: req.query.taxDelinquentOnly === 'true',
+        ownershipDurationYearsMin: req.query.ownershipDurationYearsMin ? Number(req.query.ownershipDurationYearsMin) : undefined,
+        minPortfolioProperties: req.query.minPortfolioProperties ? Number(req.query.minPortfolioProperties) : undefined,
+        ownerMailingState: req.query.ownerMailingState ? String(req.query.ownerMailingState) : undefined,
+        page: req.query.page ? Number(req.query.page) : undefined,
+        pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+        sortBy: req.query.sortBy as PropertySearchQuery['sortBy'],
+        sortDirection: req.query.sortDirection as PropertySearchQuery['sortDirection'],
+      };
+
+      const result = await searchProperties(pool, organizationId, query);
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      console.error('Database property search error:', err);
+      res.status(500).json({ error: err.message || 'Property search failed' });
+    }
+  });
+
+  app.post('/api/property-search', async (req, res) => {
+    try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) {
+        return res.status(503).json({
+          error: 'Property search requires the PostgreSQL database to be connected',
+          code: 'PROPERTY_SEARCH_DATABASE_UNAVAILABLE',
+        });
+      }
+
+      const query = req.body as PropertySearchQuery;
+      const result = await searchProperties(pool, organizationId, query);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('Database property search error:', err);
+      res.status(500).json({ error: err.message || 'Property search failed' });
+    }
+  });
+
+  // Live provider search is deliberately separate from the database-backed search API.
+  app.get('/api/property-search/live', async (req, res) => {
+    try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
-        address,
-        apn,
-        city,
-        zip,
-        county,
-        state,
-        ownerName,
-        organizationId,
-        preferredProvider,
-        limit,
+        address, apn, city, zip, county, state, ownerName, preferredProvider, persist, limit,
       } = req.query;
-
-      const persist = req.query.persist !== 'false';
-
       const results = await propertyDataProvider.search({
         address: address ? String(address) : undefined,
         apn: apn ? String(apn) : undefined,
@@ -1068,53 +1134,15 @@ async function startServer() {
         county: county ? String(county) : undefined,
         state: state ? String(state) : undefined,
         ownerName: ownerName ? String(ownerName) : undefined,
-        organizationId: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
+        organizationId,
         preferredProvider: preferredProvider as any,
-        persist,
+        persist: persist !== 'false',
         limit: limit ? Number(limit) : 10,
       });
-
       res.json(results);
     } catch (err: any) {
-      console.error('Property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
-    }
-  });
-
-  app.post('/api/property-search', async (req, res) => {
-    try {
-      const {
-        address,
-        apn,
-        city,
-        zip,
-        county,
-        state,
-        ownerName,
-        organizationId,
-        preferredProvider,
-        persist,
-        limit,
-      } = req.body;
-
-      const results = await propertyDataProvider.search({
-        address,
-        apn,
-        city,
-        zip,
-        county,
-        state,
-        ownerName,
-        organizationId: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
-        preferredProvider,
-        persist: persist !== false,
-        limit: limit || 10,
-      });
-
-      res.json(results);
-    } catch (err: any) {
-      console.error('Property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
+      console.error('Live property provider search error:', err);
+      res.status(500).json({ error: err.message || 'Live property search failed' });
     }
   });
 

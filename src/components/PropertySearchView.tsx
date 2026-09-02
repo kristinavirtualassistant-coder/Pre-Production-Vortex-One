@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Search,
   Filter,
@@ -30,6 +30,7 @@ import { Property, LeadRecord } from '../types';
 
 interface PropertySearchViewProps {
   properties: Property[];
+  onSearchProperties?: (query: Record<string, unknown>) => Promise<Property[]>;
   onSelectProperty: (property: Property) => void;
   onOpenInspector: (property: Property) => void;
   onCreateLead: (property: Property) => void;
@@ -39,6 +40,7 @@ interface PropertySearchViewProps {
 
 export const PropertySearchView: React.FC<PropertySearchViewProps> = ({
   properties,
+  onSearchProperties,
   onSelectProperty,
   onOpenInspector,
   onCreateLead,
@@ -57,9 +59,32 @@ export const PropertySearchView: React.FC<PropertySearchViewProps> = ({
   const [activeLayer, setActiveLayer] = useState<'parcels' | 'owners' | 'opportunities' | 'leads'>('parcels');
   const [zoomLevel, setZoomLevel] = useState<number>(14);
 
+  useEffect(() => {
+    if (!onSearchProperties) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const serverResults = await onSearchProperties({
+          searchText: searchTerm.trim() || undefined,
+          city: selectedCity !== 'all' ? selectedCity : undefined,
+          propertyType: selectedType !== 'all' ? selectedType : undefined,
+          absenteeOnly,
+          taxDelinquentOnly,
+        });
+        setServerProperties(serverResults);
+      } catch (error) {
+        console.warn('Database property search failed:', error);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [onSearchProperties, searchTerm, selectedCity, selectedType, absenteeOnly, taxDelinquentOnly]);
+
+  const [serverProperties, setServerProperties] = useState<Property[]>(properties);
+
+  useEffect(() => setServerProperties(properties), [properties]);
+
   // Filter logic
   const filteredProperties = useMemo(() => {
-    return properties.filter((p) => {
+    return serverProperties.filter((p) => {
       const matchSearch =
         !searchTerm ||
         p.address.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -76,11 +101,11 @@ export const PropertySearchView: React.FC<PropertySearchViewProps> = ({
 
       return matchSearch && matchCity && matchType && matchScore && matchAbsentee && matchTax;
     });
-  }, [properties, searchTerm, selectedCity, selectedType, minScore, absenteeOnly, taxDelinquentOnly]);
+  }, [serverProperties, searchTerm, selectedCity, selectedType, minScore, absenteeOnly, taxDelinquentOnly]);
 
   const activeProperty = useMemo(() => {
-    return properties.find((p) => p.id === selectedPropertyId) || filteredProperties[0] || properties[0];
-  }, [properties, selectedPropertyId, filteredProperties]);
+    return serverProperties.find((p) => p.id === selectedPropertyId) || filteredProperties[0] || serverProperties[0];
+  }, [serverProperties, selectedPropertyId, filteredProperties]);
 
   const handleToggleSelectAll = () => {
     if (selectedPropertyIds.length === filteredProperties.length) {
@@ -96,8 +121,8 @@ export const PropertySearchView: React.FC<PropertySearchViewProps> = ({
     );
   };
 
-  const cities = Array.from(new Set(properties.map((p) => p.city))).filter(Boolean);
-  const types = Array.from(new Set(properties.map((p) => p.property_type))).filter(Boolean);
+  const cities = Array.from(new Set(serverProperties.map((p) => p.city))).filter(Boolean);
+  const types = Array.from(new Set(serverProperties.map((p) => p.property_type))).filter(Boolean);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100">

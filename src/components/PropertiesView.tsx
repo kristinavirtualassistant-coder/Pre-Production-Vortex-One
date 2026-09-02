@@ -827,7 +827,7 @@ export const PropertiesView: React.FC<PropertiesViewProps> = ({
         params.append('organizationId', activeTenant.id);
       }
 
-      const res = await fetch(`/api/property-search?${params.toString()}`);
+      const res = await fetch(`/api/property-search/live?${params.toString()}`);
       if (!res.ok) {
         throw new Error(`County GIS search returned HTTP ${res.status}`);
       }

@@ -393,4 +393,17 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 6,
+    name: '006_add_property_search_indexes',
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_properties_org_apn ON properties(organization_id, apn);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_value_equity ON properties(organization_id, estimated_value, estimated_equity);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_flags ON properties(organization_id, is_absentee_owner, is_corporate_owned, tax_delinquent);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_type_year ON properties(organization_id, property_type, year_built);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_zip ON properties(organization_id, zip);
+      CREATE INDEX IF NOT EXISTS idx_property_owners_org_state ON property_owners(organization_id, mailing_state);
+      CREATE INDEX IF NOT EXISTS idx_property_owners_org_portfolio ON property_owners(organization_id, properties_owned_count);
+    `,
+  },
 ];
