@@ -80,6 +80,24 @@ async function startServer() {
     res.json(getDatabaseStatus());
   });
 
+  app.get('/api/operational/metrics', async (req, res) => {
+    try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Operational metrics require PostgreSQL', code: 'METRICS_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM campaign_contact WHERE organization_id = $1 AND dial_status = 'queued') AS queue_depth,
+          (SELECT COUNT(*) FROM call WHERE organization_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS calls_24h,
+          (SELECT COUNT(*) FROM call WHERE organization_id = $1 AND status = 'completed' AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS completed_calls_24h,
+          (SELECT COUNT(*) FROM jobs WHERE organization_id = $1 AND status IN ('queued','processing')) AS active_jobs,
+          (SELECT COUNT(*) FROM jobs WHERE organization_id = $1 AND status = 'failed') AS failed_jobs`, [organizationId]);
+      res.json({ organizationId, ...result.rows[0], database: getDatabaseStatus() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to load operational metrics' });
+    }
+  });
+
   // --- Task Cache & Saved Answers Management APIs ---
   app.get('/api/cache/stats', (req, res) => {
     try {

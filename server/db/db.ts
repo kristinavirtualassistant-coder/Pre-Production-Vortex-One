@@ -39,8 +39,8 @@ let currentDbStatus: DatabaseStatus = {
   type: 'in_memory',
   instance: process.env.CLOUD_SQL_CONNECTION_NAME || 'vortex-one:us-central1:vortex-one-instance',
   database: process.env.DB_NAME || 'vortex-one-database',
-  appliedMigrationsCount: 5,
-  lastMigrationName: '005_add_properties_unique_constraint',
+  appliedMigrationsCount: 9,
+  lastMigrationName: '009_create_durable_jobs',
 };
 
 // In-memory persistent collections (synchronized across app execution)

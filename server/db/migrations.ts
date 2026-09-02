@@ -441,4 +441,18 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_activities_org_lead_created ON activities(organization_id, lead_id, created_at DESC);
     `,
   },
+  {
+    version: 9,
+    name: '009_create_durable_jobs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS jobs (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        job_type VARCHAR(100) NOT NULL, payload JSONB DEFAULT '{}'::jsonb NOT NULL, status VARCHAR(30) DEFAULT 'queued' NOT NULL,
+        attempts INTEGER DEFAULT 0 NOT NULL, max_attempts INTEGER DEFAULT 3 NOT NULL, available_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        locked_at TIMESTAMP WITH TIME ZONE, locked_by VARCHAR(128), last_error TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE
+      );
+      CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(organization_id, status, available_at);
+    `,
+  },
 ];
