@@ -5,12 +5,10 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
-// Initialize Firebase Admin
-initializeApp();
+// Firebase Admin is initialized idempotently by the shared middleware module.
 const firestore = getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
@@ -26,7 +24,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { leadScoringService } from './server/leadScoringService';
 
@@ -63,6 +61,15 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       db: getDatabaseStatus(),
     });
+  });
+
+  // All API routes are authenticated except the minimal health endpoint and
+  // provider callbacks that must be reachable without a Firebase user token.
+  app.use('/api', (req: AuthRequest, res, next) => {
+    if (shouldBypassApiAuth(req.path)) {
+      return next();
+    }
+    return requireAuth(req, res, next);
   });
 
   app.get('/api/db/status', (req, res) => {
@@ -973,7 +980,6 @@ async function startServer() {
   const propertyDataProvider = new UnifiedPropertyDataProvider();
 
   // External HTTP/HTTPS Webhook Management APIs
-  app.use('/api/webhooks', requireAuth);
   app.get('/api/webhooks', async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;

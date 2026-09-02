@@ -24,6 +24,10 @@ export class AuthorizationError extends Error {
   }
 }
 
+export function shouldBypassApiAuth(path: string): boolean {
+  return path === '/health' || path.startsWith('/telephony/webhook/');
+}
+
 export function resolveAuthenticatedOrganizationId(
   dbUser: AuthRequest['dbUser'],
   requestedOrganizationId?: string,

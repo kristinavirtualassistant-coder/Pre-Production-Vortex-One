@@ -7,14 +7,13 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   firebaseSignOut,
-  onAuthStateChanged,
+  onIdTokenChanged,
   updateProfile,
   testFirestoreConnection,
   UserProfile,
   OrganizationTenant,
   DEMO_USERS,
   FirebaseUser,
-  GoogleAuthProvider,
 } from '../lib/firebase';
 import {
   doc,
@@ -216,9 +215,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+    const unsubscribe = onIdTokenChanged(auth, async (fbUser) => {
       if (fbUser) {
         setUser(fbUser);
+        try {
+          setAccessToken(await fbUser.getIdToken());
+        } catch (tokenError) {
+          console.warn('[Auth] Failed to refresh Firebase ID token:', tokenError);
+          setAccessToken(null);
+        }
         const profile = await fetchOrCreateUserProfile(fbUser);
         setUserProfile(profile);
         setActiveTenant({
@@ -232,6 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!localStorage.getItem('vortex_demo_session')) {
           setUser(null);
           setUserProfile(null);
+          setAccessToken(null);
         }
       }
       setLoading(false);
@@ -249,10 +255,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const result = await signInWithPopup(auth, googleProvider);
       setUser(result.user);
       
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setAccessToken(credential.accessToken);
-      }
+      setAccessToken(await result.user.getIdToken());
 
       const profile = await fetchOrCreateUserProfile(result.user, 'executive');
       setUserProfile(profile);
@@ -279,6 +282,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem('vortex_demo_session');
       const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
       setUser(result.user);
+      setAccessToken(await result.user.getIdToken());
       const profile = await fetchOrCreateUserProfile(result.user);
       setUserProfile(profile);
       setActiveTenant({
@@ -318,6 +322,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setUser(result.user);
+      setAccessToken(await result.user.getIdToken());
       const profile = await fetchOrCreateUserProfile(
         result.user,
         params.role || 'executive',
@@ -431,6 +436,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await firebaseSignOut(auth);
       setUser(null);
       setUserProfile(null);
+      setAccessToken(null);
     } catch (err: any) {
       console.error('Sign-out error:', err);
     }
