@@ -1,0 +1,147 @@
+server/db/db.ts:49:      id: 'org_cmc_realty',
+server/db/db.ts:81:  const orgId = 'org_cmc_realty';
+server/db/db.ts:1328:              ('org_cmc_realty', 'CMC Realty & Property Management', 'cmc-realty', '{"market": "Orange County, CA"}'::jsonb, NOW(), NOW()),
+server/services/organizationContext.ts:7:  if (typeof organizationId !== 'string' || organizationId.trim().length === 0) {
+server/services/dataImportService.ts:462:    if (!organizationId || typeof organizationId !== 'string' || organizationId.trim() === '') {
+server/services/dataImportService.ts:643:                cleanOrgId === 'org_cmc_realty' ? 'CMC Realty & Property Management' : cleanOrgId.replace(/[-_]/g, ' '),
+server/services/propertyProviders/PropertyDataProvider.ts:462:              orgId === 'org_cmc_realty' ? 'CMC Realty & Property Management' : orgId.replace(/[-_]/g, ' '),
+server/test/suite.ts:31:  DEFAULT_ORG_ID,
+server/test/suite.ts:131:  const webhookResult1 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
+server/test/suite.ts:139:  const webhookResult2 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
+server/test/suite.ts:154:    'org_cmc_realty',
+server/test/suite.ts:160:  const check1 = await SuppressionService.isSuppressed('org_cmc_realty', '+1 (949) 555-9999');
+server/test/suite.ts:164:  const check2 = await SuppressionService.isSuppressed('org_cmc_realty', '(949) 555-0000');
+server/test/suite.ts:173:    organizationId: 'org_cmc_realty',
+server/test/suite.ts:181:  const startRes = await CampaignManager.startCampaign('org_cmc_realty', newCamp.id, 'agent_lead');
+server/test/suite.ts:184:  await CampaignManager.addContacts('org_cmc_realty', newCamp.id, [
+server/test/suite.ts:191:    organizationId: 'org_cmc_realty',
+server/test/suite.ts:197:  await CampaignManager.pauseCampaign('org_cmc_realty', newCamp.id);
+server/test/suite.ts:200:  await CampaignManager.stopCampaign('org_cmc_realty', newCamp.id);
+server/test/suite.ts:226:    'org_cmc_realty',
+server/test/suite.ts:296:  const recResult = await DataImportService.reconcileBatch('org_cmc_realty', testBatch, {
+server/test/suite.ts:310:    (o) => o.organization_id === 'org_cmc_realty' && o.name === 'Vanguard Coastal Properties LLC'
+server/test/suite.ts:348:  const updateResult = await DataImportService.reconcileBatch('org_cmc_realty', updateBatch);
+server/test/suite.ts:354:    (p) => p.organization_id === 'org_cmc_realty' && p.apn === '990-123-45'
+server/test/suite.ts:360:  const syncResult = await DataImportService.syncProductionCrmSource('org_cmc_realty');
+server/test/suite.ts:369:  assert(auditLog?.organization_id === 'org_cmc_realty', 'Audit log scoped to organization_id');
+server/test/suite.ts:375:  const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_cmc_realty');
+server/test/suite.ts:385:  assert(DEFAULT_ORG_ID === 'org_cmc_realty', 'Default organization_id is org_cmc_realty');
+server/test/suite.ts:429:  const csvReconcileResult = await DataImportService.reconcileBatch(DEFAULT_ORG_ID, parsedCsv);
+server/test/suite.ts:444:      organization_id: DEFAULT_ORG_ID,
+server/test/suite.ts:479:      organization_id: DEFAULT_ORG_ID,
+server/test/suite.ts:511:      organization_id: DEFAULT_ORG_ID,
+server/test/suite.ts:533:      organization_id: DEFAULT_ORG_ID,
+server/test/suite.ts:555:    organizationId: DEFAULT_ORG_ID,
+server/test/suite.ts:575:    organizationId: DEFAULT_ORG_ID,
+server/test/suite.ts:593:    organizationId: DEFAULT_ORG_ID,
+server/test/suite.ts:610:    organizationId: DEFAULT_ORG_ID,
+server/test/suite.ts:638:    organizationId: DEFAULT_ORG_ID,
+server/test/suite.ts:650:    owner_id: 'owner_test_1', // owner has org_cmc_realty
+server/test/suite.ts:664:  const serverIntegrityReport = await DataImportService.validateReferentialIntegrity(DEFAULT_ORG_ID);
+server/test/suite.ts:666:  assert(serverIntegrityReport.organization_id === DEFAULT_ORG_ID, 'Server integrity report scoped to default org');
+server/test/suite.ts:733:    { enforceDnc: true, organizationId: DEFAULT_ORG_ID }
+server/test/suite.ts:767:    DEFAULT_ORG_ID,
+server/test/suite.ts:867:    organizationId: 'org_cmc_realty',
+server/test/suite.ts:898:    organizationId: 'org_cmc_realty',
+src/services/dataImportService.ts:5: * adhering strictly to organization_id partitioning ('org_cmc_realty') and DNC/TCPA suppression logic.
+src/services/dataImportService.ts:10:export const DEFAULT_ORG_ID = 'org_cmc_realty';
+src/services/dataImportService.ts:459: * Partitions by organization_id ('org_cmc_realty' by default) and applies TCPA/DNC suppression constraints.
+src/services/dataImportService.ts:466:    organizationId = DEFAULT_ORG_ID,
+src/services/dataImportService.ts:475:  if (!organizationId || organizationId.trim() === '') {
+src/services/dataImportService.ts:476:    throw new Error("Organization ID is strictly required for tenant partition isolation ('org_cmc_realty')");
+src/services/dataImportService.ts:627: * and DNC validation for org_cmc_realty.
+src/services/dataImportService.ts:637:    organizationId: DEFAULT_ORG_ID,
+src/services/dataImportService.ts:640:    sourceSystem: 'CRM Import Batch Service (org_cmc_realty)',
+src/services/dataImportService.ts:702:    const propOrgId = property.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:732:      const ownerOrgId = parentOwner.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:768:    const leadOrgId = lead.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:789:        const propOrgId = leadProperty.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:820:        const ownerOrgId = leadOwner.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:860:    const ownerOrgId = owner.organization_id || DEFAULT_ORG_ID;
+src/services/dataImportService.ts:913:  organizationId: string = DEFAULT_ORG_ID
+src/services/dataImportService.ts:961:  const targetOrgId = (options.organizationId || DEFAULT_ORG_ID).trim();
+src/services/dataImportService.ts:1342:  organizationId: string = DEFAULT_ORG_ID,
+src/services/dataImportService.ts:1361:  organizationId: string = DEFAULT_ORG_ID
+src/services/dataImportService.ts:1389:  DEFAULT_ORG_ID,
+src/contexts/AuthContext.tsx:56:  id: 'org_cmc_realty',
+src/App.tsx:264:    const tenantIdToFetch = forcedTenantId || activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+src/App.tsx:354:    return activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty';
+src/App.tsx:992:        organizationId={activeTenant?.id || userProfile?.organization_id || 'org_cmc_realty'}
+src/lib/firebase.ts:98:    organization_id: 'org_cmc_realty',
+src/lib/firebase.ts:108:    organization_id: 'org_cmc_realty',
+src/lib/firebase.ts:118:    organization_id: 'org_cmc_realty',
+src/components/BulkOutreachScheduleModal.tsx:138:            organization_id: 'org_cmc_realty',
+src/components/BulkOutreachScheduleModal.tsx:169:        organization_id: 'org_cmc_realty',
+src/components/BulkOutreachScheduleModal.tsx:200:            organizationId: 'org_cmc_realty',
+src/components/OpportunitiesView.tsx:40:      organization_id: 'org_cmc_realty',
+src/components/OpportunitiesView.tsx:66:      organization_id: 'org_cmc_realty',
+src/components/OpportunitiesView.tsx:92:      organization_id: 'org_cmc_realty',
+src/components/OpportunitiesView.tsx:118:      organization_id: 'org_cmc_realty',
+src/components/OwnersView.tsx:45:      organization_id: 'org_cmc_realty',
+src/components/OwnersView.tsx:66:      organization_id: 'org_cmc_realty',
+src/components/OwnersView.tsx:86:      organization_id: 'org_cmc_realty',
+src/components/SyncStatusFooter.tsx:35:  organizationId = 'org_cmc_realty',
+src/components/DatabaseView.tsx:287:      const res = await fetch('/api/import/audit-logs?organizationId=org_cmc_realty');
+src/components/DatabaseView.tsx:356:        organizationId: 'org_cmc_realty',
+src/components/DatabaseView.tsx:410:          organization_id: 'org_cmc_realty',
+src/components/DatabaseView.tsx:449:              Multi-tenant 'org_cmc_realty' data import with validation middleware, field mapping, phone normalization, and audit logging.
+src/components/DatabaseView.tsx:546:          <div className="text-sm font-bold text-blue-700 font-mono">org_cmc_realty</div>
+src/components/DatabaseView.tsx:897:                Target Partition: <span className="font-mono font-semibold text-slate-700">org_cmc_realty</span> &bull; Authoritative PostgreSQL Store
+src/components/VisualWorkflowBuilder.tsx:1534:          organizationId: 'org_cmc_realty',
+src/components/VisualWorkflowBuilder.tsx:1730:            organizationId: 'org_cmc_realty',
+src/components/LeadsView.tsx:162:        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+src/components/OutreachTemplateManager.tsx:82:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:132:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:153:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:197:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:218:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:261:    organization_id: 'org_cmc_realty',
+src/components/OutreachTemplateManager.tsx:303:  organizationId = 'org_cmc_realty',
+src/components/VoicemailDropControl.tsx:46:      organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:169:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:189:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:209:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:229:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:249:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:269:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:289:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:309:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:391:          body: JSON.stringify({ organization_id: 'org_cmc_realty' }),
+src/components/DialerView.tsx:481:                    organizationId: 'org_cmc_realty',
+src/components/DialerView.tsx:536:          organizationId: 'org_cmc_realty',
+src/components/DialerView.tsx:589:        fetch('/api/dialer/metrics?organizationId=org_cmc_realty'),
+src/components/DialerView.tsx:590:        fetch('/api/dialer/voicemails?organizationId=org_cmc_realty')
+src/components/DialerView.tsx:605:          organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:646:          organizationId: 'org_cmc_realty',
+src/components/DialerView.tsx:684:      const res = await fetch('/api/suppression?organizationId=org_cmc_realty');
+src/components/DialerView.tsx:702:          organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:720:      const res = await fetch(`/api/suppression/${id}?organizationId=org_cmc_realty`, {
+src/components/DialerView.tsx:739:        organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:793:            organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:806:          organization_id: 'org_cmc_realty',
+src/components/DialerView.tsx:835:        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+src/components/DialerView.tsx:854:        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+src/components/DialerView.tsx:872:        body: JSON.stringify({ organizationId: 'org_cmc_realty' }),
+src/components/DialerView.tsx:935:      const res = await fetch(`/api/telephony/webhook/${telephonyProvider}?organizationId=org_cmc_realty`, {
+src/components/DialerView.tsx:1600:                              organizationId: 'org_cmc_realty',
+src/components/PropertiesView.tsx:675:          organizationId: 'org_cmc_realty',
+src/components/PropertiesView.tsx:824:      params.append('organizationId', 'org_cmc_realty');
+src/components/PropertiesView.tsx:856:          organization_id: 'org_cmc_realty',
+src/components/PropertiesView.tsx:911:          organizationId: 'org_cmc_realty',
+src/components/PropertiesView.tsx:965:          organizationId: 'org_cmc_realty',
+src/components/DataImportModal.tsx:111:  const organizationId = userProfile?.organization_id || 'org_cmc_realty';
+src/components/DataImportModal.tsx:734:                    {folderInfo?.folderPath || `data/imported_files/${organizationId}`} • {archivedFiles.length} {archivedFiles.length === 1 ? 'archived dataset' : 'archived datasets'}
+src/components/AuditView.tsx:1575:                                      organization_id: log.organization_id || 'org_cmc_realty',
+src/components/StudioView.tsx:235:            organizationId="org_cmc_realty"
+src/components/PortfoliosView.tsx:38:      organization_id: 'org_cmc_realty',
+src/components/PortfoliosView.tsx:54:      organization_id: 'org_cmc_realty',
+src/components/PortfoliosView.tsx:70:      organization_id: 'org_cmc_realty',
+src/components/WorkflowsView.tsx:827:          organizationId: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:108:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:129:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:150:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:171:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:192:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:213:        organization_id: 'org_cmc_realty',
+src/components/CampaignEngagementHeatmap.tsx:234:        organization_id: 'org_cmc_realty',
+src/components/CreateLeadModal.tsx:17:  organizationId = 'org_cmc_realty',
