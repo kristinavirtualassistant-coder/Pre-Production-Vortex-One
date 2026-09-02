@@ -29,6 +29,7 @@ import { GoogleMapsProvider } from './GoogleMapsProvider';
 import { inMemoryStore, getPgPool } from '../../db/db';
 import { AuditLogEntry } from '../../../src/types';
 import { taskCacheService } from '../cacheService';
+import { externalWebhookService, buildPropertyDiscoveredPayload } from '../externalWebhookService';
 
 export class UnifiedPropertyDataProvider {
   private orangeCountyProvider: OrangeCountyGISProvider;
@@ -342,10 +343,13 @@ export class UnifiedPropertyDataProvider {
 
         // Persist records if requested (default to true)
         let persistedCount = 0;
+        let newlyDiscovered: NormalizedPropertyResult[] = [];
         const shouldPersist = query.persist !== false;
 
         if (shouldPersist && results.length > 0) {
-          persistedCount = await this.persistResults(results, query.organizationId || 'org_cmc_realty');
+          const persisted = await this.persistResults(results, query.organizationId || 'org_cmc_realty');
+          persistedCount = persisted.savedCount;
+          newlyDiscovered = persisted.newlyDiscovered;
         }
 
         const duration = Date.now() - startTime;
@@ -357,11 +361,25 @@ export class UnifiedPropertyDataProvider {
           totalFound: results.length,
           results,
           persistedCount,
+          newlyDiscovered,
           warnings: warnings.length > 0 ? warnings : undefined,
           executionTimeMs: duration,
         };
       }
     );
+
+    if (!isCached && result.newlyDiscovered?.length > 0) {
+      const orgId = query.organizationId || 'org_cmc_realty';
+      void Promise.all(result.newlyDiscovered.map((item) =>
+        externalWebhookService.publish(
+          orgId,
+          'property.discovered',
+          buildPropertyDiscoveredPayload(item.property, item.owner),
+        )
+      )).catch((error) => {
+        console.error('[ExternalWebhook] property.discovered delivery error:', error);
+      });
+    }
 
     if (isCached && result) {
       return {
@@ -376,12 +394,32 @@ export class UnifiedPropertyDataProvider {
   /**
    * Persists property search results into PostgreSQL Cloud SQL and In-Memory Store
    */
-  private async persistResults(results: NormalizedPropertyResult[], orgId: string): Promise<number> {
+  private async persistResults(results: NormalizedPropertyResult[], orgId: string): Promise<{
+    savedCount: number;
+    newlyDiscovered: NormalizedPropertyResult[];
+  }> {
     let savedCount = 0;
+    const newlyDiscovered: NormalizedPropertyResult[] = [];
     const pool = getPgPool();
 
     for (const item of results) {
       const { property, owner, geometry } = item;
+      let isNewProperty = !inMemoryStore.properties.some(
+        (p) => p.organization_id === orgId && (p.apn === property.apn || p.address === property.address)
+      );
+
+      if (pool && isNewProperty) {
+        try {
+          const existing = await pool.query(
+            `SELECT 1 FROM properties WHERE organization_id = $1 AND (apn = $2 OR address = $3) LIMIT 1`,
+            [orgId, property.apn, property.address]
+          );
+          isNewProperty = existing.rowCount === 0;
+        } catch (dbErr: any) {
+          console.warn('[PropertyDataProvider] Could not verify property novelty:', dbErr.message);
+          isNewProperty = false;
+        }
+      }
       
       if (geometry?.centroid) {
         property.latitude = geometry.centroid.lat;
@@ -499,6 +537,7 @@ export class UnifiedPropertyDataProvider {
       }
 
       savedCount++;
+      if (isNewProperty) newlyDiscovered.push(item);
     }
 
     // 3. Create Audit Trail Entry
@@ -516,7 +555,7 @@ export class UnifiedPropertyDataProvider {
     };
     inMemoryStore.auditLogs.unshift(auditEntry);
 
-    return savedCount;
+    return { savedCount, newlyDiscovered };
   }
 }
 

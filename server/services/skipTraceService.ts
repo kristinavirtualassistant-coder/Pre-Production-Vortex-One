@@ -15,6 +15,7 @@ import { UnifiedPropertyDataProvider } from './propertyProviders/PropertyDataPro
 import { SuppressionService } from '../dialer/suppressionService';
 import { generateUniqueContacts } from './propertyProviders/providerHelpers';
 import { taskCacheService } from './cacheService';
+import { externalWebhookService, buildLeadEnrichedPayload } from './externalWebhookService';
 
 export interface SkipTraceStep1_GIS {
   apn: string;
@@ -1048,6 +1049,25 @@ export class SkipTraceService {
       } catch (pgErr: any) {
         console.warn('[SkipTraceService] PostgreSQL sync fallback:', pgErr.message);
       }
+    }
+
+    const linkedProperty = params.propertyId
+      ? inMemoryStore.properties.find((p) => p.id === params.propertyId)
+      : inMemoryStore.properties.find((p) => p.owner_id === owner.id);
+    if ((params.phoneNumbers?.length || 0) > 0 || (params.emailAddresses?.length || 0) > 0) {
+      void externalWebhookService.publish(
+        orgId,
+        'lead.enriched',
+        buildLeadEnrichedPayload(
+          owner,
+          lead,
+          linkedProperty,
+          params.phoneNumbers || [],
+          params.emailAddresses || [],
+        ),
+      ).catch((error) => {
+        console.error('[ExternalWebhook] lead.enriched delivery error:', error);
+      });
     }
 
     return {
