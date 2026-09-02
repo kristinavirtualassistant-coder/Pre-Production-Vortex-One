@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Santa Clara County (Silicon Valley) GIS MapServer Provider
  * Queries official Santa Clara County Planning & Assessor parcel rolls, valuations, and spatial records.
@@ -112,7 +113,7 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
     }
 
 
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {
@@ -270,7 +271,7 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const features = data.features || [];
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
     const retrievedAt = new Date().toISOString();
 
     return features.map((feat: any, idx: number): NormalizedPropertyResult => {

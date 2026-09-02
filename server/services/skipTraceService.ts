@@ -1,3 +1,4 @@
+import { requireOrganizationId } from './organizationContext';
 /**
  * Vortex One - 5-Step Skip Tracing Intelligence Service
  *
@@ -496,7 +497,7 @@ export class SkipTraceService {
       category,
       inputPayload,
       async () => {
-        const orgId = params.organizationId || 'org_cmc_realty';
+        const orgId = requireOrganizationId(params.organizationId);
         const now = new Date().toISOString();
 
     // 1. Locate or query the Property record
@@ -878,7 +879,7 @@ export class SkipTraceService {
     emailAddresses?: Array<{ email: string; verified?: boolean }>;
     notes?: string;
   }): Promise<{ success: boolean; owner: PropertyOwner; lead?: LeadRecord }> {
-    const orgId = params.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(params.organizationId);
     let ownerIndex = inMemoryStore.propertyOwners.findIndex((o) => o.id === params.ownerId);
 
     if (ownerIndex === -1) {
@@ -1092,7 +1093,7 @@ export class SkipTraceService {
     discoveredPhones: Array<{ number: string; type: 'mobile' | 'landline'; dnc_status: boolean; confidence: number }>;
     discoveredEmails: Array<{ email: string; verified: boolean; confidence: number }>;
   }> {
-    const orgId = params.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(params.organizationId);
     let owner = inMemoryStore.propertyOwners.find((o) => o.id === params.ownerId);
     const prop = params.propertyId
       ? inMemoryStore.properties.find((p) => p.id === params.propertyId)
@@ -1215,7 +1216,7 @@ export class SkipTraceService {
     successful: number;
     results: Full5StepSkipTraceResult[];
   }> {
-    const orgId = organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(organizationId);
     const results: Full5StepSkipTraceResult[] = [];
 
     for (const propId of propertyIds) {
@@ -1295,7 +1296,7 @@ export class SkipTraceService {
       lead?: LeadRecord;
     }>;
   }> {
-    const orgId = params.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(params.organizationId);
     const jobId = `job_pipeline_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
     const limit = params.limit || 500;
@@ -1499,7 +1500,7 @@ export class SkipTraceService {
     totalLeadsReady: number;
     supportedEngines: string[];
   } {
-    const orgId = organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(organizationId);
     const properties = (inMemoryStore.properties || []).filter((p) => !orgId || p.organization_id === orgId);
     const owners = (inMemoryStore.propertyOwners || []).filter((o) => !orgId || o.organization_id === orgId);
     const leads = (inMemoryStore.leads || []).filter((l) => !orgId || l.organization_id === orgId);

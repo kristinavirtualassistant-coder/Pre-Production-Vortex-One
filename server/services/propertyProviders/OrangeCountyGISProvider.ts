@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Orange County Public Works / California Cadastral GIS Provider
  * Queries official public cadastral parcel and address records.
@@ -97,7 +98,7 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
         return generateSyntheticCountyParcels(targetCounty, query, this.providerName, this.primaryEndpoint);
       }
 
-      const orgId = query.organizationId || 'org_cmc_realty';
+      const orgId = requireOrganizationId(query.organizationId);
       const retrievedAt = new Date().toISOString();
 
       return features.map((feat: any, idx: number): NormalizedPropertyResult => {

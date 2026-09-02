@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - NETR Online Public Records & Title Roll Provider
  * Direct portal search for county recorder deeds, tax rolls, and property ownership history.
@@ -55,7 +56,7 @@ export class NetrOnlineProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const records = Array.isArray(data.records) ? data.records : (Array.isArray(data) ? data : [data]);
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
 
     return records.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.id || item.recordId || `netr_${idx}_${Date.now()}`;

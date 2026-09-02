@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../services/organizationContext';
 /**
  * Vortex One - Telephony Webhook Ingestion & Idempotency Pipeline
  * Normalizes RingCentral, Twilio, and SIP event streams into authoritative PostgreSQL tables
@@ -21,12 +22,15 @@ export interface WebhookProcessResult {
 }
 
 export class WebhookHandler {
+  private static requireTenant(organizationId: string): string {
+    return requireOrganizationId(organizationId);
+  }
   /**
    * Ingest and normalize an incoming telephony provider webhook
    */
   public static async processWebhook(
     provider: 'ringcentral' = 'ringcentral',
-    organizationId: string = 'org_cmc_realty',
+    organizationId: string,
     rawPayload: any,
     headers?: Record<string, any>
   ): Promise<WebhookProcessResult> {

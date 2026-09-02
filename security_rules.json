@@ -10,8 +10,8 @@
     "tenant_field_secondary": "organization_id",
     "user_profile_collection": "users",
     "user_tenant_path": "organization_id",
-    "allow_default_org_fallback": true,
-    "default_organization_id": "org_cmc_realty"
+    "allow_default_org_fallback": false,
+    "default_organization_id": null
   },
   "roles": {
     "admin": {
@@ -65,7 +65,7 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.id == auth.profile.organization_id || resource.id == 'org_cmc_realty')"
+          "condition": "auth != null && resource.id == auth.profile.organization_id"
         },
         "create": {
           "allow": true,
@@ -86,15 +86,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')",
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)",
           "immutable_fields": ["organizationId", "organization_id", "id"]
         },
         "delete": {
@@ -109,15 +109,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')",
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)",
           "immutable_fields": ["organizationId", "organization_id", "id"]
         },
         "delete": {
@@ -132,11 +132,11 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": false,
@@ -154,15 +154,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "delete": {
           "allow": true,
@@ -176,15 +176,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "delete": {
           "allow": true,
@@ -198,15 +198,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "delete": {
           "allow": false
@@ -219,15 +219,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "delete": {
           "allow": true,
@@ -241,15 +241,15 @@
       "access": {
         "read": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "create": {
           "allow": true,
-          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id || request.resource.data.organizationId == 'org_cmc_realty' || request.resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (request.resource.data.organizationId == auth.profile.organization_id || request.resource.data.organization_id == auth.profile.organization_id)"
         },
         "update": {
           "allow": true,
-          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id || resource.data.organizationId == 'org_cmc_realty' || resource.data.organization_id == 'org_cmc_realty')"
+          "condition": "auth != null && (resource.data.organizationId == auth.profile.organization_id || resource.data.organization_id == auth.profile.organization_id)"
         },
         "delete": {
           "allow": true,

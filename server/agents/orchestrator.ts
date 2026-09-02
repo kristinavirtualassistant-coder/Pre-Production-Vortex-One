@@ -37,7 +37,7 @@ export interface OrchestrationResult {
 export class MasterOrchestrator {
   private organizationId: string;
 
-  constructor(organizationId: string = 'org_cmc_realty') {
+  constructor(organizationId: string) {
     this.organizationId = organizationId;
   }
 

@@ -1,3 +1,4 @@
+import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - ATTOM Data Property & Tax API Provider
  * High-precision national property details, tax assessments, deed history, and owner records.
@@ -54,7 +55,7 @@ export class AttomDataProvider implements IPropertyDataProvider {
 
     const data = await response.json();
     const records = data.property || (Array.isArray(data) ? data : []);
-    const orgId = query.organizationId || 'org_cmc_realty';
+    const orgId = requireOrganizationId(query.organizationId);
 
     return records.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.identifier?.attomId || `attom_${idx}_${Date.now()}`;
