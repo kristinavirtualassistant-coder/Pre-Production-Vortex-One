@@ -8,6 +8,8 @@ import { getPgPool, inMemoryStore } from '../db/db';
 import { getTelephonyAdapter } from './telephonyAdapter';
 import { SuppressionService } from './suppressionService';
 import { NormalizedCallEvent } from './types';
+import { DialerStateTransitionService } from './dialerStateTransitionService';
+import { eventTypeForState } from './callStateMachine';
 
 // In-memory idempotency deduplication cache
 const processedEventsCache = new Set<string>();
@@ -47,29 +49,9 @@ export class WebhookHandler {
 
       const pool = getPgPool();
 
-      // Step 1: Idempotency Check via processed_events table
-      if (pool) {
-        try {
-          const insertRes = await pool.query(
-            `INSERT INTO processed_events (event_id, organization_id, provider, event_type, processed_at)
-             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-             ON CONFLICT (event_id) DO NOTHING`,
-            [normalized.eventId, organizationId, provider, normalized.eventType]
-          );
-
-          // If rowCount is 0, this event was already processed
-          if (insertRes.rowCount === 0) {
-            return {
-              status: 'duplicate_ignored',
-              eventId: normalized.eventId,
-              telephonyCallId: normalized.telephonyCallId,
-              eventType: normalized.eventType,
-            };
-          }
-        } catch (err: any) {
-          console.warn('PostgreSQL idempotency check warning:', err.message);
-        }
-      } else {
+      // Test/local fallback keeps idempotency semantics when PostgreSQL is unavailable.
+      // Production always uses the durable call_event primary key below.
+      if (!pool) {
         if (processedEventsCache.has(normalized.eventId)) {
           return {
             status: 'duplicate_ignored',
@@ -81,46 +63,47 @@ export class WebhookHandler {
         processedEventsCache.add(normalized.eventId);
       }
 
-      // Step 2: Record Call Event into call_event table
-      const callEventId = `cevt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      // PostgreSQL is authoritative for production call state. The durable transition
+      // service locks the call, validates the provider-neutral FSM transition, writes the
+      // event, and updates the call in one transaction. Duplicate provider events are
+      // harmless because call_event.id is the durable idempotency key.
       if (pool) {
-        try {
-          await pool.query(
-            `INSERT INTO call_event (id, organization_id, call_id, event_type, payload, occurred_at)
-             VALUES ($1, $2, (
-               SELECT id FROM call WHERE telephony_call_id = $3 OR id = $3 LIMIT 1
-             ), $4, $5, $6)
-             ON CONFLICT DO NOTHING`,
-            [
-              callEventId,
-              organizationId,
-              normalized.telephonyCallId,
-              normalized.eventType,
-              JSON.stringify(normalized.rawPayload),
-              normalized.timestamp,
-            ]
-          );
-
-          // Step 3: Update Call table status, duration, and recording
-          await pool.query(
-            `UPDATE call 
-             SET status = $1, 
-                 disposition = COALESCE($2, disposition),
-                 duration_seconds = CASE WHEN $3 > 0 THEN $3 ELSE duration_seconds END,
-                 recording_url = COALESCE($4, recording_url),
-                 ended_at = CASE WHEN $1 IN ('completed', 'failed', 'busy', 'no-answer', 'voicemail') THEN CURRENT_TIMESTAMP ELSE ended_at END
-             WHERE telephony_call_id = $5 OR id = $5`,
-            [
-              normalized.status,
-              normalized.disposition || null,
-              normalized.durationSeconds || 0,
-              normalized.recordingUrl || null,
-              normalized.telephonyCallId,
-            ]
-          );
-        } catch (err: any) {
-          console.warn('PostgreSQL call event update warning:', err.message);
+        const callLookup = await pool.query(
+          `SELECT id FROM call WHERE organization_id = $1 AND telephony_call_id = $2 LIMIT 1`,
+          [organizationId, normalized.telephonyCallId],
+        );
+        if (!callLookup.rowCount) {
+          throw new Error(`Call not found for organization: ${normalized.telephonyCallId}`);
         }
+
+        const transition = await DialerStateTransitionService.transition(pool, {
+          organizationId,
+          callId: callLookup.rows[0].id,
+          eventId: normalized.eventId,
+          eventType: normalized.dialerEventType || eventTypeForState(normalized.dialerState || DialerStateTransitionService.normalizeProviderStatus(normalized.status)),
+          nextState: normalized.dialerState || DialerStateTransitionService.normalizeProviderStatus(normalized.status),
+          payload: normalized.rawPayload,
+          occurredAt: normalized.timestamp,
+          disposition: normalized.disposition,
+          durationSeconds: normalized.durationSeconds,
+          recordingUrl: normalized.recordingUrl,
+        });
+
+        if (transition.status === 'duplicate_ignored') {
+          return {
+            status: 'duplicate_ignored',
+            eventId: normalized.eventId,
+            telephonyCallId: normalized.telephonyCallId,
+            eventType: normalized.eventType,
+          };
+        }
+
+        await pool.query(
+          `INSERT INTO processed_events (event_id, organization_id, provider, event_type, processed_at)
+           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+           ON CONFLICT (event_id) DO NOTHING`,
+          [normalized.eventId, organizationId, provider, normalized.eventType],
+        );
       }
 
       // Update inMemoryStore matching call

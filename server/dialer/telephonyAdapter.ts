@@ -4,6 +4,8 @@
  */
 
 import { CallStatus, CallDisposition, NormalizedCallEvent } from './types';
+import { DialerStateTransitionService } from './dialerStateTransitionService';
+import { eventTypeForState } from './callStateMachine';
 import { SDK as RingCentralSDK } from '@ringcentral/sdk';
 
 export interface InitiateCallParams {
@@ -204,7 +206,11 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
     const durationSeconds = primaryParty.duration || body.duration || 0;
     const recordingUrl = primaryParty.recordings?.[0]?.contentUri || body.recordings?.[0]?.contentUri;
 
+    const dialerState = DialerStateTransitionService.normalizeProviderStatus(statusCode);
+
     return {
+      dialerState,
+      dialerEventType: eventTypeForState(dialerState),
       eventId,
       telephonyCallId,
       eventType: `ringcentral.telephony_session.${statusCode.toLowerCase()}`,

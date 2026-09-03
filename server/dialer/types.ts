@@ -140,6 +140,8 @@ export interface SuppressionTableRecord {
 }
 
 export interface NormalizedCallEvent {
+  dialerState?: import('./callStateMachine').DialerCallState;
+  dialerEventType?: import('./callStateMachine').DialerCallEventType;
   eventId: string;
   telephonyCallId: string;
   eventType: string;
