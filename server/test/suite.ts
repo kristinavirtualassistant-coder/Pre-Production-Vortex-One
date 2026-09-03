@@ -11,8 +11,8 @@ import { getTelephonyAdapter, RingCentralTelephonyAdapter } from '../dialer/tele
 import { CampaignManager } from '../dialer/campaignManager';
 import { WebhookHandler } from '../dialer/webhookHandler';
 import { DataImportService, RawPropertyRecord } from '../services/dataImportService';
-import { UnifiedPropertyDataProvider, buildPropertySearchCachePayload } from '../services/propertyProviders/PropertyDataProvider';
-import { OrangeCountyGISProvider } from '../services/propertyProviders/OrangeCountyGISProvider';
+import { UnifiedPropertyDataProvider, buildPropertySearchCachePayload, validateAndClassifyResult } from '../services/propertyProviders/PropertyDataProvider';
+import { OrangeCountyGISProvider, normalizeOrangeCountyParcel } from '../services/propertyProviders/OrangeCountyGISProvider';
 import { LosAngelesCountyGISProvider } from '../services/propertyProviders/LosAngelesCountyGISProvider';
 import { SanDiegoCountyGISProvider } from '../services/propertyProviders/SanDiegoCountyGISProvider';
 import { RiversideCountyGISProvider } from '../services/propertyProviders/RiversideCountyGISProvider';
@@ -826,6 +826,27 @@ async function runAllTests() {
   assert(ocProvider.supportsAddressSearch === true, 'Orange County provider supports address searches');
   assert(ocProvider.supportsApnSearch === true, 'Orange County provider supports APN searches');
   assert(ocProvider.supportsOwnerSearch === false, 'Owner search flagged as false under Cal. Gov. Code § 6254.21 privacy rules');
+
+  // Public parcel records must never fabricate owner identity, contact data, or financial estimates.
+  const publicParcel = normalizeOrangeCountyParcel({
+    OBJECTID: 12345,
+    PARCEL_APN: '339-371-23',
+    FullStreetAddress: '623 CENTER ST',
+    SITE_CITY: 'COSTA MESA',
+    SITE_STATE: 'CA',
+    SITE_ZIP: '92627',
+    FIPS_CODE: '06059',
+    Shape__Area: 4500,
+  }, 'Orange', 'org_test');
+  assert(publicParcel.owner === undefined, 'Public GIS parcel does not fabricate an owner');
+  assert(publicParcel.property.owner_name === '', 'Public GIS parcel does not fabricate owner name');
+  assert(publicParcel.property.square_feet === 0, 'Public GIS parcel does not fabricate square footage');
+  assert(publicParcel.property.estimated_value === 0, 'Public GIS parcel does not fabricate estimated value');
+  assert(publicParcel.property.assessed_tax_value === 0, 'Public GIS parcel does not fabricate assessed value');
+  assert(publicParcel.property.units_count === 0, 'Public GIS parcel does not fabricate unit count');
+  const publicParcelQuality = validateAndClassifyResult(publicParcel);
+  assert(publicParcelQuality.isValid === true, 'Official redacted public parcel remains searchable without fabricated owner data');
+  assert(publicParcelQuality.quality === 'yellow', 'Official redacted public parcel is classified as yellow data quality');
 
   const laProvider = new LosAngelesCountyGISProvider();
   assert(laProvider.providerId === 'los_angeles_county_gis', 'LA County provider ID is los_angeles_county_gis');

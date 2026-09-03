@@ -10,8 +10,104 @@ import {
   NormalizedPropertyResult,
   ProviderProvenanceMetadata,
 } from './types';
-import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
+import { Property } from '../../../src/types';
+import { fetchWithTimeout } from './providerHelpers';
+
+function firstNumber(attributes: Record<string, any>, keys: string[]): number {
+  for (const key of keys) {
+    const value = Number(attributes[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function firstString(attributes: Record<string, any>, keys: string[]): string {
+  for (const key of keys) {
+    const value = attributes[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return '';
+}
+
+function normalizePropertyType(value: string): Property['property_type'] {
+  const normalized = value.toLowerCase();
+  if (normalized.includes('multi')) return 'Multi-Family';
+  if (normalized.includes('single') || normalized.includes('sfr')) return 'Single Family';
+  if (normalized.includes('condo')) return 'Condo';
+  if (normalized.includes('industrial')) return 'Industrial';
+  if (normalized.includes('commercial')) return 'Commercial';
+  return 'Unknown';
+}
+
+export function normalizeOrangeCountyParcel(
+  attr: Record<string, any>,
+  targetCounty: string,
+  organizationId: string,
+  geometry?: any,
+): NormalizedPropertyResult {
+  const apn = firstString(attr, ['PARCEL_APN', 'Search_PARCELAPN']);
+  const rawAddr = firstString(attr, ['FullStreetAddress', 'SITE_ADDR']) ||
+    [attr.SITE_HOUSE_NUMBER, attr.SITE_STREET_NAME, attr.SITE_MODE].filter(Boolean).join(' ').trim();
+  const city = firstString(attr, ['SITE_CITY']);
+  const state = firstString(attr, ['SITE_STATE']) || 'CA';
+  const zip = firstString(attr, ['SITE_ZIP']);
+  const buildingSqFt = firstNumber(attr, ['BUILDING_SQFT', 'BuildingSquareFeet', 'TOTAL_BUILDING_SQ_FT', 'BLDG_SQ_FT', 'LIVING_AREA']);
+  const yearBuilt = firstNumber(attr, ['YEAR_BUILT', 'YearBuilt', 'YR_BUILT']);
+  const assessedValue = firstNumber(attr, ['ASSESSED_VALUE', 'TOTAL_ASSESSED_VALUE', 'ASSESSEDVAL', 'ASSESSED_VAL']);
+  const units = firstNumber(attr, ['UNITS', 'UNIT_COUNT', 'TOTAL_UNITS', 'NUM_UNITS']);
+  const propertyType = normalizePropertyType(firstString(attr, ['PROPERTY_TYPE', 'PropertyType', 'USE_DESCRIPTION', 'LAND_USE_DESCRIPTION']));
+  const retrievedAt = new Date().toISOString();
+  const safeCounty = targetCounty.toLowerCase().replace(/[^a-z]/g, '_');
+  const safeApn = apn.replace(/[^0-9A-Za-z]/g, '_');
+  const propertyId = `${safeCounty}_gis_${safeApn || String(attr.OBJECTID || 'record')}`;
+  const provenance: ProviderProvenanceMetadata = {
+    provider: 'CA Statewide Cadastral Open Data (GIS)',
+    datasetName: `Parcels With Attributes (${targetCounty} / CA Cadastral Open GIS)`,
+    endpointUrl: 'https://bz1uwWPKUInZBK94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/services/CA_Statewide_Parcels_Public_view/FeatureServer/0/query',
+    retrievedAt,
+    queryFilter: '',
+    recordIdentifier: attr.OBJECTID || attr.PARCEL_DMP_ID || apn,
+    fipsCode: firstString(attr, ['FIPS_CODE']) || (targetCounty.toLowerCase() === 'orange' ? '06059' : undefined),
+    isOfficialGovernmentSource: true,
+    ownerIntelligenceStatus: 'statutory_redaction_cal_gov_6254_21',
+    ownerIntelligenceNotes: 'Owner identity and contact fields are not supplied by this public parcel dataset. Owner enrichment must come from an authorized downstream source.',
+    legalTermsNotes: `Public cadastral records maintained by ${targetCounty} & CA GIS.`,
+  };
+
+  const property: Property = {
+    id: propertyId,
+    organization_id: organizationId,
+    address: rawAddr,
+    city,
+    state,
+    zip,
+    county: `${targetCounty} County`,
+    apn,
+    property_type: propertyType,
+    units_count: units,
+    square_feet: buildingSqFt,
+    year_built: yearBuilt,
+    estimated_value: 0,
+    assessed_tax_value: assessedValue,
+    estimated_equity: 0,
+    mortgage_balance: 0,
+    owner_id: '',
+    owner_name: '',
+    is_absentee_owner: false,
+    is_corporate_owned: false,
+    tax_delinquent: false,
+    provenance: {
+      source: 'CA Statewide Cadastral Open Data (GIS)',
+      sourceType: 'public_records',
+      retrievedAt,
+      recordId: String(attr.OBJECTID || apn),
+      confidence: 0.98,
+      verified: true,
+    },
+  };
+
+  return { property, rawAttributes: attr, geometry, provenance };
+}
 
 export class OrangeCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'california_gis';
@@ -82,7 +178,7 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
 
       const response = await fetchWithTimeout(targetUrl, {
         method: 'GET',
-      }, 3000);
+      }, 10000);
 
       if (!response.ok) {
         throw new Error(`County GIS request failed with HTTP ${response.status}: ${response.statusText}`);
@@ -99,103 +195,17 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
       }
 
       const orgId = requireOrganizationId(query.organizationId);
-      const retrievedAt = new Date().toISOString();
 
-      return features.map((feat: any, idx: number): NormalizedPropertyResult => {
+      return features.map((feat: any): NormalizedPropertyResult => {
         const attr = feat.attributes || {};
-        const apn = attr.PARCEL_APN || attr.Search_PARCELAPN || `${targetCounty.substring(0, 2).toUpperCase()}-${attr.OBJECTID || idx}`;
-        const rawAddr = attr.FullStreetAddress || attr.SITE_ADDR || `${attr.SITE_HOUSE_NUMBER || ''} ${attr.SITE_STREET_NAME || ''} ${attr.SITE_MODE || ''}`.trim() || `${targetCounty} County Parcel`;
-        const city = attr.SITE_CITY || query.city || 'Costa Mesa';
-        const state = attr.SITE_STATE || 'CA';
-        const zip = attr.SITE_ZIP || query.zip || '92627';
-        const areaSqFt = attr.Shape__Area ? Math.round(Number(attr.Shape__Area) * 10.7639) : 4500;
+        const normalized = normalizeOrangeCountyParcel(attr, targetCounty, orgId, feat.geometry ? { type: 'Polygon', rings: feat.geometry.rings } : undefined);
+        normalized.provenance.queryFilter = whereQuery;
+        return normalized;
 
 
-        const propId = `${targetCounty.toLowerCase().replace(/[^a-z]/g, '_')}_gis_${apn.replace(/[^0-9A-Za-z]/g, '_')}`;
-
-        const provenance: ProviderProvenanceMetadata = {
-          provider: this.providerName,
-          datasetName: `Parcels With Attributes (${targetCounty} / CA Cadastral Open GIS)`,
-          endpointUrl: this.primaryEndpoint,
-          retrievedAt,
-          queryFilter: whereQuery,
-          recordIdentifier: attr.OBJECTID || attr.PARCEL_DMP_ID || apn,
-          fipsCode: attr.FIPS_CODE || '06059',
-          isOfficialGovernmentSource: true,
-          ownerIntelligenceStatus: 'statutory_redaction_cal_gov_6254_21',
-          ownerIntelligenceNotes:
-            'California Government Code § 6254.21 prohibits public county websites from displaying private property owner names. Title roll commercial enrichment is available via ATTOM Data and NETR Online integrations.',
-          legalTermsNotes:
-            `Public domain cadastral records maintained by ${targetCounty} & CA GIS. Permitted for CRM reference, mapping, and internal intelligence operations.`,
-        };
-
-        const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '949', ownerInfo.name);
-
-        const property: Property = {
-          id: propId,
-          organization_id: orgId,
-          address: rawAddr,
-          city,
-          state,
-          zip,
-          county: `${targetCounty} County`,
-          apn,
-          property_type: 'Multi-Family',
-          units_count: 4,
-          square_feet: areaSqFt > 0 ? areaSqFt : 4800,
-          year_built: 1988,
-          estimated_value: 2850000,
-          assessed_tax_value: 1950000,
-          estimated_equity: 1650000,
-          mortgage_balance: 1200000,
-          owner_id: `owner_${targetCounty.toLowerCase().replace(/[^a-z]/g, '_')}_${apn.replace(/[^0-9A-Za-z]/g, '_')}`,
-          owner_name: ownerInfo.name,
-          is_absentee_owner: true,
-          is_corporate_owned: ownerInfo.entityType === 'llc' || ownerInfo.entityType === 'corporation',
-          tax_delinquent: false,
-          provenance: {
-            source: this.providerName,
-            sourceType: 'public_records',
-            retrievedAt,
-            recordId: String(attr.OBJECTID || apn),
-            confidence: 0.98,
-            verified: true,
-          },
-        };
-
-        const owner: PropertyOwner = {
-          id: `owner_${targetCounty.toLowerCase().replace(/[^a-z]/g, '_')}_${apn.replace(/[^0-9A-Za-z]/g, '_')}`,
-          organization_id: orgId,
-          name: ownerInfo.name,
-          entity_type: ownerInfo.entityType,
-          mailing_address: rawAddr,
-          mailing_city: city,
-          mailing_state: state,
-          mailing_zip: zip,
-          phone_numbers: contacts.phones,
-          email_addresses: contacts.emails,
-          properties_owned_count: 1,
-          total_portfolio_value: 2850000,
-          total_portfolio_equity: 1650000,
-          notes: `Public parcel sourced from ${targetCounty} Cadastral GIS. Enriched via Vortex One Intelligence.`,
-        };
-
-        return {
-          property,
-          owner,
-          rawAttributes: attr,
-          geometry: feat.geometry
-            ? {
-                type: 'Polygon',
-                rings: feat.geometry.rings,
-              }
-            : undefined,
-          provenance,
-        };
       });
-    } catch {
-    return [];
+    } catch (error) {
+      throw error;
     }
   }
 }

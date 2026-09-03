@@ -35,6 +35,7 @@ import { externalWebhookService, buildPropertyDiscoveredPayload } from '../exter
 export function buildPropertySearchCachePayload(query: PropertySearchQuery): Record<string, any> {
   return {
     organizationId: requireOrganizationId(query.organizationId),
+    providerNormalizationVersion: '2026-09-02-public-cadastral-v2',
     county: query.county,
     city: query.city,
     address: query.address,
@@ -232,7 +233,7 @@ export class UnifiedPropertyDataProvider {
         }
 
         // Commercial & Open Search Provider Fallback Pipeline (Zillow, Realtor, Redfin, ATTOM, NETR Online, ZoomInfo, ArcGIS, Google Maps)
-        if (results.length === 0) {
+        if (results.length === 0 && !selectedProvider.isGovernmentSource) {
           const providerPipeline: { name: string; key?: string; isOpenSearch?: boolean; provider: IPropertyDataProvider }[] = [
             { name: 'Zillow (Open Search)', isOpenSearch: true, provider: this.zillowProvider },
             { name: 'Realtor.com (Open Search)', isOpenSearch: true, provider: this.realtorProvider },
@@ -534,7 +535,7 @@ export class UnifiedPropertyDataProvider {
   }
 }
 
-function validateAndClassifyResult(item: NormalizedPropertyResult): { isValid: boolean; quality: 'green' | 'yellow' | 'red'; issues: string[] } {
+export function validateAndClassifyResult(item: NormalizedPropertyResult): { isValid: boolean; quality: 'green' | 'yellow' | 'red'; issues: string[] } {
   const issues: string[] = [];
   const p = item.property;
   const o = item.owner;
@@ -543,7 +544,8 @@ function validateAndClassifyResult(item: NormalizedPropertyResult): { isValid: b
     issues.push('Missing APN or physical address');
   }
 
-  if (!o || !o.name || o.name.includes('Protected') || o.name.includes('Placeholder') || o.name.toLowerCase().includes('unknown')) {
+  const isStatutorilyRedactedPublicRecord = item.provenance.ownerIntelligenceStatus === 'statutory_redaction_cal_gov_6254_21';
+  if (!isStatutorilyRedactedPublicRecord && (!o || !o.name || o.name.includes('Protected') || o.name.includes('Placeholder') || o.name.toLowerCase().includes('unknown'))) {
     issues.push('Missing or statutorily redacted owner name');
   }
 

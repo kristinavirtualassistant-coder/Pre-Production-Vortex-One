@@ -217,7 +217,7 @@ export interface Property {
   zip: string;
   county: string;
   apn: string; // Assessor's Parcel Number
-  property_type: 'Single Family' | 'Multi-Family' | 'Commercial' | 'Condo' | 'Industrial';
+  property_type: 'Single Family' | 'Multi-Family' | 'Commercial' | 'Condo' | 'Industrial' | 'Unknown';
   units_count: number;
   square_feet: number;
   year_built: number;
