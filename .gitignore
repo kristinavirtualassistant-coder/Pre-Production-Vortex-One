@@ -9,3 +9,8 @@ coverage/
 
 # Local/generated runtime data
 server/data/
+
+# Local RingCentral credential files
+ringcentral-credentials.json
+test-cmc-dialer-jwt.mjs
+test-ringcentral-jwt.cjs
