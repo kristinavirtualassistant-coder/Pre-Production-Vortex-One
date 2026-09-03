@@ -24,7 +24,7 @@ const terminal = DialerStateTransitionService.buildTransitionSql({ ...base, even
 assert.match(terminal.text, /ended_at/);
 assert.equal(terminal.values[6], 'completed');
 
-assert.equal(DialerStateTransitionService.normalizeProviderStatus('Answered'), 'IN_CALL');
+assert.equal(DialerStateTransitionService.normalizeProviderStatus('Answered'), 'HUMAN');
 assert.equal(DialerStateTransitionService.normalizeProviderStatus('Ringing'), 'RINGING');
 assert.equal(DialerStateTransitionService.normalizeProviderStatus('Busy'), 'BUSY');
 assert.equal(DialerStateTransitionService.normalizeProviderStatus('NoAnswer'), 'NO_ANSWER');

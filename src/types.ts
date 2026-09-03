@@ -387,11 +387,15 @@ export interface CallRecord {
   organization_id: string;
   session_id?: string;
   campaign_id?: string;
+  lead_id?: string;
   telephony_call_id?: string;
+  ringcentral_ringout_id?: string | number;
+  telephony_session_id?: string;
+  ringcentral_party_id?: string;
   contact_name: string;
   phone_number: string;
   property_address: string;
-  status: 'initiated' | 'ringing' | 'connected' | 'completed' | 'voicemail' | 'no_answer' | 'busy' | 'failed';
+  status: 'initiated' | 'ringing' | 'in-progress' | 'connected' | 'completed' | 'voicemail' | 'no_answer' | 'busy' | 'failed';
   direction: 'outbound' | 'inbound';
   duration_seconds: number;
   disposition?: 'interested' | 'not_interested' | 'call_back_later' | 'wrong_number' | 'do_not_call';
@@ -401,6 +405,8 @@ export interface CallRecord {
   audio_tts_url?: string;
   notes?: string;
   created_at: string;
+  answered_at?: string;
+  ended_at?: string;
 }
 
 export interface QuickSnippet {

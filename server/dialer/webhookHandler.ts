@@ -11,6 +11,7 @@ import { SuppressionService } from './suppressionService';
 import { NormalizedCallEvent } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
+import { publishDialerEvent } from './realtime';
 
 // In-memory idempotency deduplication cache
 const processedEventsCache = new Set<string>();
@@ -110,13 +111,21 @@ export class WebhookHandler {
       // event, and updates the call in one transaction. Duplicate provider events are
       // harmless because call_event.id is the durable idempotency key.
       if (pool) {
+        const body = rawPayload?.body || rawPayload;
+        const party = body?.parties?.[0] || {};
+        const partyPhones = [party?.to?.phoneNumber, party?.from?.phoneNumber].filter(Boolean);
         const callLookup = await pool.query(
-          `SELECT id FROM call WHERE organization_id = $1 AND telephony_call_id = $2 LIMIT 1`,
-          [organizationId, normalized.telephonyCallId],
+          `SELECT id FROM call
+           WHERE organization_id = $1
+             AND (telephony_session_id = $2 OR telephony_call_id = $2
+                  OR (regexp_replace(phone_number, '\\D', '', 'g') = ANY($3::text[])
+                      AND status IN ('initiated','ringing','connected','in-progress')
+                      AND created_at >= CURRENT_TIMESTAMP - INTERVAL '10 minutes'))
+           ORDER BY CASE WHEN telephony_session_id = $2 THEN 0 WHEN telephony_call_id = $2 THEN 1 ELSE 2 END, created_at DESC
+           LIMIT 1`,
+          [organizationId, normalized.telephonyCallId, partyPhones.map((n: string) => n.replace(/\D/g, ''))],
         );
-        if (!callLookup.rowCount) {
-          throw new Error(`Call not found for organization: ${normalized.telephonyCallId}`);
-        }
+        if (!callLookup.rowCount) throw new Error(`Call not found for organization: ${normalized.telephonyCallId}`);
 
         const transition = await DialerStateTransitionService.transition(pool, {
           organizationId,
@@ -129,6 +138,8 @@ export class WebhookHandler {
           disposition: normalized.disposition,
           durationSeconds: normalized.durationSeconds,
           recordingUrl: normalized.recordingUrl,
+          telephonySessionId: normalized.telephonySessionId || normalized.telephonyCallId,
+          ringcentralPartyId: normalized.ringcentralPartyId,
         });
 
         if (transition.status === 'duplicate_ignored') {
@@ -139,6 +150,13 @@ export class WebhookHandler {
             eventType: normalized.eventType,
           };
         }
+
+        publishDialerEvent({
+          organizationId, callId: callLookup.rows[0].id,
+          type: normalized.dialerEventType || normalized.eventType,
+          payload: { ...normalized.rawPayload, normalizedStatus: normalized.status, telephonySessionId: normalized.telephonySessionId, partyId: normalized.ringcentralPartyId },
+          occurredAt: normalized.timestamp,
+        });
 
         await pool.query(
           `INSERT INTO processed_events (event_id, organization_id, provider, event_type, processed_at)

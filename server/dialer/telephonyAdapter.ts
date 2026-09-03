@@ -21,6 +21,9 @@ export interface InitiateCallParams {
 export interface TelephonyCallResult {
   success: boolean;
   telephonyCallId: string;
+  ringcentralRingoutId?: string;
+  telephonySessionId?: string;
+  ringcentralPartyId?: string;
   status: CallStatus;
   provider: 'ringcentral';
   rawResponse?: any;
@@ -30,7 +33,7 @@ export interface TelephonyCallResult {
 export interface TelephonyAdapter {
   providerName: 'ringcentral';
   initiateCall(params: InitiateCallParams): Promise<TelephonyCallResult>;
-  terminateCall(telephonyCallId: string): Promise<boolean>;
+  terminateCall(telephonyCallId: string, partyId?: string, ringoutId?: string): Promise<boolean>;
   normalizeWebhookPayload(rawPayload: any, headers?: Record<string, any>): NormalizedCallEvent;
 }
 
@@ -119,18 +122,20 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
         }
       }
 
-      // Make the actual REST API call
       const fromPhone = params.fromNumber || process.env.RINGCENTRAL_FROM_NUMBER;
-      const response = await this.platform.post('/restapi/v1.0/account/~/telephony/sessions', {
-        from: fromPhone ? { phoneNumber: fromPhone } : undefined,
+      if (!fromPhone) throw new Error('RINGCENTRAL_FROM_NUMBER is required for RingOut');
+      const response = await this.platform.post('/restapi/v1.0/account/~/extension/~/ring-out', {
+        from: { phoneNumber: fromPhone },
         to: { phoneNumber: params.toNumber },
-        direction: 'Outbound',
+        playPrompt: false,
       });
-
       const data = await response.json();
+      const ringoutId = data.id != null ? String(data.id) : '';
+      if (!ringoutId) throw new Error('RingCentral RingOut response missing id');
       return {
         success: true,
-        telephonyCallId: data.telephonySessionId || data.id,
+        telephonyCallId: ringoutId,
+        ringcentralRingoutId: ringoutId,
         status: 'initiated',
         provider: 'ringcentral',
         rawResponse: data,
@@ -147,11 +152,16 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
     }
   }
 
-  public async terminateCall(telephonyCallId: string): Promise<boolean> {
+  public async terminateCall(telephonyCallId: string, partyId?: string, ringoutId?: string): Promise<boolean> {
     try {
       if (!this.platform) this.initSdk();
-      if (this.platform) {
-        await this.platform.delete(`/restapi/v1.0/account/~/telephony/sessions/${telephonyCallId}`);
+      if (!this.platform) return false;
+      if (telephonyCallId && partyId) {
+        await this.platform.delete(`/restapi/v1.0/account/~/telephony/sessions/${telephonyCallId}/parties/${partyId}`);
+        return true;
+      }
+      if (ringoutId) {
+        await this.platform.delete(`/restapi/v1.0/account/~/extension/~/ring-out/${ringoutId}`);
         return true;
       }
       return false;
@@ -171,6 +181,8 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
         dialerEventType: eventTypeForState(dialerState),
         eventId: rawPayload.eventId,
         telephonyCallId: rawPayload.telephonyCallId,
+        telephonySessionId: rawPayload.telephonySessionId,
+        ringcentralPartyId: rawPayload.ringcentralPartyId,
         eventType: `ringcentral.telephony_session.${String(rawPayload.status).toLowerCase()}`,
         status: rawPayload.status,
         durationSeconds: Number(rawPayload.duration_seconds) || 0,
@@ -184,6 +196,8 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
     const primaryParty = parties[0] || {};
     const statusCode = primaryParty.status?.code || body.status?.code;
     const telephonyCallId = body.telephonySessionId || body.id;
+    const telephonySessionId = body.telephonySessionId;
+    const ringcentralPartyId = primaryParty.id;
     const eventId = rawPayload.uuid || rawPayload.eventId;
     if (!telephonyCallId) throw new Error('RingCentral webhook missing telephonySessionId');
     if (!eventId) throw new Error('RingCentral webhook missing provider event UUID');
@@ -231,6 +245,8 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
       dialerEventType: eventTypeForState(dialerState),
       eventId,
       telephonyCallId,
+      telephonySessionId,
+      ringcentralPartyId,
       eventType: `ringcentral.telephony_session.${statusCode.toLowerCase()}`,
       status,
       disposition,

@@ -14,7 +14,7 @@ import { WorkflowsView } from './components/WorkflowsView';
 import { TasksView } from './components/TasksView';
 import { PropertiesView } from './components/PropertiesView';
 import { LeadsView } from './components/LeadsView';
-import { DialerView } from './components/DialerView';
+import { ProductionDialerView } from './components/ProductionDialerView';
 import { ApprovalsView } from './components/ApprovalsView';
 import { AuditView } from './components/AuditView';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
@@ -763,13 +763,13 @@ export default function App() {
           )}
 
           {currentView === 'dialer' && (
-            <DialerView
+            <ProductionDialerView
               campaigns={campaigns}
               calls={calls}
               leads={leads}
-              onDialCall={handleDialCall}
-              onRefreshCampaigns={() => fetchAllData()}
-              onAddTask={handleAddTask}
+              getAuthHeaders={getAuthHeaders}
+              organizationId={getActiveOrgId()}
+              onRefresh={() => fetchAllData(getActiveOrgId())}
             />
           )}
 

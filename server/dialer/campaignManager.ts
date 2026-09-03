@@ -501,8 +501,8 @@ export class CampaignManager {
     if (pool) {
       try {
         await pool.query(
-          `INSERT INTO call (id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at, ended_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+          `INSERT INTO call (id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at, ended_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
           [
             callId,
             organizationId,

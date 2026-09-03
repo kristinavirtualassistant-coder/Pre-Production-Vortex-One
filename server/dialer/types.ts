@@ -144,6 +144,9 @@ export interface NormalizedCallEvent {
   dialerEventType?: import('./callStateMachine').DialerCallEventType;
   eventId: string;
   telephonyCallId: string;
+  ringcentralRingoutId?: string;
+  telephonySessionId?: string;
+  ringcentralPartyId?: string;
   eventType: string;
   status: CallStatus;
   disposition?: CallDisposition;
