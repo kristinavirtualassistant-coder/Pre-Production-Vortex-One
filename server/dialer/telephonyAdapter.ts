@@ -55,8 +55,8 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
   }
 
   private initSdk(): void {
-    this.clientId = process.env.RINGCENTRAL_CLIENT_ID || 'ZpcOzDiZ2EKbwxi6XczX32';
-    this.clientSecret = process.env.RINGCENTRAL_CLIENT_SECRET || '';
+    this.clientId = process.env.RINGCENTRAL_CLIENT_ID?.trim() || undefined;
+    this.clientSecret = process.env.RINGCENTRAL_CLIENT_SECRET?.trim() || undefined;
     this.serverUrl = process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com';
     
     // Lazy initialization of SDK
@@ -74,23 +74,6 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
     }
   }
 
-  private extractJwtToken(rawJwt?: string): string | null {
-    if (!rawJwt) return null;
-    const trimmed = rawJwt.trim();
-    if (trimmed.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (typeof parsed === 'string') return parsed;
-        if (parsed.CMC_Auth_KM) return parsed.CMC_Auth_KM;
-        if (parsed.jwt) return typeof parsed.jwt === 'string' ? parsed.jwt : (parsed.jwt.CMC_Auth_KM || JSON.stringify(parsed.jwt));
-        const firstVal = Object.values(parsed)[0];
-        if (typeof firstVal === 'string') return firstVal;
-      } catch {
-        return trimmed;
-      }
-    }
-    return trimmed;
-  }
 
   public async initiateCall(params: InitiateCallParams): Promise<TelephonyCallResult> {
     try {
@@ -101,25 +84,15 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
         throw new Error('RingCentral credentials not configured or SDK unavailable');
       }
 
+      const jwt = process.env.RINGCENTRAL_JWT?.trim();
+      if (!jwt) {
+        throw new Error('RingCentral requires RINGCENTRAL_JWT for active dialer authentication');
+      }
+
       // Ensure platform is authenticated
       const isLoggedIn = await this.platform.loggedIn();
       if (!isLoggedIn) {
-        const resolvedJwt = this.extractJwtToken(process.env.RINGCENTRAL_JWT);
-        if (resolvedJwt) {
-          // Modern RingCentral JWT Authentication
-          await this.platform.login({
-            jwt: resolvedJwt,
-          });
-        } else if (process.env.RINGCENTRAL_USERNAME && process.env.RINGCENTRAL_PASSWORD) {
-          // Password / Extension flow
-          await this.platform.login({
-            username: process.env.RINGCENTRAL_USERNAME,
-            extension: process.env.RINGCENTRAL_EXTENSION,
-            password: process.env.RINGCENTRAL_PASSWORD,
-          });
-        } else {
-          throw new Error('RingCentral requires RINGCENTRAL_JWT or RINGCENTRAL_USERNAME/PASSWORD for active dialer authentication');
-        }
+        await this.platform.login({ jwt });
       }
 
       const fromPhone = params.fromNumber || process.env.RINGCENTRAL_FROM_NUMBER;
