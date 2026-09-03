@@ -442,6 +442,19 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 10,
+    name: '010_harden_call_identifiers_and_notes',
+    sql: `
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS ringcentral_ringout_id VARCHAR(128);
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS telephony_session_id VARCHAR(128);
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS ringcentral_party_id VARCHAR(128);
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS answered_at TIMESTAMP WITH TIME ZONE;
+      CREATE INDEX IF NOT EXISTS idx_call_rc_session ON call(organization_id, telephony_session_id);
+      CREATE INDEX IF NOT EXISTS idx_call_rc_ringout ON call(organization_id, ringcentral_ringout_id);
+    `,
+  },
+  {
     version: 9,
     name: '009_create_durable_jobs',
     sql: `

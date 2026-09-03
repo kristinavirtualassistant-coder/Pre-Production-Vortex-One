@@ -13,6 +13,8 @@ export interface StateTransitionInput {
   disposition?: CallDisposition;
   durationSeconds?: number;
   recordingUrl?: string;
+  telephonySessionId?: string;
+  ringcentralPartyId?: string;
 }
 
 export interface StateTransitionResult {
@@ -63,7 +65,7 @@ export class DialerStateTransitionService {
       case 'dialing': return 'DIALING';
       case 'proceeding':
       case 'ringing': return 'RINGING';
-      case 'answered':
+      case 'answered': return 'HUMAN';
       case 'in-progress':
       case 'in_progress':
       case 'connected': return 'IN_CALL';
@@ -140,9 +142,12 @@ export class DialerStateTransitionService {
              disposition = COALESCE($2, disposition),
              duration_seconds = CASE WHEN $3 > 0 THEN $3 ELSE duration_seconds END,
              recording_url = COALESCE($4, recording_url),
-             ended_at = CASE WHEN $5 THEN COALESCE(ended_at, $6) ELSE ended_at END
-         WHERE id = $7 AND organization_id = $8`,
-        [stateToDb[input.nextState], input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null,
+             telephony_session_id = COALESCE($5, telephony_session_id),
+             ringcentral_party_id = COALESCE($6, ringcentral_party_id),
+             answered_at = CASE WHEN $7 IN ('HUMAN','IN_CALL') AND answered_at IS NULL THEN $8 ELSE answered_at END,
+             ended_at = CASE WHEN $9 THEN COALESCE(ended_at, $10) ELSE ended_at END
+         WHERE id = $11 AND organization_id = $12`,
+        [stateToDb[input.nextState], input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null, input.telephonySessionId || null, input.ringcentralPartyId || null, input.nextState, input.occurredAt,
           ['COMPLETED', 'VOICEMAIL', 'NO_ANSWER', 'BUSY', 'DISCONNECTED', 'FAILED', 'CANCELLED'].includes(input.nextState), input.occurredAt,
           input.callId, input.organizationId],
       );

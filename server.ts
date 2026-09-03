@@ -30,6 +30,7 @@ import { leadScoringService } from './server/leadScoringService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
+import { subscribeDialerEvents } from './server/dialer/realtime';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 
 async function startServer() {
@@ -3050,6 +3051,44 @@ async function startServer() {
     }
   });
 
+  // Production dialer realtime/read APIs
+  app.get('/api/dialer/active-call', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'Production dialer requires PostgreSQL' });
+    const result = await pool.query(`
+      SELECT c.id, c.organization_id, c.session_id, c.campaign_id, c.lead_id, c.telephony_call_id,
+             c.ringcentral_ringout_id, c.telephony_session_id, c.ringcentral_party_id, c.contact_name,
+             c.phone_number, c.direction, c.status, c.disposition, c.duration_seconds, c.call_strategy_brief,
+             c.recording_url, c.notes, c.created_at, c.answered_at, c.ended_at,
+             l.primary_property_id, p.address AS property_address
+      FROM call c
+      LEFT JOIN leads l ON l.id = c.lead_id AND l.organization_id = c.organization_id
+      LEFT JOIN properties p ON p.id = l.primary_property_id AND p.organization_id = c.organization_id
+      WHERE c.organization_id = $1 AND c.status IN ('initiated','ringing','connected','in-progress')
+      ORDER BY c.created_at DESC LIMIT 1`, [orgId]);
+    res.json({ call: result.rows[0] || null });
+  });
+
+  app.get('/api/dialer/stream', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    const unsubscribe = subscribeDialerEvents(orgId, async (event) => {
+      try {
+        const pool = getPgPool();
+        if (!pool) return;
+        const result = await pool.query(`SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at FROM call WHERE id = $1 AND organization_id = $2`, [event.callId, orgId]);
+        if (result.rows[0]) res.write(`event: ${event.type}\ndata: ${JSON.stringify({ call: result.rows[0], event })}\n\n`);
+      } catch { /* client may have disconnected */ }
+    });
+    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
+    req.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+  });
+
   // Call Records & Telephony FSM APIs
   app.get('/api/calls', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3057,7 +3096,7 @@ async function startServer() {
     if (pool) {
       try {
         const result = await pool.query(
-          `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at, ended_at
+          `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at
            FROM call WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 50`,
           [orgId]
         );
@@ -3529,6 +3568,21 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  app.post('/api/calls/:id/end', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production dialer requires PostgreSQL' });
+      const result = await pool.query(`SELECT telephony_session_id, ringcentral_party_id, ringcentral_ringout_id FROM call WHERE id = $1 AND organization_id = $2`, [req.params.id, orgId]);
+      if (!result.rows.length) return res.status(404).json({ error: 'Call not found' });
+      const row = result.rows[0];
+      const adapter = getTelephonyAdapter('ringcentral');
+      const ended = await adapter.terminateCall(row.telephony_session_id || '', row.ringcentral_party_id || undefined, row.ringcentral_ringout_id || undefined);
+      if (!ended) return res.status(409).json({ error: 'RingCentral cannot end this call in its current state; wait for session/party identifiers or provider completion.' });
+      res.json({ success: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   app.post('/api/calls/:id/disposition', async (req, res) => {
