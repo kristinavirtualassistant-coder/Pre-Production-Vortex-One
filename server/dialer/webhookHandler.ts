@@ -1,4 +1,5 @@
 import { requireOrganizationId } from '../services/organizationContext';
+import { timingSafeEqual } from 'node:crypto';
 /**
  * Vortex One - Telephony Webhook Ingestion & Idempotency Pipeline
  * Normalizes RingCentral, Twilio, and SIP event streams into authoritative PostgreSQL tables
@@ -23,11 +24,50 @@ export interface WebhookProcessResult {
   error?: string;
 }
 
+export function getHeader(headers: Record<string, any> = {}, name: string): string | null {
+  const value = headers[name] ?? headers[name.toLowerCase()] ?? headers[name.replace(/(^|-)([a-z])/g, (_, p, c) => p + c.toUpperCase())];
+  return value == null ? null : String(value).trim();
+}
+
+function secureTokenEqual(supplied: string, configured: string): boolean {
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(configured);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function getProviderEventId(rawPayload: any): string | null {
+  const eventId = rawPayload?.uuid || rawPayload?.eventId;
+  return typeof eventId === 'string' && eventId.trim() ? eventId.trim() : null;
+}
+
+export function verifyRingCentralWebhook(headers: Record<string, any> = {}): boolean {
+  const configured = process.env.RINGCENTRAL_WEBHOOK_VALIDATION_TOKEN?.trim();
+  const supplied = getHeader(headers, 'validation-token');
+  if (!configured || !supplied) return false;
+  return secureTokenEqual(supplied, configured);
+}
+
+export function handleRingCentralValidation(headers: Record<string, any> = {}): {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+} | null {
+  const supplied = getHeader(headers, 'validation-token');
+  if (!supplied || !verifyRingCentralWebhook(headers)) return null;
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json', 'Validation-Token': supplied },
+    body: '',
+  };
+}
+
+// Retained for backward-compatible tests/older internal callers. Production RingCentral
+// callbacks use RingCentral's Validation-Token mechanism above.
 export function verifyWebhookSecret(headers: Record<string, any> = {}): boolean {
   const configured = process.env.RINGCENTRAL_WEBHOOK_SECRET?.trim();
   if (!configured) return process.env.NODE_ENV === 'test';
-  const supplied = String(headers['x-vortex-webhook-secret'] || headers['X-Vortex-Webhook-Secret'] || '');
-  return supplied.length > 0 && supplied === configured;
+  const supplied = getHeader(headers, 'x-vortex-webhook-secret');
+  return !!supplied && secureTokenEqual(supplied, configured);
 }
 
 export class WebhookHandler {
@@ -46,6 +86,8 @@ export class WebhookHandler {
     try {
       const adapter = getTelephonyAdapter(provider);
       const normalized = adapter.normalizeWebhookPayload(rawPayload, headers);
+      if (!normalized.eventId) throw new Error('Provider webhook event identity is required');
+      if (!normalized.telephonyCallId) throw new Error('Provider webhook telephony call identity is required');
 
       const pool = getPgPool();
 

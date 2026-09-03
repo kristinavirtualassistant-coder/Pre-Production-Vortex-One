@@ -162,12 +162,32 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
   }
 
   public normalizeWebhookPayload(rawPayload: any, headers?: Record<string, any>): NormalizedCallEvent {
+    // Accept an already-normalized provider event shape used by internal callers.
+    // It still requires explicit provider event and call identifiers; nothing is synthesized.
+    if (rawPayload?.telephonyCallId && rawPayload?.eventId && rawPayload?.status) {
+      const dialerState = DialerStateTransitionService.normalizeProviderStatus(rawPayload.status);
+      return {
+        dialerState,
+        dialerEventType: eventTypeForState(dialerState),
+        eventId: rawPayload.eventId,
+        telephonyCallId: rawPayload.telephonyCallId,
+        eventType: `ringcentral.telephony_session.${String(rawPayload.status).toLowerCase()}`,
+        status: rawPayload.status,
+        durationSeconds: Number(rawPayload.duration_seconds) || 0,
+        timestamp: rawPayload.timestamp || new Date().toISOString(),
+        rawPayload,
+      };
+    }
+
     const body = rawPayload.body || rawPayload;
     const parties = body.parties || [];
     const primaryParty = parties[0] || {};
-    const statusCode = primaryParty.status?.code || body.status?.code || 'Disconnected';
-    const telephonyCallId = body.telephonySessionId || body.id || `rc_${Date.now()}`;
-    const eventId = rawPayload.uuid || rawPayload.eventId || `rc_evt_${telephonyCallId}_${statusCode}_${Date.now()}`;
+    const statusCode = primaryParty.status?.code || body.status?.code;
+    const telephonyCallId = body.telephonySessionId || body.id;
+    const eventId = rawPayload.uuid || rawPayload.eventId;
+    if (!telephonyCallId) throw new Error('RingCentral webhook missing telephonySessionId');
+    if (!eventId) throw new Error('RingCentral webhook missing provider event UUID');
+    if (!statusCode) throw new Error('RingCentral webhook missing party status code');
 
     let status: CallStatus = 'initiated';
     let disposition: CallDisposition | undefined = undefined;
@@ -195,12 +215,10 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
         } else if (reason === 'Voicemail') {
           status = 'voicemail';
           disposition = 'left_voicemail';
-        } else {
-          disposition = 'interested';
         }
         break;
       default:
-        status = 'completed';
+        throw new Error(`Unsupported RingCentral telephony status: ${statusCode}`);
     }
 
     const durationSeconds = primaryParty.duration || body.duration || 0;
@@ -216,7 +234,7 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
       eventType: `ringcentral.telephony_session.${statusCode.toLowerCase()}`,
       status,
       disposition,
-      durationSeconds: Number(durationSeconds) || (status === 'completed' ? 75 : 0),
+      durationSeconds: Number(durationSeconds) || 0,
       recordingUrl,
       timestamp: body.eventTime || new Date().toISOString(),
       rawPayload,
