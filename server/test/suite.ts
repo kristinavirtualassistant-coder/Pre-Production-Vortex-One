@@ -11,7 +11,7 @@ import { getTelephonyAdapter, RingCentralTelephonyAdapter } from '../dialer/tele
 import { CampaignManager } from '../dialer/campaignManager';
 import { WebhookHandler } from '../dialer/webhookHandler';
 import { DataImportService, RawPropertyRecord } from '../services/dataImportService';
-import { UnifiedPropertyDataProvider } from '../services/propertyProviders/PropertyDataProvider';
+import { UnifiedPropertyDataProvider, buildPropertySearchCachePayload } from '../services/propertyProviders/PropertyDataProvider';
 import { OrangeCountyGISProvider } from '../services/propertyProviders/OrangeCountyGISProvider';
 import { LosAngelesCountyGISProvider } from '../services/propertyProviders/LosAngelesCountyGISProvider';
 import { SanDiegoCountyGISProvider } from '../services/propertyProviders/SanDiegoCountyGISProvider';
@@ -77,6 +77,11 @@ async function runAllTests() {
 
   // Test Group 2: Tenant Isolation & Foreign Key Integrity
   console.log('\n[Group 2: Tenant Isolation & Foreign Key Integrity]');
+  const tenantCacheA = buildPropertySearchCachePayload({ address: '123 MAIN ST', city: 'Costa Mesa', organizationId: 'org-a' });
+  const tenantCacheB = buildPropertySearchCachePayload({ address: '123 MAIN ST', city: 'Costa Mesa', organizationId: 'org-b' });
+  assert(tenantCacheA.organizationId === 'org-a', 'Property search cache payload preserves tenant A');
+  assert(tenantCacheB.organizationId === 'org-b', 'Property search cache payload preserves tenant B');
+  assert(JSON.stringify(tenantCacheA) !== JSON.stringify(tenantCacheB), 'Property search cache payloads are isolated by organization');
   assert(dialerSql.includes('organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id)'), 'Strict multi-tenant organization isolation enforced in dialer tables');
   assert(dialerSql.includes('CONSTRAINT uq_suppression_org_phone UNIQUE(organization_id, phone_number)'), 'Suppression record scoped per organization');
   assert(dialerSql.includes('CONSTRAINT uq_campaign_contact_phone UNIQUE(campaign_id, phone_number)'), 'Contact deduplication per campaign');

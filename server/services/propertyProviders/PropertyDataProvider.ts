@@ -32,6 +32,25 @@ import { AuditLogEntry } from '../../../src/types';
 import { taskCacheService } from '../cacheService';
 import { externalWebhookService, buildPropertyDiscoveredPayload } from '../externalWebhookService';
 
+export function buildPropertySearchCachePayload(query: PropertySearchQuery): Record<string, any> {
+  return {
+    organizationId: requireOrganizationId(query.organizationId),
+    county: query.county,
+    city: query.city,
+    address: query.address,
+    apn: query.apn,
+    zip: query.zip,
+    minPrice: query.minPrice,
+    maxPrice: query.maxPrice,
+    absenteeOnly: query.absenteeOnly,
+    taxDelinquentOnly: query.taxDelinquentOnly,
+    minSquareFeet: query.minSquareFeet,
+    entityType: query.entityType,
+    limit: query.limit,
+    preferredProvider: query.preferredProvider,
+  };
+}
+
 export class UnifiedPropertyDataProvider {
   private orangeCountyProvider: OrangeCountyGISProvider;
   private losAngelesCountyProvider: LosAngelesCountyGISProvider;
@@ -76,21 +95,7 @@ export class UnifiedPropertyDataProvider {
    */
   public async search(query: PropertySearchQuery): Promise<PropertySearchResponse> {
     const category = 'property_search';
-    const inputPayload = {
-      county: query.county,
-      city: query.city,
-      address: query.address,
-      apn: query.apn,
-      zip: query.zip,
-      minPrice: query.minPrice,
-      maxPrice: query.maxPrice,
-      absenteeOnly: query.absenteeOnly,
-      taxDelinquentOnly: query.taxDelinquentOnly,
-      minSquareFeet: query.minSquareFeet,
-      entityType: query.entityType,
-      limit: query.limit,
-      preferredProvider: query.preferredProvider,
-    };
+    const inputPayload = buildPropertySearchCachePayload(query);
 
     const { result, isCached } = await taskCacheService.wrapTask(
       category,
