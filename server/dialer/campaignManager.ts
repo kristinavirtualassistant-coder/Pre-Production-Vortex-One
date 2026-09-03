@@ -523,16 +523,12 @@ export class CampaignManager {
           ]
         );
 
-        // Record Initial Call Events
+        // Record only the provider-neutral dialing transition. Connection state is
+        // advanced later by an authenticated provider webhook; never synthesize it.
         await pool.query(
           `INSERT INTO call_event (id, organization_id, call_id, event_type, payload, occurred_at)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [`cevt_init_${Date.now()}`, organizationId, callId, 'telephony.initiated', JSON.stringify({ provider, callId }), now]
-        );
-        await pool.query(
-          `INSERT INTO call_event (id, organization_id, call_id, event_type, payload, occurred_at)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [`cevt_conn_${Date.now()}`, organizationId, callId, 'telephony.connected', JSON.stringify({ disposition: 'interested' }), now]
+          [`cevt_dial_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, organizationId, callId, 'telephony.dialing', JSON.stringify({ provider, callId }), now]
         );
 
         // Update contact dial_status and attempts
