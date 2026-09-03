@@ -18,7 +18,7 @@ import { generateSpeechTTS } from './server/gemini';
 import { AgentDefinition, Workflow, WorkflowStep, WorkflowRun, Task, Property, CallRecord } from './src/types';
 import { CampaignManager } from './server/dialer/campaignManager';
 import { SuppressionService } from './server/dialer/suppressionService';
-import { WebhookHandler, verifyWebhookSecret } from './server/dialer/webhookHandler';
+import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
 import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
@@ -3272,16 +3272,32 @@ async function startServer() {
   // Telephony Webhook Ingestion & Idempotency API (RingCentral)
   app.post('/api/telephony/webhook/:provider', async (req, res) => {
     if (req.params.provider !== 'ringcentral') return res.status(404).json({ error: 'Unsupported telephony provider' });
-    if (!verifyWebhookSecret(req.headers)) return res.status(401).json({ error: 'Invalid telephony webhook authentication' });
+
+    // RingCentral sends a validation request when a subscription is created. It has no
+    // organization/event payload, so handle it before tenant extraction.
+    const validationToken = String(req.headers['validation-token'] || '').trim();
+    if (validationToken) {
+      const validation = handleRingCentralValidation(req.headers);
+      if (!validation) return res.status(401).json({ error: 'Invalid RingCentral validation token' });
+      res.status(validation.statusCode);
+      Object.entries(validation.headers).forEach(([key, value]) => res.setHeader(key, value));
+      return res.end(validation.body);
+    }
+
+    if (!verifyRingCentralWebhook(req.headers)) {
+      return res.status(401).json({ error: 'Invalid RingCentral webhook authentication' });
+    }
+
     try {
       const orgId = requireOrganizationId(
         (req.body?.organizationId as string) || (req.body?.organization_id as string),
       );
       const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
-      res.json(result);
+      if (result.status === 'error') return res.status(400).json(result);
+      return res.status(200).json(result);
     } catch (err: any) {
       console.error('Telephony Webhook error:', err);
-      res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: err.message });
     }
   });
 
