@@ -10,7 +10,8 @@
     "test": "tsx server/test/suite.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:ringcentral:jwt": "node scripts/ringcentral-jwt-smoke.mjs"
+    "test:ringcentral:jwt": "node scripts/ringcentral-jwt-smoke.mjs",
+    "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
