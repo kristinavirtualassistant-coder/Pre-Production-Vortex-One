@@ -11,9 +11,10 @@ import {
   CallTableRecord,
   CallEventRecord,
 } from './types';
-import { SuppressionService } from './suppressionService';
+import { SuppressionService, normalizePhoneNumber } from './suppressionService';
 import { getTelephonyAdapter } from './telephonyAdapter';
 import { requireOrganizationId } from '../services/organizationContext';
+import { buildCampaignEligibilityQuery } from '../services/campaignEligibilityService';
 
 export class CampaignManager {
   /**
@@ -311,13 +312,15 @@ export class CampaignManager {
     for (const c of contacts) {
       const id = `ccon_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const now = new Date().toISOString();
+      const normalizedPhone = normalizePhoneNumber(c.phoneNumber);
+      if (!normalizedPhone) continue;
       const record: CampaignContactRecord = {
         id,
         organization_id: organizationId,
         campaign_id: campaignId,
         lead_id: c.leadId,
         contact_name: c.contactName,
-        phone_number: c.phoneNumber,
+        phone_number: normalizedPhone,
         property_address: c.propertyAddress,
         dial_status: 'queued',
         attempts: 0,
@@ -325,9 +328,10 @@ export class CampaignManager {
         created_at: now,
       };
 
+      let inserted = true;
       if (pool) {
         try {
-          await pool.query(
+          const insertResult = await pool.query(
             `INSERT INTO campaign_contact (id, organization_id, campaign_id, lead_id, contact_name, phone_number, property_address, dial_status, attempts, priority, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (campaign_id, phone_number) DO NOTHING`,
@@ -337,7 +341,7 @@ export class CampaignManager {
               campaignId,
               c.leadId || null,
               c.contactName,
-              c.phoneNumber,
+              normalizedPhone,
               c.propertyAddress || null,
               'queued',
               0,
@@ -345,13 +349,17 @@ export class CampaignManager {
               now,
             ]
           );
+          inserted = (insertResult.rowCount || 0) > 0;
         } catch (err: any) {
-          console.warn('PostgreSQL addContact fallback:', err.message);
+          inserted = false;
+          console.warn('PostgreSQL addContact failed:', err.message);
         }
       }
 
-      createdRecords.push(record);
-      inMemoryStore.campaignContacts.unshift(record);
+      if (inserted) {
+        createdRecords.push(record);
+        inMemoryStore.campaignContacts.unshift(record);
+      }
     }
 
     // Update campaign total contacts count
@@ -368,7 +376,7 @@ export class CampaignManager {
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
     if (memoryCamp) {
-      memoryCamp.total_contacts = (memoryCamp.total_contacts || 0) + contacts.length;
+      memoryCamp.total_contacts = (memoryCamp.total_contacts || 0) + createdRecords.length;
     }
 
     return { added: createdRecords.length, contacts: createdRecords };
@@ -405,31 +413,8 @@ export class CampaignManager {
       );
       if (campaignRow.rows.length === 0) return { status: 'queue_empty' };
       const retryLimit = Math.max(1, Number(campaignRow.rows[0].retry_limit || 3));
-      const claim = await pool.query(
-        `WITH candidate AS (
-          SELECT cc.id
-          FROM campaign_contact cc
-          JOIN campaign c ON c.id = cc.campaign_id AND c.organization_id = cc.organization_id
-          LEFT JOIN leads l ON l.id = cc.lead_id AND l.organization_id = cc.organization_id
-          WHERE cc.organization_id = $1 AND cc.campaign_id = $2
-            AND cc.dial_status = 'queued' AND cc.attempts < $3 AND c.status = 'active'
-            AND NOT EXISTS (
-              SELECT 1 FROM suppression_record sr
-              WHERE sr.organization_id = cc.organization_id
-                AND regexp_replace(sr.phone_number, '\\D', '', 'g') = regexp_replace(cc.phone_number, '\\D', '', 'g')
-                AND (sr.expires_at IS NULL OR sr.expires_at > CURRENT_TIMESTAMP)
-            )
-            AND (l.dnc_compliant IS NULL OR l.dnc_compliant = TRUE)
-            AND (CURRENT_TIME AT TIME ZONE c.timezone) BETWEEN c.calling_hours_start AND c.calling_hours_end
-          ORDER BY COALESCE(l.lead_score, 0) DESC, cc.priority DESC, cc.created_at ASC
-          FOR UPDATE SKIP LOCKED LIMIT 1
-        )
-        UPDATE campaign_contact cc
-        SET dial_status = 'dialing', attempts = attempts + 1, last_dialed_at = CURRENT_TIMESTAMP
-        FROM candidate WHERE cc.id = candidate.id
-        RETURNING cc.id, cc.organization_id, cc.campaign_id, cc.lead_id, cc.contact_name, cc.phone_number, cc.property_address, cc.dial_status, cc.attempts, cc.priority, cc.created_at, cc.last_dialed_at`,
-        [organizationId, campaignId, retryLimit]
-      );
+      const eligibility = buildCampaignEligibilityQuery(organizationId, campaignId, { retryLimit });
+      const claim = await pool.query(eligibility.text, eligibility.values);
       if (claim.rows.length > 0) contact = claim.rows[0];
     } else {
       const orgId = requireOrganizationId(organizationId);
