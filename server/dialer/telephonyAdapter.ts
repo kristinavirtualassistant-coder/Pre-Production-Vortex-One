@@ -57,7 +57,10 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
   private initSdk(): void {
     this.clientId = process.env.RINGCENTRAL_CLIENT_ID?.trim() || undefined;
     this.clientSecret = process.env.RINGCENTRAL_CLIENT_SECRET?.trim() || undefined;
-    this.serverUrl = process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com';
+    this.serverUrl =
+      process.env.RINGCENTRAL_SERVER_URL?.trim() ||
+      process.env.RINGCENTRAL_SERVER?.trim() ||
+      'https://platform.ringcentral.com';
     
     // Lazy initialization of SDK
     if (this.clientId) {

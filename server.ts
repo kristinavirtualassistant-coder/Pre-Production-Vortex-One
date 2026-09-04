@@ -3176,30 +3176,43 @@ async function startServer() {
 
       // 2. Safe Telephony Adapter Dispatch via RingCentral
       const provider = 'ringcentral';
-      let telephonyCallId = `rc_tel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      let telephonyCallId = '';
 
       try {
         const adapter = getTelephonyAdapter('ringcentral');
-        if (adapter && typeof adapter.initiateCall === 'function') {
-          const telResult = await adapter.initiateCall({
-            organizationId: orgId,
-            campaignId: campaign_id || 'camp_401',
-            toNumber: cleanNumber,
-            contactName: contact_name || 'Property Owner',
-            callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
-          });
-          if (telResult?.telephonyCallId) {
-            telephonyCallId = telResult.telephonyCallId;
-          }
+        if (!adapter || typeof adapter.initiateCall !== 'function') {
+          return res.status(503).json({ error: 'RingCentral telephony adapter is unavailable', provider });
         }
+
+        const telResult = await adapter.initiateCall({
+          organizationId: orgId,
+          campaignId: campaign_id || 'camp_401',
+          toNumber: cleanNumber,
+          contactName: contact_name || 'Property Owner',
+          callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
+        });
+
+        if (!telResult?.success || !telResult.telephonyCallId) {
+          console.error('[Dialer] RingCentral initiation failed:', telResult?.error || 'missing telephony call ID');
+          return res.status(502).json({
+            error: telResult?.error || 'RingCentral call initiation failed',
+            provider,
+            telephonyCallId: telResult?.telephonyCallId || null,
+          });
+        }
+
+        telephonyCallId = telResult.telephonyCallId;
       } catch (adapterErr: any) {
-        console.warn('[Dialer] RingCentral dispatch note:', adapterErr.message);
+        console.error('[Dialer] RingCentral dispatch failed:', adapterErr.message);
+        return res.status(502).json({
+          error: adapterErr.message || 'RingCentral call initiation failed',
+          provider,
+        });
       }
 
-      // 3. Create Completed Call Record
+      // 3. Create initial Call Record
       const callId = `call_${Date.now()}`;
       const now = new Date().toISOString();
-      const duration = Math.floor(Math.random() * 75) + 35; // 35s - 110s realistic duration
 
       const callRecord: CallRecord = {
         id: callId,
@@ -3209,13 +3222,13 @@ async function startServer() {
         contact_name: contact_name || 'Property Owner',
         phone_number: cleanNumber,
         property_address: property_address || '1420 Newport Blvd, Costa Mesa, CA',
-        status: 'completed',
+        status: 'initiated',
         direction: 'outbound',
-        duration_seconds: duration,
-        disposition: 'interested',
+        duration_seconds: 0,
+        disposition: undefined,
         call_strategy_brief: call_strategy_brief || 'Management introduction and maintenance review',
-        recording_url: `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`,
-        notes: 'Outbound call connected via RingCentral Telephony. Owner open to management review.',
+        recording_url: undefined,
+        notes: 'Outbound call initiated via RingCentral Telephony.',
         created_at: now,
       };
 
@@ -3257,9 +3270,9 @@ async function startServer() {
         id: `audit_dial_${Date.now()}`,
         timestamp: now,
         agent: 'sub_agent_6',
-        action: 'outbound_call_connected',
+        action: 'outbound_call_initiated',
         input: { contact_name, phone_number: cleanNumber, provider },
-        output: { callId, duration_seconds: duration, disposition: 'interested' },
+        output: { callId, telephonyCallId },
         status: 'success',
         latency_ms: 120,
         organization_id: orgId,
