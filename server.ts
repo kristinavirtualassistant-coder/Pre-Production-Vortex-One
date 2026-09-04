@@ -31,6 +31,7 @@ import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
+import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 
 async function startServer() {
@@ -3144,7 +3145,11 @@ async function startServer() {
       } = req.body;
 
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const cleanNumber = phone_number || '(949) 555-0100';
+      const validation = validateDialRequest(req.body);
+      if (validation.ok === false) {
+        return res.status(400).json({ error: validation.error });
+      }
+      const cleanNumber = validation.phoneNumber;
 
       // 1. Safe TCPA & DNC Pre-Dial Check (with defensive fallback)
       try {
@@ -3171,7 +3176,11 @@ async function startServer() {
           }
         }
       } catch (suppressErr: any) {
-        console.warn('[Dialer] Suppression check fallback bypassed:', suppressErr.message);
+        console.error('[Dialer] Suppression check failed closed:', suppressErr.message);
+        return res.status(503).json({
+          error: 'Outbound dial blocked because suppression status could not be verified.',
+          code: 'SUPPRESSION_CHECK_UNAVAILABLE',
+        });
       }
 
       // 2. Safe Telephony Adapter Dispatch via RingCentral
