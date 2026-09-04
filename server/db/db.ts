@@ -4,6 +4,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import { MIGRATIONS } from './migrations';
+import { shouldSkipPostgresMigrations } from './migrationPolicy';
 import type { CampaignContactRecord } from '../dialer/types';
 import {
   Property,
@@ -1297,30 +1298,38 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
 
       const client = await pgPool.connect();
       try {
-        // Run migrations transactionally
-        await client.query('BEGIN');
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-          );
-        `);
+        let appliedMigrationCount = MIGRATIONS.length;
+        let lastAppliedMigrationName = MIGRATIONS[MIGRATIONS.length - 1].name;
+        if (shouldSkipPostgresMigrations()) {
+          appliedMigrationCount = 0;
+          lastAppliedMigrationName = undefined;
+          console.warn('PostgreSQL migration execution skipped by VORTEX_ONE_SKIP_MIGRATIONS=true; connection verified without changing the existing schema.');
+        } else {
+          // Run migrations transactionally
+          await client.query('BEGIN');
+          await client.query(`
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              version INTEGER PRIMARY KEY,
+              name VARCHAR(255) NOT NULL,
+              applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+            );
+          `);
 
-        const { rows } = await client.query('SELECT version FROM schema_migrations');
-        const appliedVersions = new Set(rows.map((r: any) => r.version));
+          const { rows } = await client.query('SELECT version FROM schema_migrations');
+          const appliedVersions = new Set(rows.map((r: any) => r.version));
 
-        for (const migration of MIGRATIONS) {
-          if (!appliedVersions.has(migration.version)) {
-            console.log(`Applying PostgreSQL Migration ${migration.version}: ${migration.name}`);
-            await client.query(migration.sql);
-            await client.query('INSERT INTO schema_migrations (version, name) VALUES ($1, $2)', [
-              migration.version,
-              migration.name,
-            ]);
+          for (const migration of MIGRATIONS) {
+            if (!appliedVersions.has(migration.version)) {
+              console.log(`Applying PostgreSQL Migration ${migration.version}: ${migration.name}`);
+              await client.query(migration.sql);
+              await client.query('INSERT INTO schema_migrations (version, name) VALUES ($1, $2)', [
+                migration.version,
+                migration.name,
+              ]);
+            }
           }
+          await client.query('COMMIT');
         }
-        await client.query('COMMIT');
 
         // Seed default organizations in PostgreSQL
         try {
@@ -1340,8 +1349,8 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
           type: 'postgresql',
           instance: process.env.CLOUD_SQL_CONNECTION_NAME || `${host}:${port}`,
           database,
-          appliedMigrationsCount: MIGRATIONS.length,
-          lastMigrationName: MIGRATIONS[MIGRATIONS.length - 1].name,
+          appliedMigrationsCount: appliedMigrationCount,
+          lastMigrationName: lastAppliedMigrationName,
         };
         console.log(`PostgreSQL Cloud SQL migrations successfully verified on database '${database}'.`);
       } catch (migErr: any) {
