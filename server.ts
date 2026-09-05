@@ -1321,10 +1321,22 @@ async function startServer() {
     });
   });
 
-  app.get('/api/properties', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.properties || []).filter((p) => !orgId || p.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/properties', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production properties require PostgreSQL', code: 'PROPERTY_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT p.*, o.name AS owner_name, o.entity_type AS owner_entity_type, o.mailing_state AS owner_mailing_state
+         FROM properties p
+         LEFT JOIN property_owners o ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE p.organization_id = $1 ORDER BY p.created_at DESC LIMIT 500`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production properties are temporarily unavailable', code: 'PROPERTY_DATABASE_ERROR' });
+    }
   });
 
   // Bulk Apply / Remove Tags on Selected Properties
@@ -2269,10 +2281,23 @@ async function startServer() {
   });
 
   // Leads & CRM APIs
-  app.get('/api/leads', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.leads || []).filter((l) => !orgId || l.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/leads', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production leads require PostgreSQL', code: 'LEAD_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT l.*, o.name AS owner_name, p.address AS property_address, p.city, p.state, p.zip, p.apn
+         FROM leads l
+         LEFT JOIN property_owners o ON o.id = l.owner_id AND o.organization_id = l.organization_id
+         LEFT JOIN properties p ON p.id = l.primary_property_id AND p.organization_id = l.organization_id
+         WHERE l.organization_id = $1 ORDER BY l.created_at DESC LIMIT 500`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production leads are temporarily unavailable', code: 'LEAD_DATABASE_ERROR' });
+    }
   });
 
   // Update Individual Lead
@@ -2909,23 +2934,19 @@ async function startServer() {
 
   // Dialer & Campaign Lifecycle APIs
   app.get('/api/campaigns', async (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at
-           FROM campaign WHERE organization_id = $1 ORDER BY created_at DESC`,
-          [orgId]
-        );
-        if (result.rows.length > 0) {
-          return res.json(result.rows);
-        }
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch campaigns fallback:', err.message);
-      }
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production campaigns require PostgreSQL', code: 'CAMPAIGN_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at
+         FROM campaign WHERE organization_id = $1 ORDER BY created_at DESC`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production campaigns are temporarily unavailable', code: 'CAMPAIGN_DATABASE_ERROR' });
     }
-    res.json(inMemoryStore.campaigns);
   });
 
   app.post('/api/campaigns', async (req, res) => {
