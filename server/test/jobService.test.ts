@@ -7,3 +7,21 @@ const job = await claimNextJob(pool, 'org_test', 'worker_1'); assert.equal(job?.
 await completeJob(pool, 'org_test', 'job_1', 'worker_1'); await failJob(pool, 'org_test', 'job_1', 'worker_1', 'temporary');
 assert.ok(seen.some((q) => q.includes('FOR UPDATE SKIP LOCKED'))); assert.ok(seen.some((q) => q.includes("status='completed'"))); assert.ok(seen.some((q) => q.includes("status = CASE")));
 console.log('job service tests passed');
+
+const recoveryQueries: Array<{ sql: string; values: unknown[] }> = [];
+const recoveryPool = {
+  async query(sql: string, values: unknown[]) {
+    recoveryQueries.push({ sql, values });
+    return { rowCount: 2, rows: [] };
+  },
+} as any;
+
+const { recoverStaleJobs } = await import('../services/jobService');
+const recovered = await recoverStaleJobs(recoveryPool, 'org_test', 300);
+assert.equal(recovered, 2);
+assert.match(recoveryQueries[0].sql, /locked_at < CURRENT_TIMESTAMP - \(\$2 \* INTERVAL '1 second'\)/);
+assert.match(recoveryQueries[0].sql, /organization_id = \$1/);
+await assert.rejects(
+  recoverStaleJobs(recoveryPool, 'org_test', 0),
+  /staleAfterSeconds must be greater than zero/,
+);
