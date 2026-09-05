@@ -28,3 +28,15 @@ export function testEnvironmentExampleContainsNoLiveSecrets(): void {
 
 testEnvironmentExampleContainsNoLiveSecrets();
 console.log('✓ PASS: .env.example contains no live credentials');
+
+export function testDialerDoesNotFabricateSuccessfulCalls(): void {
+  const serverSource = readFileSync(join(repoRoot, 'server.ts'), 'utf8');
+  assert.match(
+    serverSource,
+    /if\s*\(\s*!telResult\?\.success[\s\S]*?\)\s*\{[\s\S]*?return res\.status\(502\)/,
+    'dial endpoint must return failure when RingCentral initiation fails'
+  );
+}
+
+testDialerDoesNotFabricateSuccessfulCalls();
+console.log('✓ PASS: dialer does not fabricate successful calls after provider failure');

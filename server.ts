@@ -11,6 +11,7 @@ import { createServer as createViteServer } from 'vite';
 // Firebase Admin is initialized idempotently by the shared middleware module.
 const firestore = getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
+import { persistLegacyCall, buildCallPersistencePlan } from './server/db/legacySchemaCompatibility';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
@@ -31,11 +32,12 @@ import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
+import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -3144,7 +3146,11 @@ async function startServer() {
       } = req.body;
 
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const cleanNumber = phone_number || '(949) 555-0100';
+      const validation = validateDialRequest(req.body);
+      if (validation.ok === false) {
+        return res.status(400).json({ error: validation.error });
+      }
+      const cleanNumber = validation.phoneNumber;
 
       // 1. Safe TCPA & DNC Pre-Dial Check (with defensive fallback)
       try {
@@ -3171,35 +3177,88 @@ async function startServer() {
           }
         }
       } catch (suppressErr: any) {
-        console.warn('[Dialer] Suppression check fallback bypassed:', suppressErr.message);
+        console.error('[Dialer] Suppression check failed closed:', suppressErr.message);
+        return res.status(503).json({
+          error: 'Outbound dial blocked because suppression status could not be verified.',
+          code: 'SUPPRESSION_CHECK_UNAVAILABLE',
+        });
       }
 
-      // 2. Safe Telephony Adapter Dispatch via RingCentral
+      // 2. Verify the existing database can record the call BEFORE dialing.
+      // This is fail-closed: a real outbound call must never be started when
+      // its persistence path is known to be incompatible with the database.
+      const pool = getPgPool();
+      let legacyCallsTable = false;
+      if (!pool) {
+        return res.status(503).json({ error: 'Outbound dial blocked because PostgreSQL persistence is unavailable.' });
+      }
+      try {
+        const tableResult = await pool.query(
+          `SELECT to_regclass('public.call') AS modern_table, to_regclass('public.calls') AS legacy_table`,
+        );
+        legacyCallsTable = !tableResult.rows[0]?.modern_table && Boolean(tableResult.rows[0]?.legacy_table);
+        if (!tableResult.rows[0]?.modern_table && !legacyCallsTable) {
+          return res.status(503).json({ error: 'Outbound dial blocked because no supported call persistence table is available.' });
+        }
+        if (legacyCallsTable) {
+          const columnsResult = await pool.query(
+            `SELECT column_name, is_nullable, column_default
+               FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'calls'
+              ORDER BY ordinal_position`,
+          );
+          const plan = buildCallPersistencePlan(columnsResult.rows);
+          if (!plan.ready) {
+            return res.status(503).json({
+              error: 'Outbound dial blocked because the legacy calls table cannot safely persist the call.',
+              missingRequiredColumns: plan.missingRequiredColumns,
+            });
+          }
+        }
+      } catch (persistenceCheckErr: any) {
+        console.error('[Dialer DB Preflight] failed closed:', persistenceCheckErr.message);
+        return res.status(503).json({ error: 'Outbound dial blocked because call persistence could not be verified.' });
+      }
+
+      // 3. Safe Telephony Adapter Dispatch via RingCentral
       const provider = 'ringcentral';
-      let telephonyCallId = `rc_tel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      let telephonyCallId = '';
 
       try {
         const adapter = getTelephonyAdapter('ringcentral');
-        if (adapter && typeof adapter.initiateCall === 'function') {
-          const telResult = await adapter.initiateCall({
-            organizationId: orgId,
-            campaignId: campaign_id || 'camp_401',
-            toNumber: cleanNumber,
-            contactName: contact_name || 'Property Owner',
-            callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
-          });
-          if (telResult?.telephonyCallId) {
-            telephonyCallId = telResult.telephonyCallId;
-          }
+        if (!adapter || typeof adapter.initiateCall !== 'function') {
+          return res.status(503).json({ error: 'RingCentral telephony adapter is unavailable', provider });
         }
+
+        const telResult = await adapter.initiateCall({
+          organizationId: orgId,
+          campaignId: campaign_id || 'camp_401',
+          toNumber: cleanNumber,
+          contactName: contact_name || 'Property Owner',
+          callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
+        });
+
+        if (!telResult?.success || !telResult.telephonyCallId) {
+          console.error('[Dialer] RingCentral initiation failed:', telResult?.error || 'missing telephony call ID');
+          return res.status(502).json({
+            error: telResult?.error || 'RingCentral call initiation failed',
+            provider,
+            telephonyCallId: telResult?.telephonyCallId || null,
+          });
+        }
+
+        telephonyCallId = telResult.telephonyCallId;
       } catch (adapterErr: any) {
-        console.warn('[Dialer] RingCentral dispatch note:', adapterErr.message);
+        console.error('[Dialer] RingCentral dispatch failed:', adapterErr.message);
+        return res.status(502).json({
+          error: adapterErr.message || 'RingCentral call initiation failed',
+          provider,
+        });
       }
 
-      // 3. Create Completed Call Record
+      // 3. Create initial Call Record
       const callId = `call_${Date.now()}`;
       const now = new Date().toISOString();
-      const duration = Math.floor(Math.random() * 75) + 35; // 35s - 110s realistic duration
 
       const callRecord: CallRecord = {
         id: callId,
@@ -3209,57 +3268,63 @@ async function startServer() {
         contact_name: contact_name || 'Property Owner',
         phone_number: cleanNumber,
         property_address: property_address || '1420 Newport Blvd, Costa Mesa, CA',
-        status: 'completed',
+        status: 'initiated',
         direction: 'outbound',
-        duration_seconds: duration,
-        disposition: 'interested',
+        duration_seconds: 0,
+        disposition: undefined,
         call_strategy_brief: call_strategy_brief || 'Management introduction and maintenance review',
-        recording_url: `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`,
-        notes: 'Outbound call connected via RingCentral Telephony. Owner open to management review.',
+        recording_url: undefined,
+        notes: 'Outbound call initiated via RingCentral Telephony.',
         created_at: now,
       };
 
-      // 4. Persistence Store Sync
-      if (!inMemoryStore.calls) inMemoryStore.calls = [];
-      inMemoryStore.calls.unshift(callRecord);
-
-      // PostgreSQL Optional Sync
-      const pool = getPgPool();
-      if (pool) {
-        try {
+      // 4. Persistence Store Sync. Persistence is mandatory once a provider
+      // call has been initiated; never report success if the durable record
+      // cannot be written.
+      try {
+        if (legacyCallsTable) {
+          await persistLegacyCall(pool, {
+            id: callId,
+            telephonyCallId,
+            status: callRecord.status,
+            durationSeconds: callRecord.duration_seconds,
+            disposition: callRecord.disposition,
+            notes: callRecord.notes,
+            createdAt: now,
+          });
+        } else {
           await pool.query(
             `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO NOTHING`,
             [
-              callId,
-              orgId,
-              callRecord.campaign_id,
-              telephonyCallId,
-              callRecord.contact_name,
-              callRecord.phone_number,
-              callRecord.direction,
-              callRecord.status,
-              callRecord.disposition,
-              callRecord.duration_seconds,
-              callRecord.call_strategy_brief,
-              callRecord.recording_url,
-              now,
+              callId, orgId, callRecord.campaign_id, telephonyCallId, callRecord.contact_name,
+              callRecord.phone_number, callRecord.direction, callRecord.status, callRecord.disposition,
+              callRecord.duration_seconds, callRecord.call_strategy_brief, callRecord.recording_url, now,
             ]
           );
-        } catch (pgErr: any) {
-          console.warn('[Dialer DB Sync] PG insert fallback:', pgErr.message);
         }
+      } catch (pgErr: any) {
+        console.error('[Dialer DB Sync] durable call persistence failed after provider initiation:', pgErr.message);
+        return res.status(502).json({
+          error: 'Call was initiated by RingCentral but could not be durably recorded.',
+          provider,
+          telephonyCallId,
+          code: 'CALL_PERSISTENCE_FAILED',
+        });
       }
+
+      if (!inMemoryStore.calls) inMemoryStore.calls = [];
+      inMemoryStore.calls.unshift(callRecord);
 
       // 5. Update Dialer Metrics in memory
       inMemoryStore.auditLogs.unshift({
         id: `audit_dial_${Date.now()}`,
         timestamp: now,
         agent: 'sub_agent_6',
-        action: 'outbound_call_connected',
+        action: 'outbound_call_initiated',
         input: { contact_name, phone_number: cleanNumber, provider },
-        output: { callId, duration_seconds: duration, disposition: 'interested' },
+        output: { callId, telephonyCallId },
         status: 'success',
         latency_ms: 120,
         organization_id: orgId,

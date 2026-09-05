@@ -13,8 +13,36 @@ import {
 } from './types';
 import { SuppressionService, normalizePhoneNumber } from './suppressionService';
 import { getTelephonyAdapter } from './telephonyAdapter';
-import { requireOrganizationId } from '../services/organizationContext';
 import { buildCampaignEligibilityQuery } from '../services/campaignEligibilityService';
+
+const AUTHORITATIVE_STATE_ERROR = 'PostgreSQL is required for authoritative campaign state';
+
+function requirePostgresPool() {
+  const pool = getPgPool();
+  if (!pool) {
+    throw new Error(AUTHORITATIVE_STATE_ERROR);
+  }
+  return pool;
+}
+
+async function withPostgresTransaction<T>(pool: ReturnType<typeof requirePostgresPool>, operation: (client: any) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // Preserve the original database failure.
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 export class CampaignManager {
   /**
@@ -58,39 +86,22 @@ export class CampaignManager {
       updated_at: now,
     };
 
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
-          `INSERT INTO campaign (id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-          [
-            id,
-            campaign.organization_id,
-            campaign.name,
-            campaign.description,
-            campaign.status,
-            campaign.target_market,
-            campaign.telephony_provider,
-            campaign.total_contacts,
-            0,
-            0,
-            0,
-            campaign.concurrency_limit,
-            campaign.retry_limit,
-            campaign.calling_hours_start,
-            campaign.calling_hours_end,
-            campaign.timezone,
-            now,
-            now,
-          ]
-        );
-      } catch (err: any) {
-        console.warn('PostgreSQL createCampaign fallback:', err.message);
-      }
+    const pool = requirePostgresPool();
+    try {
+      await pool.query(
+        `INSERT INTO campaign (id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+        [
+          id, campaign.organization_id, campaign.name, campaign.description, campaign.status,
+          campaign.target_market, campaign.telephony_provider, campaign.total_contacts, 0, 0, 0,
+          campaign.concurrency_limit, campaign.retry_limit, campaign.calling_hours_start,
+          campaign.calling_hours_end, campaign.timezone, now, now,
+        ]
+      );
+    } catch (err: any) {
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    // In-memory fallback
     inMemoryStore.campaigns.unshift(campaign as any);
     return campaign;
   }
@@ -106,16 +117,16 @@ export class CampaignManager {
     scheduledBy: string = 'Operations Lead'
   ): Promise<CampaignRecord> {
     const now = new Date().toISOString();
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
-          `UPDATE campaign SET status = 'scheduled', updated_at = $1 WHERE id = $2 AND organization_id = $3`,
-          [now, campaignId, organizationId]
-        );
-      } catch (err: any) {
-        console.warn('PostgreSQL scheduleCampaign fallback:', err.message);
-      }
+    const pool = requirePostgresPool();
+    try {
+      const result = await pool.query(
+        `UPDATE campaign SET status = 'scheduled', scheduled_at = $1, timezone = $2, scheduled_by = $3, updated_at = $4 WHERE id = $5 AND organization_id = $6`,
+        [scheduledAt, timezone, scheduledBy, now, campaignId, organizationId]
+      );
+      if ((result.rowCount || 0) !== 1) throw new Error(`Campaign ${campaignId} not found`);
+    } catch (err: any) {
+      if (err?.message === `Campaign ${campaignId} not found`) throw err;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
@@ -139,16 +150,16 @@ export class CampaignManager {
     campaignId: string
   ): Promise<CampaignRecord> {
     const now = new Date().toISOString();
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
-          `UPDATE campaign SET status = 'draft', updated_at = $1 WHERE id = $2 AND organization_id = $3`,
-          [now, campaignId, organizationId]
-        );
-      } catch (err: any) {
-        console.warn('PostgreSQL cancelSchedule fallback:', err.message);
-      }
+    const pool = requirePostgresPool();
+    try {
+      const result = await pool.query(
+        `UPDATE campaign SET status = 'draft', scheduled_at = NULL, updated_at = $1 WHERE id = $2 AND organization_id = $3`,
+        [now, campaignId, organizationId]
+      );
+      if ((result.rowCount || 0) !== 1) throw new Error(`Campaign ${campaignId} not found`);
+    } catch (err: any) {
+      if (err?.message === `Campaign ${campaignId} not found`) throw err;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
@@ -212,21 +223,23 @@ export class CampaignManager {
       contacts_reached: 0,
     };
 
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
+    const pool = requirePostgresPool();
+    try {
+      await withPostgresTransaction(pool, async (client) => {
+        const campaignResult = await client.query(
           `UPDATE campaign SET status = 'active', updated_at = $1 WHERE id = $2 AND organization_id = $3`,
           [now, campaignId, organizationId]
         );
-        await pool.query(
+        if ((campaignResult.rowCount || 0) !== 1) throw new Error(`Campaign ${campaignId} not found`);
+        await client.query(
           `INSERT INTO dialing_session (id, organization_id, campaign_id, agent_user_id, status, started_at, calls_placed, contacts_reached)
            VALUES ($1, $2, $3, $4, $5, $6, 0, 0)`,
           [sessionId, organizationId, campaignId, agentUserId, 'active', now]
         );
-      } catch (err: any) {
-        console.warn('PostgreSQL startCampaign fallback:', err.message);
-      }
+      });
+    } catch (err: any) {
+      if (err?.message === `Campaign ${campaignId} not found`) throw err;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
@@ -245,20 +258,22 @@ export class CampaignManager {
    */
   public static async pauseCampaign(organizationId: string, campaignId: string): Promise<boolean> {
     const now = new Date().toISOString();
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
+    const pool = requirePostgresPool();
+    try {
+      await withPostgresTransaction(pool, async (client) => {
+        const campaignResult = await client.query(
           `UPDATE campaign SET status = 'paused', updated_at = $1 WHERE id = $2 AND organization_id = $3`,
           [now, campaignId, organizationId]
         );
-        await pool.query(
+        if ((campaignResult.rowCount || 0) !== 1) throw new Error(`Campaign ${campaignId} not found`);
+        await client.query(
           `UPDATE dialing_session SET status = 'paused' WHERE campaign_id = $1 AND organization_id = $2 AND status = 'active'`,
           [campaignId, organizationId]
         );
-      } catch (err: any) {
-        console.warn('PostgreSQL pauseCampaign fallback:', err.message);
-      }
+      });
+    } catch (err: any) {
+      if (err?.message === `Campaign ${campaignId} not found`) throw err;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
@@ -271,20 +286,22 @@ export class CampaignManager {
    */
   public static async stopCampaign(organizationId: string, campaignId: string): Promise<boolean> {
     const now = new Date().toISOString();
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        await pool.query(
+    const pool = requirePostgresPool();
+    try {
+      await withPostgresTransaction(pool, async (client) => {
+        const campaignResult = await client.query(
           `UPDATE campaign SET status = 'completed', updated_at = $1 WHERE id = $2 AND organization_id = $3`,
           [now, campaignId, organizationId]
         );
-        await pool.query(
+        if ((campaignResult.rowCount || 0) !== 1) throw new Error(`Campaign ${campaignId} not found`);
+        await client.query(
           `UPDATE dialing_session SET status = 'ended', ended_at = $1 WHERE campaign_id = $2 AND organization_id = $3 AND status != 'ended'`,
           [now, campaignId, organizationId]
         );
-      } catch (err: any) {
-        console.warn('PostgreSQL stopCampaign fallback:', err.message);
-      }
+      });
+    } catch (err: any) {
+      if (err?.message === `Campaign ${campaignId} not found`) throw err;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
     const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
@@ -306,78 +323,45 @@ export class CampaignManager {
       priority?: number;
     }>
   ): Promise<{ added: number; contacts: CampaignContactRecord[] }> {
+    const pool = requirePostgresPool();
     const createdRecords: CampaignContactRecord[] = [];
-    const pool = getPgPool();
 
-    for (const c of contacts) {
-      const id = `ccon_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const now = new Date().toISOString();
-      const normalizedPhone = normalizePhoneNumber(c.phoneNumber);
-      if (!normalizedPhone) continue;
-      const record: CampaignContactRecord = {
-        id,
-        organization_id: organizationId,
-        campaign_id: campaignId,
-        lead_id: c.leadId,
-        contact_name: c.contactName,
-        phone_number: normalizedPhone,
-        property_address: c.propertyAddress,
-        dial_status: 'queued',
-        attempts: 0,
-        priority: c.priority || 1,
-        created_at: now,
-      };
+    try {
+      await withPostgresTransaction(pool, async (client) => {
+        for (const c of contacts) {
+          const normalizedPhone = normalizePhoneNumber(c.phoneNumber);
+          if (!normalizedPhone) continue;
+          const id = `ccon_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const now = new Date().toISOString();
+          const record: CampaignContactRecord = {
+            id, organization_id: organizationId, campaign_id: campaignId, lead_id: c.leadId,
+            contact_name: c.contactName, phone_number: normalizedPhone, property_address: c.propertyAddress,
+            dial_status: 'queued', attempts: 0, priority: c.priority || 1, created_at: now,
+          };
 
-      let inserted = true;
-      if (pool) {
-        try {
-          const insertResult = await pool.query(
+          const insertResult = await client.query(
             `INSERT INTO campaign_contact (id, organization_id, campaign_id, lead_id, contact_name, phone_number, property_address, dial_status, attempts, priority, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (campaign_id, phone_number) DO NOTHING`,
-            [
-              id,
-              organizationId,
-              campaignId,
-              c.leadId || null,
-              c.contactName,
-              normalizedPhone,
-              c.propertyAddress || null,
-              'queued',
-              0,
-              c.priority || 1,
-              now,
-            ]
+            [id, organizationId, campaignId, c.leadId || null, c.contactName, normalizedPhone, c.propertyAddress || null, 'queued', 0, c.priority || 1, now]
           );
-          inserted = (insertResult.rowCount || 0) > 0;
-        } catch (err: any) {
-          inserted = false;
-          console.warn('PostgreSQL addContact failed:', err.message);
+
+          if ((insertResult.rowCount || 0) > 0) createdRecords.push(record);
         }
-      }
 
-      if (inserted) {
-        createdRecords.push(record);
-        inMemoryStore.campaignContacts.unshift(record);
-      }
-    }
-
-    // Update campaign total contacts count
-    if (pool) {
-      try {
-        await pool.query(
-          `UPDATE campaign SET total_contacts = (SELECT COUNT(*) FROM campaign_contact WHERE campaign_id = $1) WHERE id = $1`,
-          [campaignId]
+        await client.query(
+          `UPDATE campaign SET total_contacts = (SELECT COUNT(*) FROM campaign_contact WHERE campaign_id = $1) WHERE id = $1 AND organization_id = $2`,
+          [campaignId, organizationId]
         );
-      } catch (err: any) {
-        console.warn('PostgreSQL update total_contacts fallback:', err.message);
-      }
+      });
+    } catch (err: any) {
+      createdRecords.length = 0;
+      throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) {
-      memoryCamp.total_contacts = (memoryCamp.total_contacts || 0) + createdRecords.length;
-    }
+    for (const record of createdRecords) inMemoryStore.campaignContacts.unshift(record);
+    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId && c.organization_id === organizationId);
+    if (memoryCamp) memoryCamp.total_contacts = (memoryCamp.total_contacts || 0) + createdRecords.length;
 
     return { added: createdRecords.length, contacts: createdRecords };
   }
@@ -417,16 +401,7 @@ export class CampaignManager {
       const claim = await pool.query(eligibility.text, eligibility.values);
       if (claim.rows.length > 0) contact = claim.rows[0];
     } else {
-      const orgId = requireOrganizationId(organizationId);
-      const candidates = (inMemoryStore.campaignContacts || []).filter((c) =>
-        c.organization_id === orgId && c.campaign_id === campaignId && c.dial_status === 'queued' && c.attempts < 3
-      ).sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
-      contact = candidates[0] || null;
-      if (contact) {
-        contact.dial_status = 'dialing';
-        contact.attempts += 1;
-        contact.last_dialed_at = new Date().toISOString();
-      }
+      throw new Error(AUTHORITATIVE_STATE_ERROR);
     }
 
     if (!contact) return { status: 'queue_empty' };
