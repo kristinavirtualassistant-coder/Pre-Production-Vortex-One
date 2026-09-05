@@ -1390,3 +1390,8 @@ export function getDatabaseStatus(): DatabaseStatus {
 export function getPgPool(): Pool | null {
   return pgPool;
 }
+
+/** Test-only dependency injection seam for database failure-path tests. */
+export function setPgPoolForTests(pool: Pool | null): void {
+  pgPool = pool;
+}
