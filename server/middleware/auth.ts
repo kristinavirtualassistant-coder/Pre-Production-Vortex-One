@@ -83,6 +83,18 @@ export function canonicalizeOrganizationContext(req: AuthRequest): string {
   return organizationId;
 }
 
+export function buildAuthenticatedUserLookupSql(): string {
+  return `SELECT u.id,
+                 m.organization_id,
+                 u.email,
+                 COALESCE(to_jsonb(u)->>'name', to_jsonb(u)->>'full_name', '') AS name,
+                 COALESCE(to_jsonb(u)->>'role', 'user') AS role
+            FROM users u
+            JOIN memberships m ON m.user_id = u.id
+           WHERE u.email = $1
+             AND m.organization_id = $2`;
+}
+
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
@@ -108,7 +120,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     const client = await pool.connect();
     try {
       const { rows } = await client.query(
-        'SELECT id, organization_id, email, name, role FROM users WHERE email = $1 AND organization_id = $2',
+        buildAuthenticatedUserLookupSql(),
         [decodedToken.email, requestedOrgId],
       );
 

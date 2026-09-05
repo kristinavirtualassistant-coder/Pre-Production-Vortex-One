@@ -11,6 +11,7 @@ import { createServer as createViteServer } from 'vite';
 // Firebase Admin is initialized idempotently by the shared middleware module.
 const firestore = getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
+import { persistLegacyCall, buildCallPersistencePlan } from './server/db/legacySchemaCompatibility';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
@@ -3183,7 +3184,43 @@ async function startServer() {
         });
       }
 
-      // 2. Safe Telephony Adapter Dispatch via RingCentral
+      // 2. Verify the existing database can record the call BEFORE dialing.
+      // This is fail-closed: a real outbound call must never be started when
+      // its persistence path is known to be incompatible with the database.
+      const pool = getPgPool();
+      let legacyCallsTable = false;
+      if (!pool) {
+        return res.status(503).json({ error: 'Outbound dial blocked because PostgreSQL persistence is unavailable.' });
+      }
+      try {
+        const tableResult = await pool.query(
+          `SELECT to_regclass('public.call') AS modern_table, to_regclass('public.calls') AS legacy_table`,
+        );
+        legacyCallsTable = !tableResult.rows[0]?.modern_table && Boolean(tableResult.rows[0]?.legacy_table);
+        if (!tableResult.rows[0]?.modern_table && !legacyCallsTable) {
+          return res.status(503).json({ error: 'Outbound dial blocked because no supported call persistence table is available.' });
+        }
+        if (legacyCallsTable) {
+          const columnsResult = await pool.query(
+            `SELECT column_name, is_nullable, column_default
+               FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'calls'
+              ORDER BY ordinal_position`,
+          );
+          const plan = buildCallPersistencePlan(columnsResult.rows);
+          if (!plan.ready) {
+            return res.status(503).json({
+              error: 'Outbound dial blocked because the legacy calls table cannot safely persist the call.',
+              missingRequiredColumns: plan.missingRequiredColumns,
+            });
+          }
+        }
+      } catch (persistenceCheckErr: any) {
+        console.error('[Dialer DB Preflight] failed closed:', persistenceCheckErr.message);
+        return res.status(503).json({ error: 'Outbound dial blocked because call persistence could not be verified.' });
+      }
+
+      // 3. Safe Telephony Adapter Dispatch via RingCentral
       const provider = 'ringcentral';
       let telephonyCallId = '';
 
@@ -3241,38 +3278,44 @@ async function startServer() {
         created_at: now,
       };
 
-      // 4. Persistence Store Sync
-      if (!inMemoryStore.calls) inMemoryStore.calls = [];
-      inMemoryStore.calls.unshift(callRecord);
-
-      // PostgreSQL Optional Sync
-      const pool = getPgPool();
-      if (pool) {
-        try {
+      // 4. Persistence Store Sync. Persistence is mandatory once a provider
+      // call has been initiated; never report success if the durable record
+      // cannot be written.
+      try {
+        if (legacyCallsTable) {
+          await persistLegacyCall(pool, {
+            id: callId,
+            telephonyCallId,
+            status: callRecord.status,
+            durationSeconds: callRecord.duration_seconds,
+            disposition: callRecord.disposition,
+            notes: callRecord.notes,
+            createdAt: now,
+          });
+        } else {
           await pool.query(
             `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO NOTHING`,
             [
-              callId,
-              orgId,
-              callRecord.campaign_id,
-              telephonyCallId,
-              callRecord.contact_name,
-              callRecord.phone_number,
-              callRecord.direction,
-              callRecord.status,
-              callRecord.disposition,
-              callRecord.duration_seconds,
-              callRecord.call_strategy_brief,
-              callRecord.recording_url,
-              now,
+              callId, orgId, callRecord.campaign_id, telephonyCallId, callRecord.contact_name,
+              callRecord.phone_number, callRecord.direction, callRecord.status, callRecord.disposition,
+              callRecord.duration_seconds, callRecord.call_strategy_brief, callRecord.recording_url, now,
             ]
           );
-        } catch (pgErr: any) {
-          console.warn('[Dialer DB Sync] PG insert fallback:', pgErr.message);
         }
+      } catch (pgErr: any) {
+        console.error('[Dialer DB Sync] durable call persistence failed after provider initiation:', pgErr.message);
+        return res.status(502).json({
+          error: 'Call was initiated by RingCentral but could not be durably recorded.',
+          provider,
+          telephonyCallId,
+          code: 'CALL_PERSISTENCE_FAILED',
+        });
       }
+
+      if (!inMemoryStore.calls) inMemoryStore.calls = [];
+      inMemoryStore.calls.unshift(callRecord);
 
       // 5. Update Dialer Metrics in memory
       inMemoryStore.auditLogs.unshift({
