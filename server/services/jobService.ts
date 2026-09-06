@@ -31,3 +31,25 @@ export async function failJob(pool: Pool, organizationId: string, jobId: string,
   const orgId = requireOrganizationId(organizationId);
   await pool.query(`UPDATE jobs SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END, available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE CURRENT_TIMESTAMP + ($4 * INTERVAL '1 second') END, locked_at=NULL, locked_by=NULL, last_error=$3 WHERE id=$1 AND organization_id=$2 AND status='processing' AND locked_by=$5`, [jobId, orgId, error, retryDelaySeconds, workerId]);
 }
+
+export async function recoverStaleJobs(
+  pool: Pool,
+  organizationId: string,
+  staleAfterSeconds = 300,
+): Promise<number> {
+  const orgId = requireOrganizationId(organizationId);
+  if (!Number.isFinite(staleAfterSeconds) || staleAfterSeconds <= 0) {
+    throw new Error('staleAfterSeconds must be greater than zero');
+  }
+  const result = await pool.query(
+    `UPDATE jobs
+     SET status = 'queued', available_at = CURRENT_TIMESTAMP, locked_at = NULL, locked_by = NULL,
+         last_error = COALESCE(last_error, 'Recovered abandoned processing lease')
+     WHERE organization_id = $1
+       AND status = 'processing'
+       AND locked_at IS NOT NULL
+       AND locked_at < CURRENT_TIMESTAMP - ($2 * INTERVAL '1 second')`,
+    [orgId, staleAfterSeconds],
+  );
+  return result.rowCount || 0;
+}

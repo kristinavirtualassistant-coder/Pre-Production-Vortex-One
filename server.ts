@@ -3093,43 +3093,33 @@ async function startServer() {
   app.get('/api/calls', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at
-           FROM call WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 50`,
-          [orgId]
-        );
-        if (result.rows.length > 0) {
-          return res.json(result.rows);
-        }
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch calls fallback:', err.message);
-      }
+    if (!pool) return res.status(503).json({ error: 'Production call records require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+    try {
+      const result = await pool.query(
+        `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at
+         FROM call WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [orgId]
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production call records are temporarily unavailable', code: 'CALL_DATABASE_ERROR' });
     }
-    res.json(inMemoryStore.calls);
   });
 
   app.get('/api/calls/:id/events', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, call_id, event_type, payload, occurred_at
-           FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
-          [req.params.id, orgId]
-        );
-        return res.json(result.rows);
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch call events fallback:', err.message);
-      }
+    if (!pool) return res.status(503).json({ error: 'Production call events require PostgreSQL', code: 'CALL_EVENT_DATABASE_UNAVAILABLE' });
+    try {
+      const result = await pool.query(
+        `SELECT id, organization_id, call_id, event_type, payload, occurred_at
+         FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
+        [req.params.id, orgId]
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production call events are temporarily unavailable', code: 'CALL_EVENT_DATABASE_ERROR' });
     }
-    res.json([
-      { id: 'evt_1', call_id: req.params.id, event_type: 'telephony.initiated', occurred_at: new Date().toISOString() },
-      { id: 'evt_2', call_id: req.params.id, event_type: 'telephony.connected', occurred_at: new Date().toISOString() },
-      { id: 'evt_3', call_id: req.params.id, event_type: 'telephony.completed', occurred_at: new Date().toISOString() },
-    ]);
   });
 
   app.post('/api/calls/dial', async (req, res) => {

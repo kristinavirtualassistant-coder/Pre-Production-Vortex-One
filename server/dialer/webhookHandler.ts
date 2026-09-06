@@ -13,9 +13,6 @@ import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
 
-// In-memory idempotency deduplication cache
-const processedEventsCache = new Set<string>();
-
 export interface WebhookProcessResult {
   status: 'processed' | 'duplicate_ignored' | 'error';
   eventId: string;
@@ -91,19 +88,8 @@ export class WebhookHandler {
       if (!normalized.telephonyCallId) throw new Error('Provider webhook telephony call identity is required');
 
       const pool = getPgPool();
-
-      // Test/local fallback keeps idempotency semantics when PostgreSQL is unavailable.
-      // Production always uses the durable call_event primary key below.
       if (!pool) {
-        if (processedEventsCache.has(normalized.eventId)) {
-          return {
-            status: 'duplicate_ignored',
-            eventId: normalized.eventId,
-            telephonyCallId: normalized.telephonyCallId,
-            eventType: normalized.eventType,
-          };
-        }
-        processedEventsCache.add(normalized.eventId);
+        throw new Error('PostgreSQL is required for authoritative webhook processing');
       }
 
       // PostgreSQL is authoritative for production call state. The durable transition
