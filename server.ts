@@ -3527,50 +3527,52 @@ async function startServer() {
   });
 
   app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'Voicemail drop requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+
+    const client = await pool.connect();
     try {
       const { id } = req.params;
-      const { voicemailId, voicemailLabel, voicemailUrl, callerId, organizationId, durationSeconds } = req.body;
+      const { voicemailId, voicemailLabel, voicemailUrl, callerId, durationSeconds } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const label = voicemailLabel || 'Pre-recorded Professional Voicemail';
-      const pool = getPgPool();
-
       const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
 
-      try {
-        await pool.query(
-          `UPDATE call
-           SET disposition = 'voicemail',
-               status = 'completed',
-               notes = COALESCE(notes || E'\n' || $1, $1),
-               updated_at = NOW()
-           WHERE id = $2`,
-          [dropNote, id]
-        );
-      } catch (dbErr) {
-        console.warn('Postgres call update skipped:', dbErr);
+      await client.query('BEGIN');
+      const callUpdate = await client.query(
+        `UPDATE call
+         SET disposition = 'voicemail',
+             status = 'completed',
+             notes = COALESCE(notes || E'\n' || $1, $1),
+             updated_at = NOW()
+         WHERE id = $2 AND organization_id = $3
+         RETURNING id`,
+        [dropNote, id, orgId]
+      );
+      if (!callUpdate.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Call not found' });
       }
 
-      // Log to audit log
-      try {
-        await pool.query(
-          `INSERT INTO audit_log (action, user_id, organization_id, metadata, timestamp)
-           VALUES ($1, $2, $3, $4, NOW())`,
-          [
-            'voicemail_dropped',
-            'agent_active',
-            orgId,
-            JSON.stringify({
-              callId: id,
-              voicemailId,
-              voicemailLabel: label,
-              voicemailUrl,
-              callerId,
-              durationSeconds: durationSeconds || 0,
-            }),
-          ]
-        );
-      } catch (auditErr) {}
+      await client.query(
+        `INSERT INTO audit_log (action, user_id, organization_id, metadata, timestamp)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [
+          'voicemail_dropped',
+          (req as AuthRequest).dbUser?.id || 'agent_active',
+          orgId,
+          JSON.stringify({
+            callId: id,
+            voicemailId,
+            voicemailLabel: label,
+            voicemailUrl,
+            callerId,
+            durationSeconds: durationSeconds || 0,
+          }),
+        ]
+      );
 
+      await client.query('COMMIT');
       res.json({
         success: true,
         callId: id,
@@ -3579,19 +3581,25 @@ async function startServer() {
         timestamp: new Date().toISOString(),
       });
     } catch (err: any) {
+      await client.query('ROLLBACK');
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
   app.patch('/api/calls/:id', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const { notes } = req.body;
       const pool = getPgPool();
-      await pool.query(
-        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
-        [notes, id]
+      if (!pool) return res.status(503).json({ error: 'Call updates require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3 RETURNING id',
+        [notes, id, organizationId]
       );
+      if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3600,13 +3608,16 @@ async function startServer() {
 
   app.post('/api/calls/:id/notes', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const { notes } = req.body;
       const pool = getPgPool();
-      await pool.query(
-        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
-        [notes, id]
+      if (!pool) return res.status(503).json({ error: 'Call notes require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3 RETURNING id',
+        [notes, id, organizationId]
       );
+      if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3635,7 +3646,7 @@ async function startServer() {
       if (!pool) return res.status(503).json({ error: 'CRM disposition requires PostgreSQL', code: 'CRM_DATABASE_UNAVAILABLE' });
       const { disposition, followUpAt, note } = req.body;
       if (!disposition) return res.status(400).json({ error: 'disposition is required' });
-      await applyCallDisposition(pool, {
+      const result = await applyCallDisposition(pool, {
         organizationId,
         callId: req.params.id,
         disposition,
@@ -3643,17 +3654,30 @@ async function startServer() {
         note,
         createdBy: (req as AuthRequest).dbUser?.id,
       });
-      res.json({ success: true });
+      res.json({
+        success: true,
+        status: result.status,
+        callId: result.callId,
+        disposition: result.disposition,
+        followUpTaskId: result.followUpTaskId,
+      });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const message = err?.message || 'Failed to apply call disposition';
+      if (message === 'Call not found') return res.status(404).json({ error: message });
+      if (message.startsWith('Invalid call disposition:') || message.startsWith('followUpAt ')) {
+        return res.status(400).json({ error: message });
+      }
+      res.status(500).json({ error: message });
     }
   });
 
   app.post('/api/calls/:id/suggest-task', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const pool = getPgPool();
-      const callResult = await pool.query('SELECT notes FROM call WHERE id = $1', [id]);
+      if (!pool) return res.status(503).json({ error: 'Task suggestions require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const callResult = await pool.query('SELECT notes FROM call WHERE id = $1 AND organization_id = $2', [id, organizationId]);
       if (callResult.rows.length === 0) {
         return res.status(404).json({ error: 'Call not found' });
       }
