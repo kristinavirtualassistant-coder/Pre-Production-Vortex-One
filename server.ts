@@ -32,6 +32,7 @@ import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
+import { upsertCanonicalLead } from './server/services/crmService';
 
 async function startServer() {
   const app = express();
@@ -1137,6 +1138,37 @@ async function startServer() {
     } catch (err: any) {
       console.error('Database property search error:', err);
       res.status(500).json({ error: err.message || 'Property search failed' });
+    }
+  });
+
+  app.post('/api/properties/:id/create-lead', async (req, res) => {
+    try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Creating a CRM lead requires PostgreSQL', code: 'CRM_DATABASE_UNAVAILABLE' });
+
+      const propertyResult = await pool.query(
+        `SELECT p.id, p.owner_id, p.address, o.name AS owner_name
+         FROM properties p
+         LEFT JOIN property_owners o ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE p.id = $1 AND p.organization_id = $2
+         LIMIT 1`,
+        [req.params.id, organizationId],
+      );
+      if (!propertyResult.rowCount) return res.status(404).json({ error: 'Property not found' });
+      const property = propertyResult.rows[0];
+      if (!property.owner_id) return res.status(409).json({ error: 'Property has no canonical owner', code: 'PROPERTY_OWNER_REQUIRED' });
+
+      const result = await upsertCanonicalLead(pool, {
+        organizationId,
+        ownerId: property.owner_id,
+        propertyId: property.id,
+        ownerName: property.owner_name || '',
+        propertyAddress: property.address || '',
+      });
+      res.status(result.created ? 201 : 200).json({ success: true, ...result, propertyId: property.id, ownerId: property.owner_id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to create canonical CRM lead' });
     }
   });
 
