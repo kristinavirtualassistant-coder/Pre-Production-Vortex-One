@@ -28,6 +28,10 @@ export function shouldBypassApiAuth(path: string): boolean {
   return path === '/health' || path.startsWith('/telephony/webhook/');
 }
 
+export function isLocalDevelopmentAuthEnabled(): boolean {
+  return process.env.VORTEX_LOCAL_DEV_AUTH === 'true';
+}
+
 export function resolveAuthenticatedOrganizationId(
   dbUser: AuthRequest['dbUser'],
   requestedOrganizationId?: string,
@@ -84,6 +88,36 @@ export function canonicalizeOrganizationContext(req: AuthRequest): string {
 }
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (isLocalDevelopmentAuthEnabled()) {
+    const organizationId = (req.headers['x-organization-id'] as string | undefined) || 'org_cmc_realty';
+    const email = (req.headers['x-user-email'] as string | undefined) || 'local@cmcrealty.com';
+    const name = (req.headers['x-user-name'] as string | undefined) || 'Local Development User';
+    const role = (req.headers['x-user-role'] as string | undefined) || 'executive';
+    const userId = (req.headers['x-user-id'] as string | undefined) || 'local_dev_user';
+
+    req.user = {
+      uid: userId,
+      email,
+      name,
+      role,
+      aud: 'vortex-one-local',
+      auth_time: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 86400,
+      iat: Math.floor(Date.now() / 1000),
+      iss: 'local-development',
+      sub: userId,
+    } as DecodedIdToken;
+    req.dbUser = {
+      id: userId,
+      organization_id: organizationId,
+      email,
+      name,
+      role,
+    };
+    canonicalizeOrganizationContext(req);
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
