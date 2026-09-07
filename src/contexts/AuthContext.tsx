@@ -171,6 +171,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Auth state listener
   useEffect(() => {
+    const isLocalDevelopment = import.meta.env.VITE_LOCAL_DEV_AUTH === 'true' || ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+    if (isLocalDevelopment) {
+      // Local development auth is intentionally independent of Firebase/GCP.
+      const persona = DEMO_USERS[0];
+      const profile: UserProfile = {
+        uid: persona.id,
+        email: persona.email,
+        displayName: persona.name,
+        photoURL: persona.avatar,
+        role: persona.role,
+        organization_id: persona.organization_id,
+        organization_name: persona.organization_name,
+        tenant_ids: [persona.organization_id, DEFAULT_TENANT.id, SECONDARY_TENANT.id],
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+      setUser({ uid: persona.id, email: persona.email } as FirebaseUser);
+      setUserProfile(profile);
+      setActiveTenant({
+        id: profile.organization_id,
+        name: profile.organization_name,
+        slug: profile.organization_id.replace('org_', ''),
+        plan: 'Enterprise',
+      });
+      setLoading(false);
+      console.info('[Local development auth] Firebase/Firestore disabled.');
+      return;
+    }
+
     // Probe Firestore connection
     testFirestoreConnection();
 
@@ -424,6 +454,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     try {
       localStorage.removeItem('vortex_demo_session');
+      if (import.meta.env.VITE_LOCAL_DEV_AUTH === 'true') {
+        setUser(null);
+        setUserProfile(null);
+        setAccessToken(null);
+        return;
+      }
       await firebaseSignOut(auth);
       setUser(null);
       setUserProfile(null);
