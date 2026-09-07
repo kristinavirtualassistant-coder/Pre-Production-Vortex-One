@@ -32,6 +32,22 @@ fi
 
 psql -h "$PGSOCKET" -p "$PGPORT" -U postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"$PGDATABASE\" OWNER TO \"$PGUSER\"" >/dev/null
 
+existing_pid="$(lsof -ti :3000 | head -n1 || true)"
+if [ -n "$existing_pid" ]; then
+  existing_command="$(ps -p "$existing_pid" -o command= || true)"
+  case "$existing_command" in
+    *"$ROOT_DIR"*"server.ts"*)
+      echo "Local Vortex One server is already running on http://127.0.0.1:3000 (PID $existing_pid)."
+      exit 0
+      ;;
+    *)
+      echo "Port 3000 is already in use by another process (PID $existing_pid)."
+      echo "Stop that process or set the Vortex One server to a different port before starting locally."
+      exit 1
+      ;;
+  esac
+fi
+
 cd "$ROOT_DIR"
 export VORTEX_LOCAL_DEV_AUTH=true
 export SQL_HOST="$PGSOCKET"
