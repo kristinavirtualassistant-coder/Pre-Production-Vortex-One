@@ -33,6 +33,7 @@ import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 import { upsertCanonicalLead } from './server/services/crmService';
+import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 
 async function startServer() {
   const app = express();
@@ -204,175 +205,75 @@ async function startServer() {
     res.json(updated);
   });
 
-  // Tasks & Workflow APIs
-  app.get('/api/tasks', (req, res) => {
+  // Tasks & Workflow APIs — PostgreSQL authoritative, tenant scoped, fail closed.
+  app.get('/api/tasks', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.tasks || []).filter(
-      (t) => (t as any).organization_id === orgId
-    );
-    res.json(filtered);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative task state' });
+    try { res.json(await listTasks(pool, orgId)); }
+    catch (err: any) { console.error('Task list error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  app.post('/api/tasks', (req, res) => {
+  app.post('/api/tasks', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const { objective, priority, due_date } = req.body;
-    if (!objective || !priority) {
-      return res.status(400).json({ error: 'Objective and priority are required' });
-    }
-
-    const newTask: Task = {
-      task_id: `task_${Date.now()}`,
-      parent_task_id: null,
-      assigned_agent: 'agent_1',
-      objective,
-      input: {},
-      dependencies: [],
-      priority,
-      status: 'queued',
-      created_at: new Date().toISOString(),
-      due_date,
-      confidence: 1.0,
-      organization_id: orgId,
-    } as any;
-
-    inMemoryStore.tasks.unshift(newTask);
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_task_create_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: 'create_task',
-      input: { taskId: newTask.task_id, objective: newTask.objective, priority },
-      status: 'success',
-      latency_ms: 10,
-      organization_id: orgId,
-    });
-
-    res.status(201).json(newTask);
+    const { objective, priority, due_date, assigned_agent, parent_task_id, task_id, input, dependencies } = req.body;
+    if (!objective || !priority) return res.status(400).json({ error: 'Objective and priority are required' });
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative task state' });
+    try {
+      const task = await createTask(pool, orgId, { objective, priority, due_date, assigned_agent, parent_task_id, task_id, taskInput: input, dependencies });
+      res.status(201).json(task);
+    } catch (err: any) { console.error('Task create error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  // Workflows CRUD & Custom Execution Engine
-  app.get('/api/workflows', (req, res) => {
-    if (!inMemoryStore.workflows || inMemoryStore.workflows.length === 0) {
-      seedInitialData();
-    }
-    // Ensure all workflows have strictly unique workflow_ids
-    const seenIds = new Set<string>();
-    const deduplicatedWorkflows: Workflow[] = [];
-    for (const wf of inMemoryStore.workflows || []) {
-      if (wf && wf.workflow_id && !seenIds.has(wf.workflow_id)) {
-        seenIds.add(wf.workflow_id);
-        deduplicatedWorkflows.push(wf);
-      }
-    }
-    inMemoryStore.workflows = deduplicatedWorkflows;
-    res.setHeader('Content-Type', 'application/json');
-    res.json(inMemoryStore.workflows);
+  app.get('/api/workflows', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try { res.json(await listWorkflows(pool, orgId)); }
+    catch (err: any) { console.error('Workflow list error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.get('/api/workflows/:id', (req, res) => {
-    if (!inMemoryStore.workflows || inMemoryStore.workflows.length === 0) {
-      seedInitialData();
-    }
-    const wf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === req.params.id);
-    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
-    res.setHeader('Content-Type', 'application/json');
-    res.json(wf);
+  app.get('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const workflow = await getWorkflow(pool, orgId, req.params.id);
+      if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
+      res.json(workflow);
+    } catch (err: any) { console.error('Workflow get error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows', (req, res) => {
-    const { name, description, category, steps } = req.body;
-    if (!name || !Array.isArray(steps)) {
-      return res.status(400).json({ error: 'Workflow name and steps array are required' });
-    }
-
-    if (!inMemoryStore.workflows) inMemoryStore.workflows = [];
-
-    // If an existing workflow ID was supplied and already exists, update it (upsert)
-    const requestedId = req.body.workflow_id;
-    const existingIndex = requestedId
-      ? inMemoryStore.workflows.findIndex((w) => w.workflow_id === requestedId)
-      : -1;
-
-    const targetWorkflowId = existingIndex !== -1
-      ? requestedId
-      : (requestedId && !inMemoryStore.workflows.some(w => w.workflow_id === requestedId)
-          ? requestedId
-          : `wf_custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
-
-    const newWorkflow: Workflow = {
-      workflow_id: targetWorkflowId,
-      name,
-      description: description || 'Custom defined sub-agent operation chain.',
-      category: category || 'custom',
-      steps: steps.map((s: any, idx: number) => ({
-        step_id: s.step_id || `step_${idx + 1}_${Date.now()}`,
-        name: s.name || `Step ${idx + 1}`,
-        type: s.type || 'SEQUENTIAL',
-        assigned_agent: s.assigned_agent || 'sub_agent_1',
-        objective: s.objective || 'Execute sub-agent operation',
-        dependencies: Array.isArray(s.dependencies) ? s.dependencies : [],
-        requiresApproval: Boolean(s.requiresApproval),
-        condition: s.condition || undefined,
-        retryCount: s.retryCount || 0,
-      })),
-      created_at: existingIndex !== -1 ? inMemoryStore.workflows[existingIndex].created_at : new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existingIndex !== -1) {
-      inMemoryStore.workflows[existingIndex] = newWorkflow;
-    } else {
-      inMemoryStore.workflows.unshift(newWorkflow);
-    }
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_wf_create_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: existingIndex !== -1 ? 'update_workflow' : 'create_workflow',
-      input: { workflow_id: newWorkflow.workflow_id, name: newWorkflow.name, stepCount: newWorkflow.steps.length },
-      status: 'success',
-      latency_ms: 12,
-      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
-    });
-
-    res.status(existingIndex !== -1 ? 200 : 201).json(newWorkflow);
+  app.post('/api/workflows', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if (!req.body.name || !Array.isArray(req.body.steps)) return res.status(400).json({ error: 'Workflow name and steps array are required' });
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try { const result = await upsertWorkflow(pool, orgId, req.body); res.status(result.created ? 201 : 200).json(result.workflow); }
+    catch (err: any) { console.error('Workflow upsert error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.put('/api/workflows/:id', (req, res) => {
-    const index = (inMemoryStore.workflows || []).findIndex((w) => w.workflow_id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Workflow not found' });
-
-    const existing = inMemoryStore.workflows[index];
-    const updated: Workflow = {
-      ...existing,
-      ...req.body,
-      workflow_id: existing.workflow_id,
-      updated_at: new Date().toISOString(),
-    };
-    inMemoryStore.workflows[index] = updated;
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_wf_update_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: 'update_workflow',
-      input: { workflow_id: updated.workflow_id, stepCount: updated.steps.length },
-      status: 'success',
-      latency_ms: 10,
-      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
-    });
-
-    res.json(updated);
+  app.put('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const workflow = await updateWorkflow(pool, orgId, req.params.id, req.body);
+      if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
+      res.json(workflow);
+    } catch (err: any) { console.error('Workflow update error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.delete('/api/workflows/:id', (req, res) => {
-    const index = (inMemoryStore.workflows || []).findIndex((w) => w.workflow_id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Workflow not found' });
-
-    const deleted = inMemoryStore.workflows.splice(index, 1)[0];
-    res.json({ success: true, deleted_id: deleted.workflow_id });
+  app.delete('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const deleted = await deleteWorkflow(pool, orgId, req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Workflow not found' });
+      res.json({ success: true, deleted_id: req.params.id });
+    } catch (err: any) { console.error('Workflow delete error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
   // --- Workflow Runs Subscription & Polling APIs ---
@@ -439,7 +340,9 @@ async function startServer() {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
+      const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
         : matchedWf?.steps || [];
@@ -518,6 +421,10 @@ async function startServer() {
         };
 
         executedTasks.push(task);
+        await createTask(pool, orgId, {
+          task_id: task.task_id, parent_task_id: task.parent_task_id, assigned_agent: task.assigned_agent,
+          objective: task.objective, priority: task.priority, taskInput: task.input, dependencies: task.dependencies,
+        });
         workflowRun.tasks = [...executedTasks];
 
         // Execute sub-agent for this step
@@ -567,7 +474,7 @@ async function startServer() {
               issues: subAgentRes.warnings || [],
               created_at: new Date().toISOString(),
             };
-            inMemoryStore.approvals.unshift(approvalReq);
+            await createApproval(pool, orgId, approvalReq);
 
             if (workflowRun.node_states) {
               workflowRun.node_states[stepKey].status = 'approval_required';
@@ -622,8 +529,10 @@ async function startServer() {
         }
       }
 
-      // Record tasks into system tasks
-      inMemoryStore.tasks.unshift(...executedTasks);
+      // Persist completed/failed workflow tasks to PostgreSQL.
+      for (const executedTask of executedTasks) {
+        await updateTaskResult(pool, orgId, executedTask);
+      }
 
       workflowRun.status = executedTasks.every((t) => t.status === 'completed') ? 'completed' : 'failed';
       workflowRun.completed_at = new Date().toISOString();
@@ -663,7 +572,9 @@ async function startServer() {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
+      const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
         : matchedWf?.steps || [];
@@ -765,6 +676,10 @@ async function startServer() {
         };
 
         executedTasks.push(task);
+        await createTask(pool, orgId, {
+          task_id: task.task_id, parent_task_id: task.parent_task_id, assigned_agent: task.assigned_agent,
+          objective: task.objective, priority: task.priority, taskInput: task.input, dependencies: task.dependencies,
+        });
         workflowRun.tasks = [...executedTasks];
 
         try {
@@ -815,7 +730,7 @@ async function startServer() {
               issues: subAgentRes.warnings || [],
               created_at: new Date().toISOString(),
             };
-            inMemoryStore.approvals.unshift(approvalReq);
+            await createApproval(pool, orgId, approvalReq);
 
             if (workflowRun.node_states) {
               workflowRun.node_states[stepKey].status = 'approval_required';
@@ -906,7 +821,9 @@ async function startServer() {
         }
       }
 
-      inMemoryStore.tasks.unshift(...executedTasks);
+      for (const executedTask of executedTasks) {
+        await updateTaskResult(pool, orgId, executedTask);
+      }
 
       workflowRun.status = executedTasks.every((t) => t.status === 'completed') ? 'completed' : 'failed';
       workflowRun.completed_at = new Date().toISOString();
@@ -3383,38 +3300,27 @@ async function startServer() {
     }
   });
 
-  // Human Approval Center APIs
-  app.get('/api/approvals', (req, res) => {
+  // Human Approval Center APIs — PostgreSQL authoritative, tenant scoped, fail closed.
+  app.get('/api/approvals', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.approvals || []).filter(
-      (a) => (a as any).organization_id === orgId
-    );
-    res.json(filtered);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
+    try { res.json(await listApprovals(pool, orgId)); }
+    catch (err: any) { console.error('Approval list error:', err); res.status(503).json({ error: 'Approval state unavailable' }); }
   });
 
-  app.post('/api/approvals/:id/decide', (req, res) => {
+  app.post('/api/approvals/:id/decide', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const { decision, decided_by, modifications } = req.body;
-    const approval = inMemoryStore.approvals.find((a) => a.approval_id === req.params.id);
-    if (!approval) return res.status(404).json({ error: 'Approval request not found' });
-
-    approval.status = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'modified';
-    approval.decided_at = new Date().toISOString();
-    approval.decided_by = decided_by || 'Operations Lead';
-    if (modifications) approval.modifications = modifications;
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_appr_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: `human_approval_${approval.status}`,
-      input: { approval_id: approval.approval_id, decision },
-      status: approval.status === 'rejected' ? 'warning' : 'success',
-      latency_ms: 50,
-      organization_id: orgId,
-    });
-
-    res.json(approval);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
+    try {
+      const approval = await decideApproval(pool, orgId, req.params.id, req.body.decision, req.body.decided_by, req.body.modifications);
+      if (!approval) return res.status(404).json({ error: 'Approval request not found' });
+      res.json(approval);
+    } catch (err: any) {
+      if (err.message === 'Invalid approval decision') return res.status(400).json({ error: err.message });
+      console.error('Approval decision error:', err); res.status(503).json({ error: 'Approval state unavailable' });
+    }
   });
 
   // Observability & Audit Logs

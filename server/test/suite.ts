@@ -31,6 +31,8 @@ import {
   TEST_ORG_ID,
 } from '../../src/services/dataImportService';
 import './callActionTenantBoundary.test';
+import './agentOperationsService.test';
+import './phase6AgentOperationsBoundary.test';
 import './dispositionService.test';
 
 let passedTests = 0;
