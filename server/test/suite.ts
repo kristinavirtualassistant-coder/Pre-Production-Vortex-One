@@ -33,6 +33,8 @@ import {
 import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
+import './localDevelopmentAuth.test';
+import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
 
 let passedTests = 0;
