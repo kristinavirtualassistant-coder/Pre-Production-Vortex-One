@@ -50,6 +50,7 @@ fi
 
 cd "$ROOT_DIR"
 export VORTEX_LOCAL_DEV_AUTH=true
+export VITE_LOCAL_DEV_AUTH=true
 export SQL_HOST="$PGSOCKET"
 export SQL_PORT="$PGPORT"
 export SQL_USER="$PGUSER"

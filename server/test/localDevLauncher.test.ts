@@ -9,6 +9,7 @@ if (!fs.existsSync(launcher)) throw new Error('Expected scripts/local-dev.sh to 
 const source = fs.readFileSync(launcher, 'utf8');
 
 if (!source.includes('VORTEX_LOCAL_DEV_AUTH=true')) throw new Error('Local launcher must enable explicit local auth');
+if (!source.includes('VITE_LOCAL_DEV_AUTH=true')) throw new Error('Local launcher must expose local auth to the Vite frontend');
 if (!source.includes('VORTEX_LOCAL_PGPORT:-5433')) throw new Error('Local launcher must default to the isolated PostgreSQL port 5433');
 if (!source.includes('npm run dev')) throw new Error('Local launcher must start the Vortex One dev server');
 if (packageJson.scripts['dev:local'] !== './scripts/local-dev.sh') throw new Error('package.json must expose npm run dev:local');
