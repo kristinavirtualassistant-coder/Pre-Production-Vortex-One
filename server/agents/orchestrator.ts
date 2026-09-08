@@ -6,7 +6,8 @@
 import { Task, TaskPriority, TaskStatus, AgentId, AgentProvenance, AuditLogEntry, ApprovalRequest } from '../../src/types';
 import { executeSubAgent } from './subAgents';
 import { generateAgentText } from '../gemini';
-import { inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
+import { createTask, updateTaskResult, createApproval } from '../services/agentOperationsService';
 import { getCapabilityMap } from './registry';
 
 export interface OrchestratorRunOptions {
@@ -310,7 +311,6 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
         created_at: new Date().toISOString(),
       };
       approvalRequests.push(approvalReq);
-      inMemoryStore.approvals.unshift(approvalReq);
     }
 
     this.logAudit({
@@ -414,12 +414,28 @@ ${Math.round(structuredSummary.confidence * 100)}%
 Next recommended action:
 ${nextAction}`;
 
-    // Store in-memory
+    // Persist orchestration state in PostgreSQL. The response-local arrays remain
+    // useful for the caller, but are never the production source of truth.
+    const pool = getPgPool();
+    if (!pool) throw new Error('PostgreSQL is required for production orchestration persistence');
     for (const t of createdTasks) {
-      inMemoryStore.tasks.unshift(t);
+      await createTask(pool, this.organizationId, {
+        task_id: t.task_id, objective: t.objective, priority: t.priority,
+        assigned_agent: t.assigned_agent, parent_task_id: t.parent_task_id || null,
+        taskInput: t.input, dependencies: t.dependencies || [],
+      });
+      await updateTaskResult(pool, this.organizationId, t);
     }
     for (const a of auditLogs) {
-      inMemoryStore.auditLogs.unshift(a);
+      await pool.query(
+        `INSERT INTO audit_logs (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,CURRENT_TIMESTAMP)
+         ON CONFLICT (id) DO NOTHING`,
+        [a.id, this.organizationId, a.agent, a.task_id || null, a.action, JSON.stringify(a.input || {}), JSON.stringify(a.output || {}), a.status, a.latency_ms || 0, a.confidence || null, a.source || null],
+      );
+    }
+    for (const approval of approvalRequests) {
+      await createApproval(pool, this.organizationId, approval);
     }
 
     const totalElapsed = Date.now() - startTime;

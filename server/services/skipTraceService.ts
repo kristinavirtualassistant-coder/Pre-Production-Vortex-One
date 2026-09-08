@@ -482,6 +482,9 @@ export class SkipTraceService {
     state?: string;
     organizationId?: string;
   }): Promise<Full5StepSkipTraceResult> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Skip-trace enrichment is disabled in production until all owner/contact sources are verified and source-backed.');
+    }
     const category = 'skip_trace';
     const inputPayload = {
       propertyId: params.propertyId,

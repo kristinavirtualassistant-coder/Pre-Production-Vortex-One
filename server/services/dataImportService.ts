@@ -525,8 +525,8 @@ export class DataImportService {
           (p) => p.organization_id === cleanOrgId && p.apn.toLowerCase() === cleanApn.toLowerCase()
         );
 
-        const assessedTaxValue = rec.assessed_tax_value ?? Math.round(rec.estimated_value * 0.72);
-        const mortgageBalance = rec.mortgage_balance ?? Math.max(0, rec.estimated_value - rec.estimated_equity);
+        const assessedTaxValue = rec.assessed_tax_value ?? 0;
+        const mortgageBalance = rec.mortgage_balance ?? 0;
 
         // Detect absentee status: Owner mailing address differs from property address
         const isAbsentee =
@@ -563,7 +563,7 @@ export class DataImportService {
             property_type: rec.property_type,
             units_count: rec.units_count ?? existing.units_count ?? 1,
             square_feet: rec.square_feet ?? existing.square_feet ?? 0,
-            year_built: rec.year_built ?? existing.year_built ?? 1980,
+            year_built: rec.year_built ?? existing.year_built,
             estimated_value: rec.estimated_value,
             assessed_tax_value: assessedTaxValue,
             estimated_equity: rec.estimated_equity,
@@ -595,7 +595,7 @@ export class DataImportService {
             property_type: rec.property_type,
             units_count: rec.units_count ?? 1,
             square_feet: rec.square_feet ?? 0,
-            year_built: rec.year_built ?? 1985,
+            year_built: rec.year_built,
             estimated_value: rec.estimated_value,
             assessed_tax_value: assessedTaxValue,
             estimated_equity: rec.estimated_equity,
@@ -621,17 +621,6 @@ export class DataImportService {
         // Persist to PostgreSQL if connected
         if (pool) {
           try {
-            await pool.query(
-              `INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
-               VALUES ($1, $2, $3, '{}'::jsonb, NOW(), NOW())
-               ON CONFLICT (id) DO NOTHING`,
-              [
-                cleanOrgId,
-                cleanOrgId === 'org_cmc_realty' ? 'CMC Realty & Property Management' : cleanOrgId.replace(/[-_]/g, ' '),
-                cleanOrgId.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'default-org',
-              ]
-            );
-
             await pool.query(
               `INSERT INTO properties (
                 id, organization_id, owner_id, address, city, state, zip, county, apn,
@@ -689,6 +678,7 @@ export class DataImportService {
               ]
             );
           } catch (pgPropErr: any) {
+            if (process.env.NODE_ENV === 'production') throw pgPropErr;
             console.warn('PostgreSQL property upsert warning:', pgPropErr.message);
           }
         }
@@ -1207,6 +1197,9 @@ export class DataImportService {
     organizationId: string,
     options: ReconciliationOptions = {}
   ): Promise<ReconciliationResult> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('The legacy synthetic CRM feed is disabled in production. Use an authoritative CRM/assessor import.');
+    }
     const seedProductionRecords: RawPropertyRecord[] = [
       {
         apn: '423-112-09',
@@ -1475,6 +1468,9 @@ export class DataImportService {
   }> {
     const cleanOrgId = requireOrganizationId(organizationId);
     const pool = getPgPool();
+    if (!pool && process.env.NODE_ENV === 'production') {
+      throw new Error('PostgreSQL is required for production integrity validation');
+    }
 
     let properties: Property[] = [];
     let owners: PropertyOwner[] = [];
@@ -1482,9 +1478,9 @@ export class DataImportService {
 
     if (pool) {
       try {
-        const propResult = await pool.query('SELECT * FROM property WHERE organization_id = $1', [cleanOrgId]);
-        const ownerResult = await pool.query('SELECT * FROM property_owner WHERE organization_id = $1', [cleanOrgId]);
-        const leadResult = await pool.query('SELECT * FROM lead WHERE organization_id = $1', [cleanOrgId]);
+        const propResult = await pool.query('SELECT * FROM properties WHERE organization_id = $1', [cleanOrgId]);
+        const ownerResult = await pool.query('SELECT * FROM property_owners WHERE organization_id = $1', [cleanOrgId]);
+        const leadResult = await pool.query('SELECT * FROM leads WHERE organization_id = $1', [cleanOrgId]);
 
         properties = propResult.rows.map((r: any) => ({
           id: r.id,
@@ -1560,7 +1556,8 @@ export class DataImportService {
           updated_at: r.updated_at,
         }));
       } catch (err) {
-        console.warn('Failed to query Cloud SQL directly for integrity check, falling back to memory store:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+        console.warn('Failed to query Cloud SQL directly for integrity check; local development may use memory fixtures:', err);
         properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === cleanOrgId);
         owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === cleanOrgId);
         leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === cleanOrgId);

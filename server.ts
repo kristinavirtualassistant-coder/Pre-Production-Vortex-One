@@ -9,7 +9,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
 // Firebase Admin is initialized idempotently by the shared middleware module.
-const firestore = getFirestore();
+const getFirestoreDb = () => getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
@@ -71,7 +71,6 @@ async function startServer() {
       platform: 'Vortex One Multi-Agent Intelligence',
       version: '1.0.0',
       timestamp: new Date().toISOString(),
-      db: getDatabaseStatus(),
     });
   });
 
@@ -80,7 +79,7 @@ async function startServer() {
     const ready = db.connected && db.type === 'postgresql';
     res.status(ready ? 200 : 503).json({
       status: ready ? 'ready' : 'not_ready',
-      database: db,
+      database: ready ? 'postgresql' : 'unavailable',
       timestamp: new Date().toISOString(),
     });
   });
@@ -3372,7 +3371,7 @@ async function startServer() {
       ];
 
       try {
-        const snapshot = await firestore.collection('dialer_metrics')
+        const snapshot = await getFirestoreDb().collection('dialer_metrics')
           .where('organization_id', '==', orgId)
           .orderBy('date', 'desc')
           .limit(7)
@@ -3400,7 +3399,7 @@ async function startServer() {
       ];
 
       try {
-        const snapshot = await firestore.collection('voicemails')
+        const snapshot = await getFirestoreDb().collection('voicemails')
           .where('organization_id', '==', orgId)
           .get();
         if (!snapshot.empty) {
@@ -3425,7 +3424,7 @@ async function startServer() {
         created_at: new Date().toISOString(),
       };
       try {
-        const docRef = await firestore.collection('voicemails').add(newVoicemail);
+        const docRef = await getFirestoreDb().collection('voicemails').add(newVoicemail);
         return res.status(201).json({ id: docRef.id, ...newVoicemail });
       } catch (fsErr) {
         return res.status(201).json({ id: `vm_${Date.now()}`, ...newVoicemail });
@@ -3439,7 +3438,7 @@ async function startServer() {
     try {
       const { id } = req.params;
       try {
-        await firestore.collection('voicemails').doc(id).delete();
+        await getFirestoreDb().collection('voicemails').doc(id).delete();
       } catch (fsErr) {}
       res.json({ success: true, deletedId: id });
     } catch (err: any) {

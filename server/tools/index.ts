@@ -1,9 +1,9 @@
-import { requireOrganizationId } from '../services/organizationContext';
 /**
  * Vortex One - Standardized Agent Tool Execution Layer
  */
 
-import { inMemoryStore, getPgPool } from '../db/db';
+import { getPgPool } from '../db/db';
+import { requireOrganizationId } from '../services/organizationContext';
 import { generateSpeechTTS } from '../gemini';
 import { SuppressionService } from '../dialer/suppressionService';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
@@ -55,32 +55,19 @@ export const TOOLS: Record<string, ToolDefinition> = {
       absentee_only: 'boolean',
       limit: 'number',
     },
-    execute: async (args) => {
-      let results = [...inMemoryStore.properties];
-      if (args.county) {
-        results = results.filter((p) => p.county.toLowerCase().includes(args.county.toLowerCase()));
-      }
-      if (args.city) {
-        results = results.filter((p) => p.city.toLowerCase().includes(args.city.toLowerCase()));
-      }
-      if (args.min_equity) {
-        results = results.filter((p) => p.estimated_equity >= Number(args.min_equity));
-      }
-      if (args.absentee_only) {
-        results = results.filter((p) => p.is_absentee_owner === true);
-      }
-      if (args.limit) {
-        results = results.slice(0, Number(args.limit));
-      }
-      return {
-        count: results.length,
-        properties: results,
-        provenance: {
-          source: 'Vortex One Property Database (PostgreSQL / County GIS)',
-          retrievedAt: new Date().toISOString(),
-          confidence: 0.98,
-        },
-      };
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for property search');
+      const clauses = ['organization_id = $1'];
+      const values: any[] = [context.organizationId];
+      if (args.county) { values.push(`%${args.county}%`); clauses.push(`county ILIKE $${values.length}`); }
+      if (args.city) { values.push(`%${args.city}%`); clauses.push(`city ILIKE $${values.length}`); }
+      if (args.min_equity != null) { values.push(Number(args.min_equity)); clauses.push(`estimated_equity >= $${values.length}`); }
+      if (args.absentee_only) clauses.push('is_absentee_owner = TRUE');
+      const limit = Math.min(500, Math.max(1, Number(args.limit) || 100));
+      values.push(limit);
+      const result = await pool.query(`SELECT * FROM properties WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC NULLS LAST LIMIT $${values.length}`, values);
+      return { count: result.rows.length, properties: result.rows, provenance: { source: 'Vortex One Property Database (PostgreSQL / County GIS)', retrievedAt: new Date().toISOString() } };
     },
   },
 
@@ -92,21 +79,18 @@ export const TOOLS: Record<string, ToolDefinition> = {
       entity_type: 'string',
       min_properties: 'number',
     },
-    execute: async (args) => {
-      let results = [...inMemoryStore.propertyOwners];
-      if (args.name) {
-        results = results.filter((o) => o.name.toLowerCase().includes(args.name.toLowerCase()));
-      }
-      if (args.entity_type) {
-        results = results.filter((o) => o.entity_type === args.entity_type);
-      }
-      if (args.min_properties) {
-        results = results.filter((o) => o.properties_owned_count >= Number(args.min_properties));
-      }
-      return {
-        count: results.length,
-        owners: results,
-      };
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for owner search');
+      const clauses = ['organization_id = $1'];
+      const values: any[] = [context.organizationId];
+      if (args.name) { values.push(`%${args.name}%`); clauses.push(`name ILIKE $${values.length}`); }
+      if (args.entity_type) { values.push(args.entity_type); clauses.push(`entity_type = $${values.length}`); }
+      if (args.min_properties != null) { values.push(Number(args.min_properties)); clauses.push(`properties_owned_count >= $${values.length}`); }
+      const limit = Math.min(500, Math.max(1, Number(args.limit) || 100));
+      values.push(limit);
+      const result = await pool.query(`SELECT * FROM property_owners WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC NULLS LAST LIMIT $${values.length}`, values);
+      return { count: result.rows.length, owners: result.rows };
     },
   },
 
@@ -117,54 +101,27 @@ export const TOOLS: Record<string, ToolDefinition> = {
       owner_id: 'string',
       property_id: 'string',
     },
-    execute: async (args) => {
-      const owner = inMemoryStore.propertyOwners.find((o) => o.id === args.owner_id);
-      const prop = inMemoryStore.properties.find((p) => p.id === args.property_id);
-
-      if (!owner && !prop) {
-        return { error: 'Owner or property record not found' };
-      }
-
-      const factors = [];
-      let score = 50;
-
-      if (owner && owner.properties_owned_count > 1) {
-        const impact = Math.min(25, owner.properties_owned_count * 8);
-        score += impact;
-        factors.push({
-          factor: 'multiple_owned_properties',
-          impact,
-          description: `Owns ${owner.properties_owned_count} properties in regional portfolio`,
-        });
-      }
-
-      if (prop && prop.is_absentee_owner) {
-        score += 20;
-        factors.push({
-          factor: 'absentee_owner',
-          impact: 20,
-          description: 'Owner mailing address is located off-site from the rental asset',
-        });
-      }
-
-      if (prop && prop.estimated_equity > 1000000) {
-        score += 15;
-        factors.push({
-          factor: 'high_equity_position',
-          impact: 15,
-          description: `Estimated property equity of $${(prop.estimated_equity / 1000000).toFixed(2)}M`,
-        });
-      }
-
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for lead scoring');
+      const { rows } = await pool.query(
+        `SELECT l.*, p.estimated_equity, p.is_absentee_owner, o.properties_owned_count
+         FROM leads l
+         LEFT JOIN properties p ON p.id = l.primary_property_id AND p.organization_id = l.organization_id
+         LEFT JOIN property_owners o ON o.id = l.owner_id AND o.organization_id = l.organization_id
+         WHERE l.organization_id = $1 AND ($2::varchar IS NULL OR l.owner_id = $2) AND ($3::varchar IS NULL OR l.primary_property_id = $3)
+         LIMIT 1`,
+        [context.organizationId, args.owner_id || null, args.property_id || null]
+      );
+      const row = rows[0];
+      if (!row) return { error: 'Owner, property, or lead record not found' };
+      let score = Number(row.lead_score || 50);
+      const factors: any[] = [];
+      if (Number(row.properties_owned_count || 0) > 1) { const impact = Math.min(25, Number(row.properties_owned_count) * 8); score += impact; factors.push({ factor: 'multiple_owned_properties', impact }); }
+      if (row.is_absentee_owner) { score += 20; factors.push({ factor: 'absentee_owner', impact: 20 }); }
+      if (Number(row.estimated_equity || 0) > 1000000) { score += 15; factors.push({ factor: 'high_equity_position', impact: 15 }); }
       score = Math.min(100, score);
-      const classification = score >= 80 ? 'high_priority' : score >= 60 ? 'medium_priority' : 'nurture';
-
-      return {
-        lead_score: score,
-        classification,
-        factors,
-        calculated_at: new Date().toISOString(),
-      };
+      return { lead_score: score, classification: score >= 80 ? 'high_priority' : score >= 60 ? 'medium_priority' : 'nurture', factors, calculated_at: new Date().toISOString() };
     },
   },
 
@@ -177,18 +134,15 @@ export const TOOLS: Record<string, ToolDefinition> = {
       content: 'string',
     },
     execute: async (args, context) => {
-      const lead = inMemoryStore.leads.find((l) => l.id === args.lead_id);
-      if (lead) {
-        lead.next_recommended_action = args.title;
-        lead.last_activity_date = new Date().toISOString();
-      }
-      return {
-        success: true,
-        task_id: `crm_task_${Date.now()}`,
-        lead_id: args.lead_id,
-        title: args.title,
-        created_by: context.agentId,
-      };
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for CRM task creation');
+      const taskId = `crm_task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await pool.query(
+        `INSERT INTO tasks (id, organization_id, assigned_agent, objective, input, priority, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'medium', 'queued', NOW())`,
+        [taskId, context.organizationId, context.agentId, args.title, JSON.stringify({ lead_id: args.lead_id, content: args.content })]
+      );
+      return { success: true, task_id: taskId, lead_id: args.lead_id, title: args.title, created_by: context.agentId };
     },
   },
 
@@ -207,18 +161,6 @@ export const TOOLS: Record<string, ToolDefinition> = {
       // 1. Mandatory TCPA & DNC Pre-Dial Check
       const suppression = await SuppressionService.isSuppressed(context.organizationId, args.phone_number || '');
       if (suppression.isSuppressed) {
-        inMemoryStore.auditLogs.unshift({
-          id: `audit_dnc_${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          agent: context.agentId,
-          action: 'outbound_dial_blocked_by_dnc',
-          input: { phone_number: args.phone_number, contact_name: args.contact_name },
-          output: { reason: suppression.reason, blocked: true },
-          status: 'warning',
-          latency_ms: 6,
-          organization_id: context.organizationId,
-        });
-
         return {
           success: false,
           blocked: true,
@@ -227,73 +169,41 @@ export const TOOLS: Record<string, ToolDefinition> = {
         };
       }
 
-      // 2. Dispatch via Telephony Adapter
-      const provider = (args.telephony_provider as any) || 'mock';
+      // 2. Dispatch via the configured telephony adapter. A destination number is mandatory.
+      if (!args.phone_number) throw new Error('phone_number is required for outbound calling');
+      const provider = (args.telephony_provider as any) || 'ringcentral';
       const adapter = getTelephonyAdapter(provider);
       const telResult = await adapter.initiateCall({
         organizationId: context.organizationId,
         campaignId: args.campaign_id || 'camp_401',
-        toNumber: args.phone_number || '(949) 555-0100',
-        contactName: args.contact_name || 'Prospect Owner',
+        toNumber: args.phone_number,
+        contactName: args.contact_name || 'Unknown contact',
         callStrategyBrief: args.call_strategy_brief,
       });
 
-      const callId = `call_${Date.now()}`;
+      const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const now = new Date().toISOString();
-      const callRecord = {
-        id: callId,
-        organization_id: context.organizationId,
-        campaign_id: args.campaign_id || 'camp_401',
-        telephony_call_id: telResult.telephonyCallId,
-        contact_name: args.contact_name,
-        phone_number: args.phone_number,
-        property_address: args.property_address || 'Orange County Property',
-        status: 'completed' as const,
-        direction: 'outbound' as const,
-        duration_seconds: Math.floor(Math.random() * 90) + 45,
-        disposition: 'interested' as const,
-        call_strategy_brief: args.call_strategy_brief,
-        recording_url: `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`,
-        notes: `Automated call initiated by ${context.agentId} via ${provider.toUpperCase()}. Telephony state machine completed successfully.`,
-        created_at: now,
-      };
-
       const pool = getPgPool();
-      if (pool) {
-        try {
-          await pool.query(
-            `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-            [
-              callId,
-              context.organizationId,
-              callRecord.campaign_id,
-              telResult.telephonyCallId,
-              callRecord.contact_name,
-              callRecord.phone_number,
-              callRecord.direction,
-              callRecord.status,
-              callRecord.disposition,
-              callRecord.duration_seconds,
-              callRecord.call_strategy_brief,
-              callRecord.recording_url,
-              now,
-            ]
-          );
-        } catch (err: any) {
-          console.warn('PostgreSQL insert call fallback:', err.message);
-        }
+      if (!pool) throw new Error('PostgreSQL is required for outbound call persistence');
+      const callStatus = telResult.success ? 'initiated' : 'failed';
+      const notes = telResult.success ? `Outbound call initiated via ${provider.toUpperCase()}.` : `Outbound call failed: ${telResult.error || 'provider error'}.`;
+      try {
+        await pool.query(
+          `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, call_strategy_brief, notes, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'outbound', $7, $8, $9, $10)`,
+          [callId, context.organizationId, args.campaign_id || null, telResult.telephonyCallId, args.contact_name, args.phone_number, callStatus, args.call_strategy_brief || null, notes, now]
+        );
+      } catch (err: any) {
+        throw new Error(`PostgreSQL call persistence failed: ${err?.message || String(err)}`, { cause: err });
       }
 
-      inMemoryStore.calls.unshift(callRecord);
       return {
-        success: true,
-        call_id: callRecord.id,
+        success: telResult.success,
+        call_id: callId,
         telephony_call_id: telResult.telephonyCallId,
-        status: 'completed',
-        duration_seconds: callRecord.duration_seconds,
-        recording_url: callRecord.recording_url,
-        notes: callRecord.notes,
+        status: callStatus,
+        notes,
+        error: telResult.success ? undefined : telResult.error,
       };
     },
   },

@@ -1324,18 +1324,6 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         }
         await client.query('COMMIT');
 
-        // Seed default organizations in PostgreSQL
-        try {
-          await client.query(`
-            INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
-            VALUES 
-              ('org_cmc_realty', 'CMC Realty & Property Management', 'cmc-realty', '{"market": "Orange County, CA"}'::jsonb, NOW(), NOW())
-            ON CONFLICT (id) DO NOTHING;
-          `);
-        } catch (seedErr: any) {
-          console.warn('Organization auto-seed notice:', seedErr.message);
-        }
-
         currentDbStatus = {
           connected: true,
           type: 'postgresql',
@@ -1360,16 +1348,28 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
       
       currentDbStatus = {
         connected: false,
-        type: 'in_memory',
+        type: 'postgresql',
         instance: process.env.CLOUD_SQL_CONNECTION_NAME || `${host}:${port}`,
         database,
         appliedMigrationsCount: 0,
         error: `PostgreSQL connection attempt failed (${host}:${port}/${database}): ${err.message}`,
       };
-      console.warn(`[Database] PostgreSQL notice (${host}:${port}/${database}): ${err.message}. Operating in resilient in-memory storage mode.`);
+      console.error(`[Database] PostgreSQL initialization failed (${host}:${port}/${database}): ${err.message}`);
+      throw err;
     }
   } else {
-    // If no host is configured at all, fallback to in-memory
+    if (process.env.NODE_ENV === 'production') {
+      currentDbStatus = {
+        connected: false,
+        type: 'postgresql',
+        instance: process.env.CLOUD_SQL_CONNECTION_NAME || 'unknown',
+        database,
+        appliedMigrationsCount: 0,
+        error: 'No SQL_HOST configured in production',
+      };
+      throw new Error('Production startup requires PostgreSQL configuration (SQL_HOST).');
+    }
+    // Local development and tests may explicitly use the in-memory adapter.
     currentDbStatus = {
       connected: false,
       type: 'in_memory',

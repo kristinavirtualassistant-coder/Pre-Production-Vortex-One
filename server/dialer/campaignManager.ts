@@ -3,7 +3,7 @@
  * Manages predictive & preview campaigns, contact queues, and automated DNC checks
  */
 
-import { getPgPool, inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
 import {
   CampaignRecord,
   CampaignContactRecord,
@@ -102,7 +102,6 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    inMemoryStore.campaigns.unshift(campaign as any);
     return campaign;
   }
 
@@ -129,17 +128,9 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) {
-      memoryCamp.status = 'scheduled';
-      (memoryCamp as any).scheduled_at = scheduledAt;
-      (memoryCamp as any).timezone = timezone;
-      (memoryCamp as any).scheduled_by = scheduledBy;
-      (memoryCamp as any).updated_at = now;
-      return memoryCamp as any;
-    }
-
-    throw new Error(`Campaign ${campaignId} not found`);
+    const { rows } = await pool.query('SELECT * FROM campaign WHERE id = $1 AND organization_id = $2 LIMIT 1', [campaignId, organizationId]);
+    if (!rows[0]) throw new Error(`Campaign ${campaignId} not found`);
+    return rows[0] as CampaignRecord;
   }
 
   /**
@@ -162,15 +153,9 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) {
-      memoryCamp.status = 'draft';
-      (memoryCamp as any).scheduled_at = undefined;
-      (memoryCamp as any).updated_at = now;
-      return memoryCamp as any;
-    }
-
-    throw new Error(`Campaign ${campaignId} not found`);
+    const { rows } = await pool.query('SELECT * FROM campaign WHERE id = $1 AND organization_id = $2 LIMIT 1', [campaignId, organizationId]);
+    if (!rows[0]) throw new Error(`Campaign ${campaignId} not found`);
+    return rows[0] as CampaignRecord;
   }
 
   /**
@@ -180,8 +165,9 @@ export class CampaignManager {
     const nowTime = Date.now();
     let triggeredCount = 0;
 
-    const scheduledCampaigns = (inMemoryStore.campaigns || []).filter(
-      (c) => c.status === 'scheduled' && (c as any).scheduled_at
+    const pool = requirePostgresPool();
+    const { rows: scheduledCampaigns } = await pool.query(
+      `SELECT id, organization_id, name, scheduled_at FROM campaign WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()`
     );
 
     for (const camp of scheduledCampaigns) {
@@ -242,15 +228,12 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) {
-      memoryCamp.status = 'active';
-    }
-
-    return {
-      campaign: memoryCamp as any,
-      session,
-    };
+    const { rows: campaignRows } = await pool.query(
+      'SELECT * FROM campaign WHERE id = $1 AND organization_id = $2 LIMIT 1',
+      [campaignId, organizationId]
+    );
+    if (!campaignRows[0]) throw new Error(`Campaign ${campaignId} not found`);
+    return { campaign: campaignRows[0] as CampaignRecord, session };
   }
 
   /**
@@ -276,8 +259,6 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) memoryCamp.status = 'paused';
     return true;
   }
 
@@ -304,8 +285,6 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memoryCamp) memoryCamp.status = 'completed';
     return true;
   }
 
@@ -359,9 +338,6 @@ export class CampaignManager {
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
-    for (const record of createdRecords) inMemoryStore.campaignContacts.unshift(record);
-    const memoryCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId && c.organization_id === organizationId);
-    if (memoryCamp) memoryCamp.total_contacts = (memoryCamp.total_contacts || 0) + createdRecords.length;
 
     return { added: createdRecords.length, contacts: createdRecords };
   }
@@ -419,18 +395,6 @@ export class CampaignManager {
         } catch (err: any) {}
       }
 
-      // Log TCPA Compliance Audit entry
-      inMemoryStore.auditLogs.unshift({
-        id: `audit_dnc_${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        agent: 'sub_agent_7',
-        action: 'dnc_suppression_blocked',
-        input: { phone: contact.phone_number, contactName: contact.contact_name },
-        output: { reason: suppressionCheck.reason, blocked: true },
-        status: 'warning',
-        latency_ms: 12,
-        organization_id: organizationId,
-      });
 
       return {
         status: 'suppressed',
@@ -525,17 +489,8 @@ export class CampaignManager {
           );
         }
       } catch (err: any) {
-        console.warn('PostgreSQL dialNextContact fallback:', err.message);
+        throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
       }
-    }
-
-    // Update in-memory stores
-    contact.dial_status = telephonyResult.success ? 'dialing' : 'failed';
-    inMemoryStore.calls.unshift(callRecord as any);
-    const memCamp = inMemoryStore.campaigns.find((c) => c.id === campaignId);
-    if (memCamp) {
-      memCamp.dialed_count = (memCamp.dialed_count || 0) + 1;
-      if (telephonyResult.success) memCamp.connected_count = (memCamp.connected_count || 0) + 1;
     }
 
     return {
@@ -553,10 +508,10 @@ export class CampaignManager {
     campaignId: string
   ): Promise<{ success: boolean; shuffledCount: number; message: string }> {
     const now = new Date().toISOString();
-    const pool = getPgPool();
+    const pool = requirePostgresPool();
     let count = 0;
 
-    if (pool) {
+    {
       try {
         // Assign randomized priority seeds to currently queued contacts
         const res = await pool.query(
@@ -571,18 +526,6 @@ export class CampaignManager {
       }
     }
 
-    // Log anti-fatigue shuffle audit event
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_shuffle_${Date.now()}`,
-      timestamp: now,
-      agent: 'agent_1',
-      action: 'campaign_queue_shuffled',
-      input: { campaignId, reason: 'agent_fatigue_mitigation' },
-      output: { shuffledCount: count, status: 'randomized' },
-      status: 'info',
-      latency_ms: 14,
-      organization_id: organizationId,
-    });
 
     return {
       success: true,

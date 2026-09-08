@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
+import { fetchWithTimeout } from './providerHelpers';
 
 export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'los_angeles_county_gis';
@@ -119,7 +119,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
 
         const sqft = Number(attr.SQFTmain1) || 0;
         const units = Number(attr.Units1) || 0;
-        const yearBuilt = Number(attr.YearBuilt1) || 0;
+        const yearBuilt = Number(attr.YearBuilt1) || undefined;
 
         let propType: Property['property_type'] = 'Unknown';
         if (units > 1 || attr.UseDescription?.toLowerCase().includes('multi') || attr.UseCode?.startsWith('02') || attr.UseCode?.startsWith('03')) {

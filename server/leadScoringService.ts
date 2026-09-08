@@ -48,6 +48,12 @@ export class LeadScoringBackgroundService {
    * Start the background automated scoring loop
    */
   public start(): void {
+    // The legacy scorer is memory-backed and uses synthetic baseline activity.
+    // It is intentionally disabled in production until scoring is fully PostgreSQL-backed.
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[LeadScoringService] Disabled in production: PostgreSQL-backed scorer required.');
+      return;
+    }
     if (this.isRunning) return;
     this.isRunning = true;
     console.log(`[LeadScoringService] Automated lead scoring background service started (Cycle: ${this.intervalSeconds}s)`);
@@ -114,6 +120,7 @@ export class LeadScoringBackgroundService {
    * Recalculates dynamic engagement scores across all leads
    */
   public recalculateAll(orgId?: string): { updatedCount: number; leads: LeadRecord[] } {
+    if (process.env.NODE_ENV === 'production') return { updatedCount: 0, leads: [] };
     const leads = inMemoryStore.leads || [];
     const calls = inMemoryStore.calls || [];
     const properties = inMemoryStore.properties || [];
@@ -387,6 +394,9 @@ export class LeadScoringBackgroundService {
     eventType: 'call' | 'email_open' | 'email_click' | 'gis_search' | 'pdf_view',
     payload?: any
   ): { success: boolean; lead: LeadRecord | null; delta: number; message: string } {
+    if (process.env.NODE_ENV === 'production') {
+      return { success: false, lead: null, delta: 0, message: 'Simulation is disabled in production' };
+    }
     const index = inMemoryStore.leads.findIndex((l) => l.id === leadId);
     if (index === -1) {
       return { success: false, lead: null, delta: 0, message: `Lead ${leadId} not found` };

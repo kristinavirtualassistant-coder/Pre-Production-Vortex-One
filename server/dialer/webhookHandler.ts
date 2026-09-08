@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
  * Normalizes RingCentral, Twilio, and SIP event streams into authoritative PostgreSQL tables
  */
 
-import { getPgPool, inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
 import { getTelephonyAdapter } from './telephonyAdapter';
 import { SuppressionService } from './suppressionService';
 import { NormalizedCallEvent } from './types';
@@ -96,6 +96,7 @@ export class WebhookHandler {
       // service locks the call, validates the provider-neutral FSM transition, writes the
       // event, and updates the call in one transaction. Duplicate provider events are
       // harmless because call_event.id is the durable idempotency key.
+      let authoritativeCallId: string | null = null;
       if (pool) {
         const body = rawPayload?.body || rawPayload;
         const party = body?.parties?.[0] || {};
@@ -112,6 +113,7 @@ export class WebhookHandler {
           [organizationId, normalized.telephonyCallId, partyPhones.map((n: string) => n.replace(/\D/g, ''))],
         );
         if (!callLookup.rowCount) throw new Error(`Call not found for organization: ${normalized.telephonyCallId}`);
+        authoritativeCallId = callLookup.rows[0].id;
 
         const transition = await DialerStateTransitionService.transition(pool, {
           organizationId,
@@ -152,21 +154,18 @@ export class WebhookHandler {
         );
       }
 
-      // Update inMemoryStore matching call
-      const matchCall = inMemoryStore.calls.find(
-        (c) => c.id === normalized.telephonyCallId || (c as any).telephony_call_id === normalized.telephonyCallId
+      // PostgreSQL remains the sole source of truth after the durable transition.
+      const { rows: updatedCalls } = await pool.query(
+        'SELECT phone_number FROM call WHERE id = $1 AND organization_id = $2 LIMIT 1',
+        [authoritativeCallId, organizationId],
       );
-      if (matchCall) {
-        matchCall.status = normalized.status as any;
-        if (normalized.disposition) matchCall.disposition = normalized.disposition as any;
-        if (normalized.durationSeconds) matchCall.duration_seconds = normalized.durationSeconds;
-      }
+      const updatedCall = updatedCalls[0];
 
       // Step 4: If disposition is Do-Not-Call, auto-register suppression
-      if (normalized.disposition === 'do_not_call' && matchCall?.phone_number) {
+      if (normalized.disposition === 'do_not_call' && updatedCall?.phone_number) {
         await SuppressionService.addSuppression(
           organizationId,
-          matchCall.phone_number,
+          updatedCall.phone_number,
           'Contact verbally requested Do-Not-Call on live call',
           `webhook_${provider}`
         );
