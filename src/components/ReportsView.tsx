@@ -38,10 +38,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       period: 'August 2026 Monthly Audit',
       description: 'Comprehensive valuation distribution, absentee ownership concentrations, and asset equity spreads across target submarkets.',
       metrics: {
-        totalAssets: properties.length || 248,
-        totalValuation: '$42.8M',
-        avgEquity: '58.4%',
-        absenteeRatio: '42.1%',
+        totalAssets: properties.length,
+        totalValuation: `$${(properties.reduce((sum, p) => sum + (p.estimated_value || 0), 0) / 1_000_000).toFixed(1)}M`,
+        avgEquity: properties.length ? `${Math.round(properties.reduce((sum, p) => sum + ((p.estimated_equity || 0) / Math.max(p.estimated_value || 1, 1)), 0) / properties.length * 100)}%` : '—',
+        absenteeRatio: properties.length ? `${Math.round(properties.filter((p) => p.is_absentee_owner).length / properties.length * 100)}%` : '—',
       },
     },
     {
@@ -51,10 +51,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       period: 'Q3 2026 Velocity',
       description: 'Breakdown of scored owner leads, stage progression velocity, and conversion rates across outbound campaign channels.',
       metrics: {
-        totalLeads: leads.length || 32,
-        highPriority: '14 Leads',
-        avgScore: '84 Pts',
-        conversionRate: '22.8%',
+        totalLeads: leads.length,
+        highPriority: `${leads.filter((lead) => lead.classification === 'high_priority').length} Leads`,
+        avgScore: leads.length ? `${Math.round(leads.reduce((sum, lead) => sum + (lead.lead_score || 0), 0) / leads.length)} Pts` : '—',
+        conversionRate: '—',
       },
     },
     {
@@ -64,10 +64,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       period: 'Last 30 Days',
       description: 'TCPA suppression verification, connect rates, disposition breakdowns, and automated task assignments.',
       metrics: {
-        totalCalls: 342,
-        connectRate: '68.4%',
-        avgTalkTime: '84s',
-        dncViolations: '0 (100% Compliant)',
+        totalCalls: 0,
+        connectRate: '—',
+        avgTalkTime: '—',
+        dncViolations: '—',
       },
     },
   ];

@@ -125,7 +125,7 @@ export const ContextInspector: React.FC<ContextInspectorProps> = ({
     subtitle = l.property_address || '';
     address = l.property_address;
     ownerName = l.owner_name;
-    phone = l.phone_number || '(949) 555-0188';
+    phone = l.phone_number || '';
     email = l.email || 'contact@prospect.com';
     score = l.lead_score || 85;
     whyItMatters = l.next_recommended_action || 'Owner ready for portfolio review and management introduction.';
@@ -208,7 +208,7 @@ export const ContextInspector: React.FC<ContextInspectorProps> = ({
         <button
           onClick={() => {
             if (onInitiateCall) {
-              onInitiateCall(ownerName || 'Property Owner', phone || '(949) 555-0100', address || title);
+              onInitiateCall(ownerName || 'Property Owner', phone || '', address || title);
             } else {
               onNavigate('dialer');
             }

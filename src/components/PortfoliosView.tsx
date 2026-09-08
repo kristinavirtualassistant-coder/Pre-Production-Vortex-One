@@ -30,58 +30,38 @@ export const PortfoliosView: React.FC<PortfoliosViewProps> = ({
   onNavigate,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('port_1');
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');
 
-  const portfolios: PortfolioRecord[] = [
-    {
-      id: 'port_1',
-      organization_id: '',
-      owner_id: 'owner_1',
-      owner_name: 'John Smith (CMC Coastal Holdings)',
-      entity_type: 'individual',
-      property_count: 7,
-      markets_count: 3,
-      markets: ['Costa Mesa', 'Newport Beach', 'Huntington Beach'],
-      total_valuation: 9850000,
-      total_equity: 5400000,
-      total_units: 18,
-      opportunity_count: 3,
-      properties: properties.slice(0, 4),
-      top_signal: 'High Equity Absentee Multi-Family cluster in Costa Mesa rental corridor.',
-    },
-    {
-      id: 'port_2',
-      organization_id: '',
-      owner_id: 'owner_2',
-      owner_name: 'Marcus Aurelius Properties LLC',
-      entity_type: 'llc',
-      property_count: 12,
-      markets_count: 4,
-      markets: ['Long Beach', 'Signal Hill', 'San Pedro', 'Torrance'],
-      total_valuation: 18200000,
-      total_equity: 11400000,
-      total_units: 34,
-      opportunity_count: 5,
-      properties: properties.slice(0, 3),
-      top_signal: 'Commercial strip & multi-family off-market value-add portfolio.',
-    },
-    {
-      id: 'port_3',
-      organization_id: '',
-      owner_id: 'owner_3',
-      owner_name: 'Elena Rostova Family Trust',
-      entity_type: 'trust',
-      property_count: 5,
-      markets_count: 2,
-      markets: ['Santa Ana', 'Orange'],
-      total_valuation: 6900000,
-      total_equity: 4100000,
-      total_units: 12,
-      opportunity_count: 2,
-      properties: properties.slice(0, 2),
-      top_signal: 'Generational estate transition with favorable basis and low debt leverage.',
-    },
-  ];
+  const portfolios: PortfolioRecord[] = Array.from(
+    properties.reduce((groups, property) => {
+      if (!property.owner_id) return groups;
+      const existing = groups.get(property.owner_id) || [];
+      existing.push(property);
+      groups.set(property.owner_id, existing);
+      return groups;
+    }, new Map<string, Property[]>())
+  ).map(([ownerId, ownerProperties]) => {
+    const first = ownerProperties[0];
+    const markets: string[] = Array.from(new Set(ownerProperties.map((p) => p.city).filter((city): city is string => Boolean(city))));
+    const valuation = ownerProperties.reduce((sum, p) => sum + (p.estimated_value || 0), 0);
+    const equity = ownerProperties.reduce((sum, p) => sum + (p.estimated_equity || 0), 0);
+    return {
+      id: `portfolio_${ownerId}`,
+      organization_id: first.organization_id,
+      owner_id: ownerId,
+      owner_name: first.owner_name || 'Unknown owner',
+      entity_type: first.is_corporate_owned ? 'llc' : 'individual',
+      property_count: ownerProperties.length,
+      markets_count: markets.length,
+      markets,
+      total_valuation: valuation,
+      total_equity: equity,
+      total_units: ownerProperties.reduce((sum, p) => sum + (p.units_count || 0), 0),
+      opportunity_count: ownerProperties.filter((p) => p.is_absentee_owner || p.tax_delinquent).length,
+      properties: ownerProperties,
+      top_signal: ownerProperties.some((p) => p.is_absentee_owner) ? 'Absentee ownership identified in source property records.' : 'Portfolio grouped from authoritative property ownership records.',
+    };
+  });
 
   const activePortfolio = portfolios.find((p) => p.id === selectedPortfolioId) || portfolios[0];
 
@@ -178,7 +158,7 @@ export const PortfoliosView: React.FC<PortfoliosViewProps> = ({
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() =>
-                    onInitiateCall(activePortfolio.owner_name, '(949) 555-0188', activePortfolio.markets[0])
+                    onInitiateCall(activePortfolio.owner_name, '', activePortfolio.markets[0] || '')
                   }
                   className="px-3.5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-md cursor-pointer transition"
                 >

@@ -34,112 +34,40 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
   const [filterSignal, setFilterSignal] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  const opportunities: OpportunityRecord[] = [
-    {
-      id: 'opp_1',
-      organization_id: '',
-      property_id: 'prop_1',
-      property_address: '1420 Newport Blvd',
-      city: 'Costa Mesa',
-      owner_id: 'owner_1',
-      owner_name: 'John Smith',
-      score: 88,
-      priority: 'high',
-      signal_type: 'portfolio_growth',
-      signal_title: 'Portfolio Multi-Asset Owner',
-      why_it_matters: 'Owner holds 7 properties across Costa Mesa corridor with 55%+ built-in equity. Ready for management advisory.',
-      confidence: 'Verified',
-      data_freshness: 'Aug 31, 2026',
-      estimated_value: 1750000,
-      estimated_equity: 980000,
-      score_components: {
-        ownership: 90,
-        property_type: 88,
-        portfolio: 95,
-        market: 80,
-        signal_strength: 87,
-      },
-      created_at: '2026-08-31T10:00:00.000Z',
-    },
-    {
-      id: 'opp_2',
-      organization_id: '',
-      property_id: 'prop_2',
-      property_address: '880 Ocean Ave',
-      city: 'Long Beach',
-      owner_id: 'owner_2',
-      owner_name: 'Marcus Aurelius Properties LLC',
-      score: 92,
-      priority: 'high',
-      signal_type: 'absentee_high_equity',
-      signal_title: 'High Equity Absentee Strip & Residential',
-      why_it_matters: 'Out-of-county tax address with 12 assets in coastal corridors. Substantial upside via lease renegotiation.',
-      confidence: 'High',
-      data_freshness: 'Aug 30, 2026',
-      estimated_value: 2450000,
-      estimated_equity: 1600000,
-      score_components: {
-        ownership: 95,
-        property_type: 90,
-        portfolio: 100,
-        market: 85,
-        signal_strength: 90,
-      },
-      created_at: '2026-08-30T14:30:00.000Z',
-    },
-    {
-      id: 'opp_3',
-      organization_id: '',
-      property_id: 'prop_3',
-      property_address: '2200 E 4th St',
-      city: 'Santa Ana',
-      owner_id: 'owner_3',
-      owner_name: 'Elena Rostova Family Trust',
-      score: 84,
-      priority: 'high',
-      signal_type: 'ownership_transition',
-      signal_title: 'Generational Estate Transition',
-      why_it_matters: 'Recent assessor trust filing indicates impending succession and portfolio realignment.',
-      confidence: 'Verified',
-      data_freshness: 'Aug 29, 2026',
-      estimated_value: 1350000,
-      estimated_equity: 820000,
-      score_components: {
-        ownership: 85,
-        property_type: 80,
-        portfolio: 90,
-        market: 78,
-        signal_strength: 87,
-      },
-      created_at: '2026-08-29T09:15:00.000Z',
-    },
-    {
-      id: 'opp_4',
-      organization_id: '',
-      property_id: 'prop_4',
-      property_address: '412 Magnolia Ave',
-      city: 'Huntington Beach',
-      owner_id: 'owner_4',
-      owner_name: 'Pacific Coast Asset Management',
-      score: 79,
-      priority: 'medium',
-      signal_type: 'market_arbitrage',
-      signal_title: 'Rent Submarket Arbitrage',
-      why_it_matters: 'In-place rents trailing submarket median by 22% based on latest neighborhood comp index.',
-      confidence: 'Medium',
-      data_freshness: 'Aug 28, 2026',
-      estimated_value: 1950000,
-      estimated_equity: 900000,
-      score_components: {
-        ownership: 80,
-        property_type: 82,
-        portfolio: 75,
-        market: 85,
-        signal_strength: 74,
-      },
-      created_at: '2026-08-28T16:00:00.000Z',
-    },
-  ];
+  const opportunities: OpportunityRecord[] = properties
+    .filter((property) => property.owner_id && property.address)
+    .map((property, index) => {
+      const equityRatio = (property.estimated_equity || 0) / Math.max(property.estimated_value || 1, 1);
+      const signal_type: OpportunityRecord['signal_type'] = property.tax_delinquent
+        ? 'tax_distress'
+        : property.is_absentee_owner && equityRatio >= 0.4
+          ? 'absentee_high_equity'
+          : property.is_corporate_owned
+            ? 'portfolio_growth'
+            : 'market_arbitrage';
+      const score = Math.round(Math.min(100, 50 + equityRatio * 25 + (property.is_absentee_owner ? 15 : 0) + (property.is_corporate_owned ? 10 : 0)));
+      const priority: OpportunityRecord['priority'] = score >= 80 ? 'high' : score >= 65 ? 'medium' : 'low';
+      return {
+        id: `opportunity_${property.id}`,
+        organization_id: property.organization_id,
+        property_id: property.id,
+        property_address: property.address,
+        city: property.city,
+        owner_id: property.owner_id,
+        owner_name: property.owner_name || 'Unknown owner',
+        score,
+        priority,
+        signal_type,
+        signal_title: signal_type === 'tax_distress' ? 'Tax Distress' : signal_type === 'absentee_high_equity' ? 'Absentee High Equity' : signal_type === 'portfolio_growth' ? 'Corporate Ownership' : 'Property Signal',
+        why_it_matters: property.is_absentee_owner ? 'Absentee ownership is present in the authoritative property record.' : 'Property data meets the current opportunity-screening criteria.',
+        confidence: property.provenance?.verified ? 'Verified' : 'Medium',
+        data_freshness: property.provenance?.retrievedAt || 'Unknown',
+        estimated_value: property.estimated_value || 0,
+        estimated_equity: property.estimated_equity || 0,
+        score_components: { ownership: property.is_corporate_owned ? 90 : 60, property_type: 0, portfolio: 0, market: 0, signal_strength: score },
+        created_at: property.created_at || new Date().toISOString(),
+      };
+    });
 
   const filteredOpportunities = opportunities.filter((opp) => {
     const matchSignal = filterSignal === 'all' || opp.signal_type === filterSignal;
@@ -195,19 +123,19 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
       <div className="p-4 bg-slate-950 border-b border-slate-800/80 grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
           <span className="text-[10px] uppercase font-mono text-slate-500 block">Total Opportunities</span>
-          <span className="text-2xl font-bold font-mono text-cyan-400">248 Signals</span>
+          <span className="text-2xl font-bold font-mono text-cyan-400">{opportunities.length} Signals</span>
         </div>
         <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
           <span className="text-[10px] uppercase font-mono text-slate-500 block">High Priority Tier</span>
-          <span className="text-2xl font-bold font-mono text-slate-100">32 Qualified</span>
+          <span className="text-2xl font-bold font-mono text-slate-100">{opportunities.filter((opp) => opp.priority === 'high').length} Qualified</span>
         </div>
         <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
           <span className="text-[10px] uppercase font-mono text-slate-500 block">Active Conversations</span>
-          <span className="text-2xl font-bold font-mono text-emerald-400">18 In Progress</span>
+          <span className="text-2xl font-bold font-mono text-emerald-400">—</span>
         </div>
         <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
           <span className="text-[10px] uppercase font-mono text-slate-500 block">Management Wins</span>
-          <span className="text-2xl font-bold font-mono text-amber-400">7 Mandates</span>
+          <span className="text-2xl font-bold font-mono text-amber-400">—</span>
         </div>
       </div>
 
@@ -288,7 +216,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
 
                   <div className="flex items-center space-x-2">
                     <button
-                      onClick={() => onInitiateCall(opp.owner_name, '(949) 555-0188', opp.property_address)}
+                      onClick={() => onInitiateCall(opp.owner_name, '', opp.property_address)}
                       className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1 cursor-pointer transition shadow-xs"
                     >
                       <Phone className="w-3.5 h-3.5" />

@@ -36,72 +36,37 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
   onNavigate,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedOwnerId, setSelectedOwnerId] = useState<string>('owner_1');
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string>('');
 
-  // Derive owners from properties
-  const owners: PropertyOwner[] = [
-    {
-      id: 'owner_1',
-      organization_id: '',
-      name: 'John Smith',
-      entity_type: 'individual',
-      mailing_address: '1420 Newport Blvd, Costa Mesa, CA',
-      mailing_city: 'Costa Mesa',
-      mailing_state: 'CA',
-      mailing_zip: '92627',
-      phone_numbers: [
-        { number: '(949) 555-0188', type: 'mobile', dnc_status: false, confidence: 0.98 },
-        { number: '(714) 555-0122', type: 'landline', dnc_status: false, confidence: 0.91 },
-      ],
-      email_addresses: [
-        { email: 'john.smith.realty@gmail.com', verified: true, confidence: 0.95 },
-      ],
-      properties_owned_count: 7,
-      total_portfolio_value: 9850000,
-      total_portfolio_equity: 5400000,
-      notes: 'Active multi-family investor across Orange County. Holds assets in Costa Mesa and Newport Beach.',
-    },
-    {
-      id: 'owner_2',
-      organization_id: '',
-      name: 'Marcus Aurelius Properties LLC',
-      entity_type: 'llc',
-      mailing_address: '880 Ocean Ave, Long Beach, CA',
-      mailing_city: 'Long Beach',
-      mailing_state: 'CA',
-      mailing_zip: '90802',
-      phone_numbers: [
-        { number: '(562) 555-0144', type: 'mobile', dnc_status: false, confidence: 0.95 },
-      ],
-      email_addresses: [
-        { email: 'investments@aureliusllc.com', verified: true, confidence: 0.94 },
-      ],
-      properties_owned_count: 12,
-      total_portfolio_value: 18200000,
-      total_portfolio_equity: 11400000,
-      notes: 'Commercial & Multi-Family portfolio in coastal LA/OC corridors.',
-    },
-    {
-      id: 'owner_3',
-      organization_id: '',
-      name: 'Elena Rostova Family Trust',
-      entity_type: 'trust',
-      mailing_address: '2200 E 4th St, Santa Ana, CA',
-      mailing_city: 'Santa Ana',
-      mailing_state: 'CA',
-      mailing_zip: '92705',
-      phone_numbers: [
-        { number: '(714) 555-0199', type: 'mobile', dnc_status: false, confidence: 0.96 },
-      ],
-      email_addresses: [
-        { email: 'rostova.trust@socalholdings.com', verified: true, confidence: 0.92 },
-      ],
-      properties_owned_count: 5,
-      total_portfolio_value: 6900000,
-      total_portfolio_equity: 4100000,
-      notes: 'Long-term hold absentee trust. Recent tax record updates indicate generational transition.',
-    },
-  ];
+  // Owner summaries are derived only from authoritative property records.
+  const owners = React.useMemo(() => {
+    const byOwner = new Map<string, PropertyOwner>();
+    for (const property of properties || []) {
+      if (!property.owner_id || !property.owner_name) continue;
+      if (byOwner.has(property.owner_id)) continue;
+      byOwner.set(property.owner_id, {
+        id: property.owner_id,
+        organization_id: property.organization_id,
+        name: property.owner_name,
+        entity_type: property.is_corporate_owned ? 'corporation' : 'individual',
+        mailing_address: '',
+        mailing_city: '',
+        mailing_state: property.state || 'CA',
+        mailing_zip: property.zip || '',
+        phone_numbers: [],
+        email_addresses: [],
+        properties_owned_count: 0,
+        total_portfolio_value: 0,
+        total_portfolio_equity: 0,
+        notes: '',
+      });
+      const owner = byOwner.get(property.owner_id)!;
+      owner.properties_owned_count = (owner.properties_owned_count || 0) + 1;
+      owner.total_portfolio_value = (owner.total_portfolio_value || 0) + (property.estimated_value || 0);
+      owner.total_portfolio_equity = (owner.total_portfolio_equity || 0) + (property.estimated_equity || 0);
+    }
+    return Array.from(byOwner.values());
+  }, [properties]);
 
   const filteredOwners = owners.filter(
     (o) =>
@@ -206,7 +171,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
                   onClick={() =>
                     onInitiateCall(
                       activeOwner.name,
-                      activeOwner.phone_numbers[0]?.number || '(949) 555-0188',
+                      activeOwner.phone_numbers[0]?.number || '',
                       activeOwner.mailing_address
                     )
                   }

@@ -1504,10 +1504,23 @@ async function startServer() {
     }
   });
 
-  app.get('/api/owners', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.propertyOwners || []).filter((o) => !orgId || o.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/owners', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) {
+        if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL is required' });
+        return res.json((inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === orgId));
+      }
+      const result = await pool.query(
+        `SELECT * FROM property_owners WHERE organization_id = $1 ORDER BY updated_at DESC, name ASC`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      console.error('Owner query error:', err);
+      return res.status(500).json({ error: err.message || 'Failed to load owners' });
+    }
   });
 
   // ==========================================

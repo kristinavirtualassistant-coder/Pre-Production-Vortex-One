@@ -102,12 +102,10 @@ export const DialerView: React.FC<DialerViewProps> = ({
   const [isDialing, setIsDialing] = useState(false);
   const [dialResult, setDialResult] = useState<CallRecord | null>(null);
   const [dialError, setDialError] = useState<string | null>(null);
-  const [contactName, setContactName] = useState('Jonathan Sterling');
-  const [phoneNumber, setPhoneNumber] = useState('(949) 555-0182');
-  const [propertyAddress, setPropertyAddress] = useState('1420 Newport Blvd, Costa Mesa, CA');
-  const [callBrief, setCallBrief] = useState(
-    'Outbound pitch regarding zero vacancy downtime and 24/7 maintenance dispatch for 6-unit Newport Blvd asset.'
-  );
+  const [contactName, setContactName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [propertyAddress, setPropertyAddress] = useState('');
+  const [callBrief, setCallBrief] = useState('');
   const [telephonyProvider] = useState<'ringcentral'>('ringcentral');
   const [isPlayingTTS, setIsPlayingTTS] = useState(false);
   const [dialingMode, setDialingMode] = useState<'manual' | 'predictive'>('manual');
@@ -158,175 +156,11 @@ export const DialerView: React.FC<DialerViewProps> = ({
   const [followUpTime, setFollowUpTime] = useState<string>('09:00');
   const [callNotes, setCallNotes] = useState('');
   const [callQualityRating, setCallQualityRating] = useState<number>(0);
-  const [leadStatus, setLeadStatus] = useState('qualified');
-  const [leadScore, setLeadScore] = useState(85);
+  const [leadStatus, setLeadStatus] = useState('');
+  const [leadScore, setLeadScore] = useState(0);
 
   // --- Prioritized Lead Queue & Anti-Fatigue State ---
-  const defaultLeadPool = useMemo<LeadRecord[]>(
-    () => [
-      {
-        id: 'lead_q1',
-        organization_id: '',
-        owner_id: 'owner_1',
-        primary_property_id: 'prop_1',
-        owner_name: 'Jonathan Sterling (Sterling West Holdings LLC)',
-        property_address: '1420 Newport Blvd, Costa Mesa, CA',
-        phone_number: '(949) 555-0182',
-        lead_score: 95,
-        classification: 'high_priority',
-        stage: 'outreach_ready',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date().toISOString(),
-        next_recommended_action: 'Pitch zero-vacancy downtime & local management for 6-unit asset',
-        created_at: new Date().toISOString(),
-        units_count: 6,
-        estimated_equity: 1850000,
-        factors: [{ factor: 'High Equity ($1.85M)', impact: 25 }, { factor: 'Absentee Owner LLC', impact: 20 }],
-      },
-      {
-        id: 'lead_q2',
-        organization_id: '',
-        owner_id: 'owner_2',
-        primary_property_id: 'prop_2',
-        owner_name: 'Elena Rostova & Partners',
-        property_address: '884 Baker St, Costa Mesa, CA',
-        phone_number: '(949) 555-0144',
-        lead_score: 92,
-        classification: 'high_priority',
-        stage: 'qualified',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 2).toISOString(),
-        next_recommended_action: 'Present zero-vacancy maintenance dispatch program for 8-unit parcel',
-        created_at: new Date().toISOString(),
-        units_count: 8,
-        estimated_equity: 2400000,
-        factors: [{ factor: 'Surging GIS Inquiries', impact: 30 }],
-      },
-      {
-        id: 'lead_q3',
-        organization_id: '',
-        owner_id: 'owner_3',
-        primary_property_id: 'prop_3',
-        owner_name: 'Arthur Vance Trust',
-        property_address: '2200 Harbor Blvd, Costa Mesa, CA',
-        phone_number: '(949) 555-0199',
-        lead_score: 88,
-        classification: 'high_priority',
-        stage: 'outreach_ready',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 5).toISOString(),
-        next_recommended_action: 'Offer multi-family capital reserve underwriting audit',
-        created_at: new Date().toISOString(),
-        units_count: 12,
-        estimated_equity: 3600000,
-        factors: [{ factor: 'Long-term Ownership (>15 yrs)', impact: 22 }],
-      },
-      {
-        id: 'lead_q4',
-        organization_id: '',
-        owner_id: 'owner_4',
-        primary_property_id: 'prop_4',
-        owner_name: 'Miramar Real Estate Partners LP',
-        property_address: '340 17th St, Costa Mesa, CA',
-        phone_number: '(949) 555-0132',
-        lead_score: 84,
-        classification: 'medium_priority',
-        stage: 'identified',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 12).toISOString(),
-        next_recommended_action: 'Follow up on preliminary tax valuation discrepancy',
-        created_at: new Date().toISOString(),
-        units_count: 4,
-        estimated_equity: 1200000,
-        factors: [{ factor: 'High Market Appreciation', impact: 15 }],
-      },
-      {
-        id: 'lead_q5',
-        organization_id: '',
-        owner_id: 'owner_5',
-        primary_property_id: 'prop_5',
-        owner_name: 'Pacific Crest Assets Inc',
-        property_address: '1901 Placentia Ave, Costa Mesa, CA',
-        phone_number: '(949) 555-0165',
-        lead_score: 81,
-        classification: 'medium_priority',
-        stage: 'identified',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 20).toISOString(),
-        next_recommended_action: 'Present commercial zoning upside study',
-        created_at: new Date().toISOString(),
-        units_count: 5,
-        estimated_equity: 1650000,
-        factors: [{ factor: 'Absentee Corporate Entity', impact: 18 }],
-      },
-      {
-        id: 'lead_q6',
-        organization_id: '',
-        owner_id: 'owner_6',
-        primary_property_id: 'prop_6',
-        owner_name: 'Claire Kensington Properties',
-        property_address: '410 E 17th St, Costa Mesa, CA',
-        phone_number: '(949) 555-0177',
-        lead_score: 79,
-        classification: 'medium_priority',
-        stage: 'qualified',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 24).toISOString(),
-        next_recommended_action: 'Discuss tenant retention & local leasing optimization',
-        created_at: new Date().toISOString(),
-        units_count: 6,
-        estimated_equity: 1950000,
-        factors: [{ factor: 'High Rental Yield Potential', impact: 15 }],
-      },
-      {
-        id: 'lead_q7',
-        organization_id: '',
-        owner_id: 'owner_7',
-        primary_property_id: 'prop_7',
-        owner_name: 'David & Sharon Miller Family Trust',
-        property_address: '720 W 19th St, Costa Mesa, CA',
-        phone_number: '(949) 555-0121',
-        lead_score: 76,
-        classification: 'nurture',
-        stage: 'contacted',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 30).toISOString(),
-        next_recommended_action: 'Send quarterly Costa Mesa multi-family rent index',
-        created_at: new Date().toISOString(),
-        units_count: 3,
-        estimated_equity: 980000,
-        factors: [{ factor: 'Owner-Occupied Transition', impact: 10 }],
-      },
-      {
-        id: 'lead_q8',
-        organization_id: '',
-        owner_id: 'owner_8',
-        primary_property_id: 'prop_8',
-        owner_name: 'Beacon Bay Holdings LLC',
-        property_address: '550 Superior Ave, Newport Beach, CA',
-        phone_number: '(949) 555-0158',
-        lead_score: 74,
-        classification: 'nurture',
-        stage: 'identified',
-        assigned_agent: 'agent_1' as any,
-        dnc_compliant: true,
-        last_activity_date: new Date(Date.now() - 3600000 * 48).toISOString(),
-        next_recommended_action: 'Quarterly touchpoint regarding coastal CAP rates',
-        created_at: new Date().toISOString(),
-        units_count: 4,
-        estimated_equity: 2800000,
-        factors: [{ factor: 'High Value Coastal Asset', impact: 20 }],
-      },
-    ],
-    []
-  );
+  const defaultLeadPool = useMemo<LeadRecord[]>(() => [], []);
 
   const [queueLeads, setQueueLeads] = useState<LeadRecord[]>([]);
   const [queueOrderMode, setQueueOrderMode] = useState<'priority' | 'shuffled'>('priority');
@@ -373,7 +207,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
     if (array.length > 0) {
       const top = array[0];
       setContactName(top.owner_name || 'Prospect Owner');
-      setPhoneNumber(top.phone_number || '(949) 555-0182');
+      setPhoneNumber(top.phone_number || '');
       setPropertyAddress(top.property_address || '');
       if (top.lead_score) setLeadScore(top.lead_score);
       setCallBrief(
@@ -415,7 +249,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
     if (sorted.length > 0) {
       const top = sorted[0];
       setContactName(top.owner_name || 'Prospect Owner');
-      setPhoneNumber(top.phone_number || '(949) 555-0182');
+      setPhoneNumber(top.phone_number || '');
       setPropertyAddress(top.property_address || '');
       if (top.lead_score) setLeadScore(top.lead_score);
       setCallBrief(
@@ -774,7 +608,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
 
     if (targetLead) {
       setContactName(targetLead.owner_name || 'Prospect Owner');
-      setPhoneNumber(targetLead.phone_number || '(949) 555-0182');
+      setPhoneNumber(targetLead.phone_number || '');
       setPropertyAddress(targetLead.property_address || '');
       if (targetLead.lead_score) setLeadScore(targetLead.lead_score);
       if (targetLead.next_recommended_action) setCallBrief(targetLead.next_recommended_action);
@@ -1709,9 +1543,9 @@ export const DialerView: React.FC<DialerViewProps> = ({
           }}
           targets={[
             {
-              name: contactName || 'Jonathan Sterling',
-              phone: phoneNumber || '(949) 555-0182',
-              address: propertyAddress || '1420 Newport Blvd, Costa Mesa, CA',
+              name: contactName,
+              phone: phoneNumber,
+              address: propertyAddress,
               score: 92,
             },
           ]}

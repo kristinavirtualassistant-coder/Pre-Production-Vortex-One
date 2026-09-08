@@ -65,117 +65,51 @@ export const CommandCenterView: React.FC<CommandCenterViewProps> = ({
   const totalEquity = (properties || []).reduce((sum, p) => sum + (p.estimated_equity || 0), 0);
 
   // Derive opportunities
-  const opportunitiesCount = 248; // Global scored count in target market
-  const newPropertiesToday = (properties || []).filter((p) => p.status === 'discovered' || p.status === 'lead_ready').length || 14;
-  const newOwnersCount = 18;
+  const opportunitiesCount = (leads || []).filter((l) => l.stage === 'qualified' || l.stage === 'outreach_ready' || (l.lead_score || 0) >= 75).length;
+  const newPropertiesToday = (properties || []).filter((p) => p.status === 'discovered' || p.status === 'lead_ready').length;
+  const newOwnersCount = new Set((properties || []).map((p) => p.owner_id).filter(Boolean)).size;
   const qualifiedLeadsCount = (leads || []).filter((l) => l.stage === 'qualified' || l.stage === 'outreach_ready' || (l.lead_score && l.lead_score >= 75)).length;
   
   // Top-Level Executive KPI Ribbon Metrics
-  const kpiTotalLeads = leads?.length || 142;
-  const kpiQualifiedLeads = qualifiedLeadsCount || 38;
-  const kpiActiveCampaigns = (campaigns || []).filter(c => c.status === 'active' || c.status === 'running' || c.status === 'in_progress').length || (campaigns?.length || 4);
-  const kpiPropertyCount = properties?.length || 156;
+  const kpiTotalLeads = leads?.length || 0;
+  const kpiQualifiedLeads = qualifiedLeadsCount;
+  const kpiActiveCampaigns = (campaigns || []).filter(c => c.status === 'active' || c.status === 'running' || c.status === 'in_progress').length;
+  const kpiPropertyCount = properties?.length || 0;
   const kpiRevenueForecast = useMemo(() => {
-    const totalEq = totalEquity > 0 ? totalEquity : 14200000;
+    const totalEq = totalEquity;
     const val = Math.round(totalEq * 0.035);
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
   }, [totalEquity]);
   
   // Follow-ups & Calls Today
-  const followUpsCount = (leads || []).filter((l) => l.follow_up_date || l.stage === 'contacted').length || 12;
-  const scheduledCallsToday = 8;
-  const liveConversionRate = '18.4%';
+  const followUpsCount = (leads || []).filter((l) => l.follow_up_date || l.stage === 'contacted').length;
+  const scheduledCallsToday = 0;
+  const liveConversionRate = '—';
 
   // Active Work Items (Property -> Owner -> Opportunity -> Next Action)
   const activeWorkItems = useMemo(() => {
-    return [
-      {
-        id: 'work_1',
-        property_address: '1420 Newport Blvd, Costa Mesa',
-        property_type: 'Multi-Family (6 Units)',
-        county: 'Orange County, CA',
-        owner_name: 'Jonathan Sterling',
-        owner_entity: 'Sterling West Holdings LLC',
-        owner_phone: '(949) 555-0188',
-        opportunity_score: 94,
-        opportunity_signal: 'Absentee Multi-Asset Owner (7 Properties)',
-        why_it_matters: 'Tax assessment updated 14 yrs ago. Built-in equity >$1.2M. Absentee owner resides in Scottsdale, AZ.',
-        next_action_label: 'TCPA Dial Jonathan',
-        action_type: 'call',
-        priority: 'high',
-        urgency: 'Morning Window (09:00 - 11:30)',
-        due_status: 'Overdue Follow-up',
-      },
-      {
-        id: 'work_2',
-        property_address: '840 S Grand Ave, Los Angeles',
-        property_type: 'Commercial Mixed-Use',
-        county: 'Los Angeles County, CA',
-        owner_name: 'Marcus Vance',
-        owner_entity: 'Apex Metro Real Estate Trust',
-        owner_phone: '(213) 555-0199',
-        opportunity_score: 91,
-        opportunity_signal: '1031 Exchange Reinvestment Window',
-        why_it_matters: 'Sold San Pedro industrial parcel 45 days ago. 1031 clock active with $3.4M capital deployment need.',
-        next_action_label: 'Review Acquisition Strategy',
-        action_type: 'strategy',
-        priority: 'high',
-        urgency: 'Today by 2:00 PM',
-        due_status: 'Due Today',
-      },
-      {
-        id: 'work_3',
-        property_address: '2100 E 4th St, Santa Ana',
-        property_type: '8-Unit Residential',
-        county: 'Orange County, CA',
-        owner_name: 'Elena Rostova',
-        owner_entity: 'Individual Owner',
-        owner_phone: '(714) 555-0143',
-        opportunity_score: 87,
-        opportunity_signal: 'County Tax Default Notice (Secured Roll)',
-        why_it_matters: 'Second installment delinquent ($18,400). Owner-occupant moved out Jan 2026. High recapitalization urgency.',
-        next_action_label: 'Dispatch Pitch Brief',
-        action_type: 'pitch',
-        priority: 'high',
-        urgency: 'Scheduled Call at 11:00 AM',
-        due_status: 'Call Scheduled',
-      },
-      {
-        id: 'work_4',
-        property_address: '350 E 17th St, Costa Mesa',
-        property_type: 'Retail Strip / 4 Tenants',
-        county: 'Orange County, CA',
-        owner_name: 'David Chen',
-        owner_entity: 'Pacific Crest Partners LLC',
-        owner_phone: '(949) 555-0112',
-        opportunity_score: 82,
-        opportunity_signal: 'High Equity (72%) Long-Term Hold',
-        why_it_matters: 'Owned continuously since 2008 with zero senior liens. Low in-place rents vs 17th St market corridor.',
-        next_action_label: 'Execute Skip-Trace Audit',
-        action_type: 'research',
-        priority: 'medium',
-        urgency: 'Afternoon',
-        due_status: 'Queue Ready',
-      },
-      {
-        id: 'work_5',
-        property_address: '512 N Flower St, Santa Ana',
-        property_type: 'Duplex (R2 Zoning)',
-        county: 'Orange County, CA',
-        owner_name: 'Robert & Clara Gomez',
-        owner_entity: 'Family Trust',
-        owner_phone: '(714) 555-0177',
-        opportunity_score: 79,
-        opportunity_signal: 'ADU Expansion Potential',
-        why_it_matters: 'Lot size 9,200 sqft with favorable SB-9 zoning overlay for two detached accessory dwelling units.',
-        next_action_label: 'Send Advisory Teaser',
-        action_type: 'email',
-        priority: 'medium',
-        urgency: 'End of Day',
-        due_status: 'Follow-up Due',
-      },
-    ];
-  }, []);
+    return (leads || []).map((lead) => {
+      const property = (properties || []).find((p) => p.id === lead.primary_property_id);
+      const score = Number(lead.lead_score || 0);
+      return {
+        id: lead.id,
+        property_address: property?.address || lead.property_address || 'Property address unavailable',
+        property_type: property?.property_type || 'Property',
+        county: property?.county || 'County unavailable',
+        owner_name: lead.owner_name || property?.owner_name || 'Owner unavailable',
+        owner_entity: property?.is_corporate_owned ? 'Corporate entity' : 'Individual / trust',
+        owner_phone: lead.phone_number || '',
+        opportunity_score: score,
+        opportunity_signal: lead.classification || lead.stage || 'Unclassified',
+        why_it_matters: lead.next_recommended_action || 'Review lead record',
+        next_action_label: lead.next_recommended_action || 'Review lead',
+        action_type: lead.phone_number && lead.dnc_compliant ? 'call' : 'research',
+        priority: score >= 80 ? 'high' : score >= 60 ? 'medium' : 'low',
+        urgency: lead.follow_up_date ? `Follow-up ${lead.follow_up_date}` : 'No scheduled follow-up',
+        due_status: lead.follow_up_date ? 'Follow-up Due' : 'Queue Ready',
+      };
+    }).filter((item) => item.property_address !== 'Property address unavailable');
+  }, [leads, properties]);
 
   const filteredWorkItems = useMemo(() => {
     if (filterMode === 'high_priority') return activeWorkItems.filter((i) => i.priority === 'high');

@@ -658,7 +658,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         owner_name: l.owner_name,
         property_address: l.property_address,
         lead_score: l.lead_score,
-        phone_number: l.phone_number || '(949) 555-0100',
+        phone_number: l.phone_number || '',
         dnc_compliant: l.dnc_compliant,
       }));
   }, [leadsList, selectedLeadIds]);
@@ -1376,7 +1376,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
 
                 {/* Phone & Actions */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <span className="text-slate-600 font-mono">{lead.phone_number || '(949) 555-0100'}</span>
+                  <span className="text-slate-600 font-mono">{lead.phone_number || ''}</span>
                   <div className="flex items-center space-x-1.5">
                     <button
                       id={`skiptrace-card-btn-${lead.id}`}
