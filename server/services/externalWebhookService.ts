@@ -181,6 +181,9 @@ export class ExternalWebhookService {
   }
 
   async publish<T>(organizationId: string, type: ExternalWebhookEventType, data: T): Promise<ExternalWebhookDelivery[]> {
+    // Webhook delivery is an optional integration. Keep it disabled unless explicitly enabled,
+    // so property/lead workflows never depend on Firebase/Firestore being reachable.
+    if (process.env.VORTEX_ONE_ENABLE_EXTERNAL_WEBHOOKS !== '1') return [];
     if (getApps().length === 0) return [];
     const snapshot = await getFirestore()
       .collection('organizations').doc(organizationId).collection(COLLECTION).get();

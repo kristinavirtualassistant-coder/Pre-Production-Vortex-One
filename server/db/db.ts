@@ -1329,8 +1329,7 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
           await client.query(`
             INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
             VALUES 
-              ('org_cmc_realty', 'CMC Realty & Property Management', 'cmc-realty', '{"market": "Orange County, CA"}'::jsonb, NOW(), NOW()),
-              ('org-vortex-default', 'Vortex One Default Organization', 'vortex-default', '{"market": "National"}'::jsonb, NOW(), NOW())
+              ('org_cmc_realty', 'CMC Realty & Property Management', 'cmc-realty', '{"market": "Orange County, CA"}'::jsonb, NOW(), NOW())
             ON CONFLICT (id) DO NOTHING;
           `);
         } catch (seedErr: any) {

@@ -83,7 +83,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
 
     const response = await fetchWithTimeout(targetUrl, {
       method: 'GET',
-    }, 3000);
+    }, 10000);
 
     if (!response.ok) {
       throw new Error(`LA County Assessor request failed with HTTP ${response.status}: ${response.statusText}`);
@@ -109,16 +109,19 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
 
         const landVal = Number(attr.Roll_LandValue) || 0;
         const impVal = Number(attr.Roll_ImpValue) || 0;
-        const totalAssessed = landVal + impVal > 0 ? landVal + impVal : 1850000;
-        const estimatedVal = Math.round(totalAssessed * 1.35);
-        const estimatedEq = Math.round(estimatedVal * 0.65);
-        const mortgage = estimatedVal - estimatedEq;
+        const totalAssessed = landVal + impVal;
+        // Public LA County GIS supplies assessed roll values, not a market valuation or mortgage balance.
+        // Do not invent those values; use the verified assessed total as the conservative value proxy
+        // until an explicit valuation/enrichment provider supplies a market estimate.
+        const estimatedVal = totalAssessed;
+        const estimatedEq = 0;
+        const mortgage = 0;
 
-        const sqft = Number(attr.SQFTmain1) || (attr['Shape.STArea()'] ? Math.round(Number(attr['Shape.STArea()']) * 0.75) : 3200);
-        const units = Number(attr.Units1) || (attr.UseCode?.startsWith('02') || attr.UseCode?.startsWith('03') ? 4 : 1);
-        const yearBuilt = Number(attr.YearBuilt1) || 1992;
+        const sqft = Number(attr.SQFTmain1) || 0;
+        const units = Number(attr.Units1) || 0;
+        const yearBuilt = Number(attr.YearBuilt1) || 0;
 
-        let propType: Property['property_type'] = 'Single Family';
+        let propType: Property['property_type'] = 'Unknown';
         if (units > 1 || attr.UseDescription?.toLowerCase().includes('multi') || attr.UseCode?.startsWith('02') || attr.UseCode?.startsWith('03')) {
           propType = 'Multi-Family';
         } else if (attr.UseDescription?.toLowerCase().includes('comm') || attr.UseCode?.startsWith('1') || attr.UseCode?.startsWith('2')) {
@@ -143,8 +146,10 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
             'Official Los Angeles County open GIS parcel dataset maintained by the Office of the Assessor. Authorized for public lookup, analytical planning, and enterprise CRM workflow.',
         };
 
-        const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '310', ownerInfo.name);
+        // LA County's public GIS layer does not publish owner identity/contact data.
+        // Never synthesize an owner or contact record from a parcel identifier.
+        const ownerInfo = { name: '', entityType: 'individual' as const };
+        const contacts = { phones: [], emails: [] };
 
         const property: Property = {
           id: propId,
@@ -163,10 +168,10 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
           assessed_tax_value: totalAssessed,
           estimated_equity: estimatedEq,
           mortgage_balance: mortgage,
-          owner_id: `owner_la_${apn.replace(/[^0-9A-Za-z]/g, '_')}`,
-          owner_name: ownerInfo.name,
-          is_absentee_owner: true,
-          is_corporate_owned: ownerInfo.entityType === 'llc' || ownerInfo.entityType === 'corporation',
+          owner_id: '',
+          owner_name: '',
+          is_absentee_owner: false,
+          is_corporate_owned: false,
           tax_delinquent: false,
           provenance: {
             source: this.providerName,
@@ -192,7 +197,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
           properties_owned_count: 1,
           total_portfolio_value: estimatedVal,
           total_portfolio_equity: estimatedEq,
-          notes: `Official Assessor parcel roll: UseCode ${attr.UseCode || 'N/A'} (${attr.UseDescription || 'Residential'}). Land Value: $${landVal.toLocaleString()}, Imp Value: $${impVal.toLocaleString()}.`,
+          notes: `Official Assessor parcel roll. Owner/contact identity is unavailable from this public GIS layer. UseCode ${attr.UseCode || 'N/A'} (${attr.UseDescription || 'Residential'}). Land Value: $${landVal.toLocaleString()}, Improvement Value: $${impVal.toLocaleString()}. Estimated value is an assessed-value proxy only until enriched by a verified valuation source.`,
         };
 
         return {
