@@ -25,7 +25,7 @@ export class AuthorizationError extends Error {
 }
 
 export function shouldBypassApiAuth(path: string): boolean {
-  return path === '/health' || path.startsWith('/telephony/webhook/');
+  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/');
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {
@@ -106,7 +106,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       iat: Math.floor(Date.now() / 1000),
       iss: 'local-development',
       sub: userId,
-    } as DecodedIdToken;
+    } as unknown as DecodedIdToken;
     req.dbUser = {
       id: userId,
       organization_id: organizationId,

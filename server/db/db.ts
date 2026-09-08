@@ -1266,8 +1266,10 @@ Sincerely,
   inMemoryStore.outreachTemplates = templates;
 }
 
-// Auto-seed in-memory store
-seedInitialData();
+// Demo fixtures are opt-in only. Production must never create synthetic CRM data.
+if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production') {
+  seedInitialData();
+}
 
 /**
  * Initialize PostgreSQL connection or safely fall back with diagnostics

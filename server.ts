@@ -37,7 +37,8 @@ import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows,
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 8080);
+  const isProduction = process.env.NODE_ENV === 'production';
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -46,8 +47,12 @@ async function startServer() {
   try {
     const dbStatus = await initializeDatabase();
     console.log(`Vortex One database initialized (${dbStatus.type}). Migrations count: ${dbStatus.appliedMigrationsCount}`);
+    if (isProduction && (!dbStatus.connected || dbStatus.type !== 'postgresql')) {
+      throw new Error('Production startup requires an available PostgreSQL database; refusing in-memory mode');
+    }
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
+    if (isProduction) throw err;
   }
 
   // Start Automated Lead Scoring Background Engine (Recalculates every 30s based on calls, email opens, and property searches)
@@ -67,6 +72,16 @@ async function startServer() {
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       db: getDatabaseStatus(),
+    });
+  });
+
+  app.get('/api/ready', (req, res) => {
+    const db = getDatabaseStatus();
+    const ready = db.connected && db.type === 'postgresql';
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ready' : 'not_ready',
+      database: db,
+      timestamp: new Date().toISOString(),
     });
   });
 
@@ -3900,7 +3915,7 @@ ${transcript}`;
 
   // 1. List Templates with optional filters
   app.get('/api/outreach-templates', (req, res) => {
-    if (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0) {
+    if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production' && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
       seedInitialData();
     }
 

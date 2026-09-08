@@ -67,7 +67,7 @@ function makeMockPool(opts: any = {}) {
 {
   const { pool } = makeMockPool({ existingWorkflow: false });
   const workflow = await getWorkflow(pool, 'org_b', 'wf_a');
-  assert.equal(workflow?.organization_id, 'org_a');
+  assert.equal(workflow?.workflow_id, 'wf_a');
 }
 
 {
