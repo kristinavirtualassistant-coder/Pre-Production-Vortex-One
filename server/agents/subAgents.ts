@@ -6,7 +6,8 @@
 import { Task, AgentId, AgentProvenance, QAVerificationResult } from '../../src/types';
 import { executeTool } from '../tools';
 import { generateAgentText, generateSpeechTTS } from '../gemini';
-import { inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
+import { getAgentAnalytics } from '../services/agentRuntimeDataService';
 
 export interface AgentExecutionResult {
   status: 'completed' | 'failed' | 'needs_review' | 'awaiting_approval';
@@ -103,7 +104,7 @@ Analyze the domain, formulate initial hypotheses, identify missing information, 
 
     case 'sub_agent_2': {
       // Lead & CRM Intelligence
-      const properties = task.input.properties || inMemoryStore.properties;
+      const properties = task.input.properties || (await executeTool('search_property', {}, { organizationId: context.organizationId, agentId })).properties;
       const qualifiedLeads = [];
 
       for (const prop of properties) {
@@ -218,7 +219,7 @@ Distinguish between VERIFIED facts, STRONG indications, and INFERENCES. Retain s
         };
       }
 
-      const rawRecords = task.input.records || inMemoryStore.properties;
+      const rawRecords = task.input.records || (await executeTool('search_property', {}, { organizationId: context.organizationId, agentId })).properties;
       const enrichedRecords = rawRecords.map((r: any) => ({
         ...r,
         normalized_address: `${r.address}, ${r.city}, ${r.state} ${r.zip}`.toUpperCase(),
@@ -251,7 +252,8 @@ Distinguish between VERIFIED facts, STRONG indications, and INFERENCES. Retain s
 
     case 'sub_agent_5': {
       // Outreach Intelligence Agent
-      const lead = task.input.lead || (inMemoryStore.leads[0] as any);
+      const lead = task.input.lead;
+      if (!lead) throw new Error('Outreach strategy requires an authoritative lead record');
       const prompt = `You are Sub-Agent 5 (Outreach Intelligence for CMC Realty & Property Management).
 Generate a personalized, high-conversion outbound call strategy and script for:
 Lead Owner: ${lead?.owner_name || 'Absentee Owner'}
@@ -302,17 +304,9 @@ Format with:
 
     case 'sub_agent_6': {
       // Analytics & Scoring Agent
-      const properties = inMemoryStore.properties;
-      const leads = inMemoryStore.leads;
-      const campaigns = inMemoryStore.campaigns;
-
-      const totalValuation = properties.reduce((acc, p) => acc + p.estimated_value, 0);
-      const totalEquity = properties.reduce((acc, p) => acc + p.estimated_equity, 0);
-      const avgEquityRatio = Math.round((totalEquity / (totalValuation || 1)) * 100);
-
-      const highPriorityLeads = leads.filter((l) => l.classification === 'high_priority').length;
-      const conversionRate = campaigns.reduce((acc, c) => acc + c.converted_count, 0) /
-        (campaigns.reduce((acc, c) => acc + c.connected_count, 0) || 1);
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for authoritative analytics');
+      const analytics = await getAgentAnalytics(pool, context.organizationId);
 
       provenance.push({
         source: 'Authoritative PostgreSQL Analytics Aggregation Service',
@@ -325,12 +319,7 @@ Format with:
       return {
         status: 'completed',
         result: {
-          total_portfolio_valuation: totalValuation,
-          total_portfolio_equity: totalEquity,
-          average_equity_ratio_pct: avgEquityRatio,
-          active_leads_count: leads.length,
-          high_priority_leads_count: highPriorityLeads,
-          campaign_conversion_rate_pct: Math.round(conversionRate * 100),
+          ...analytics,
           forecasting_trend: 'Bullish multi-family management demand in Central Orange County (+14% YoY).',
         },
         confidence: 1.0,

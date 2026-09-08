@@ -6,7 +6,8 @@
 import { Task, TaskPriority, TaskStatus, AgentId, AgentProvenance, AuditLogEntry, ApprovalRequest } from '../../src/types';
 import { executeSubAgent } from './subAgents';
 import { generateAgentText } from '../gemini';
-import { inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
+import { createApproval, createTask, updateTaskResult } from '../services/agentOperationsService';
 import { getCapabilityMap } from './registry';
 
 export interface OrchestratorRunOptions {
@@ -45,6 +46,36 @@ export class MasterOrchestrator {
     logs.push(entry);
   }
 
+  private async persistAuditLogs(pool: NonNullable<ReturnType<typeof getPgPool>>, logs: AuditLogEntry[]) {
+    for (const entry of logs) {
+      await pool.query(
+        `INSERT INTO audit_logs (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO NOTHING`,
+        [entry.id, this.organizationId, entry.agent, entry.task_id || null, entry.action,
+          JSON.stringify(entry.input ?? null), JSON.stringify(entry.output ?? null), entry.status, entry.latency_ms,
+          entry.confidence ?? null, entry.source || null, entry.timestamp],
+      );
+    }
+  }
+
+  private async persistTaskStart(pool: NonNullable<ReturnType<typeof getPgPool>>, task: Task) {
+    await createTask(pool, this.organizationId, {
+      task_id: task.task_id,
+      objective: task.objective,
+      priority: task.priority,
+      assigned_agent: task.assigned_agent,
+      parent_task_id: task.parent_task_id,
+      taskInput: task.input,
+      dependencies: task.dependencies,
+    });
+  }
+
+  private async persistTaskResult(pool: NonNullable<ReturnType<typeof getPgPool>>, task: Task) {
+    const persisted = await updateTaskResult(pool, this.organizationId, task);
+    if (!persisted) throw new Error(`Task ${task.task_id} could not be updated in PostgreSQL`);
+  }
+
   /**
    * Main entry point for executing user requests through the multi-agent hierarchy
    */
@@ -52,6 +83,9 @@ export class MasterOrchestrator {
     const startTime = Date.now();
     const runId = `run_${Date.now()}`;
     const userPrompt = options.userPrompt;
+    const pool = getPgPool();
+    if (!pool) throw new Error('PostgreSQL is required for authoritative agent orchestration');
+
     const auditLogs: AuditLogEntry[] = [];
     const createdTasks: Task[] = [];
     const approvalRequests: ApprovalRequest[] = [];
@@ -120,6 +154,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task1);
+    await this.persistTaskStart(pool, task1);
 
     const t1Start = Date.now();
     const res1 = await executeSubAgent('sub_agent_1', task1, { organizationId: this.organizationId });
@@ -129,6 +164,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task1.provenance = res1.provenance;
     task1.completed_at = new Date().toISOString();
     task1.executionTimeMs = Date.now() - t1Start;
+    await this.persistTaskResult(pool, task1);
 
     this.logAudit({
       id: `audit_${Date.now()}_t1`,
@@ -160,6 +196,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task2);
+    await this.persistTaskStart(pool, task2);
 
     const t2Start = Date.now();
     const res2 = await executeSubAgent('sub_agent_4', task2, { organizationId: this.organizationId });
@@ -169,6 +206,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task2.provenance = res2.provenance;
     task2.completed_at = new Date().toISOString();
     task2.executionTimeMs = Date.now() - t2Start;
+    await this.persistTaskResult(pool, task2);
 
     this.logAudit({
       id: `audit_${Date.now()}_t2`,
@@ -199,6 +237,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task3);
+    await this.persistTaskStart(pool, task3);
 
     const t3Start = Date.now();
     const res3 = await executeSubAgent('sub_agent_2', task3, { organizationId: this.organizationId });
@@ -208,6 +247,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task3.provenance = res3.provenance;
     task3.completed_at = new Date().toISOString();
     task3.executionTimeMs = Date.now() - t3Start;
+    await this.persistTaskResult(pool, task3);
 
     this.logAudit({
       id: `audit_${Date.now()}_t3`,
@@ -242,6 +282,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task4);
+    await this.persistTaskStart(pool, task4);
 
     const t4Start = Date.now();
     const res4 = await executeSubAgent('sub_agent_5', task4, { organizationId: this.organizationId });
@@ -251,6 +292,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task4.provenance = res4.provenance;
     task4.completed_at = new Date().toISOString();
     task4.executionTimeMs = Date.now() - t4Start;
+    await this.persistTaskResult(pool, task4);
 
     this.logAudit({
       id: `audit_${Date.now()}_t4`,
@@ -284,6 +326,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task5);
+    await this.persistTaskStart(pool, task5);
 
     const t5Start = Date.now();
     const res5 = await executeSubAgent('sub_agent_7', task5, { organizationId: this.organizationId });
@@ -293,6 +336,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task5.provenance = res5.provenance;
     task5.completed_at = new Date().toISOString();
     task5.executionTimeMs = Date.now() - t5Start;
+    await this.persistTaskResult(pool, task5);
 
     if (res5.requiresApproval) {
       const approvalReq: ApprovalRequest = {
@@ -309,8 +353,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
         issues: res5.result?.issues || [],
         created_at: new Date().toISOString(),
       };
-      approvalRequests.push(approvalReq);
-      inMemoryStore.approvals.unshift(approvalReq);
+      approvalRequests.push(await createApproval(pool, this.organizationId, approvalReq));
     }
 
     this.logAudit({
@@ -350,6 +393,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
       created_at: new Date().toISOString(),
     };
     createdTasks.push(task6);
+    await this.persistTaskStart(pool, task6);
 
     const t6Start = Date.now();
     const res6 = await executeSubAgent('sub_agent_9', task6, { organizationId: this.organizationId });
@@ -359,6 +403,7 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     task6.provenance = res6.provenance;
     task6.completed_at = new Date().toISOString();
     task6.executionTimeMs = Date.now() - t6Start;
+    await this.persistTaskResult(pool, task6);
 
     this.logAudit({
       id: `audit_${Date.now()}_t6`,
@@ -414,13 +459,7 @@ ${Math.round(structuredSummary.confidence * 100)}%
 Next recommended action:
 ${nextAction}`;
 
-    // Store in-memory
-    for (const t of createdTasks) {
-      inMemoryStore.tasks.unshift(t);
-    }
-    for (const a of auditLogs) {
-      inMemoryStore.auditLogs.unshift(a);
-    }
+    await this.persistAuditLogs(pool, auditLogs);
 
     const totalElapsed = Date.now() - startTime;
 

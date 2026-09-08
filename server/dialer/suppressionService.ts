@@ -6,9 +6,6 @@
 import { getPgPool } from '../db/db';
 import { SuppressionTableRecord } from './types';
 
-// In-memory fallback for local sandboxing
-const inMemorySuppressions: Map<string, SuppressionTableRecord> = new Map();
-
 /**
  * Normalizes phone numbers to standard 10-digit digits for deterministic matching
  */
@@ -45,8 +42,10 @@ export class SuppressionService {
     }
 
     const pool = getPgPool();
-    if (pool) {
-      try {
+    if (!pool) {
+      throw new Error('PostgreSQL is required for authoritative suppression checks');
+    }
+    try {
         const res = await pool.query(
           `SELECT reason, suppressed_at, expires_at FROM suppression_record 
            WHERE organization_id = $1 AND (
@@ -68,22 +67,8 @@ export class SuppressionService {
             suppressedAt: row.suppressed_at,
           };
         }
-      } catch (err: any) {
-        console.warn('PostgreSQL suppression check fallback:', err.message);
-      }
-    }
-
-    // Check in-memory suppression
-    for (const record of inMemorySuppressions.values()) {
-      if (record.organization_id === organizationId) {
-        if (normalizePhoneNumber(record.phone_number) === cleanPhone) {
-          return {
-            isSuppressed: true,
-            reason: record.reason,
-            suppressedAt: record.suppressed_at,
-          };
-        }
-      }
+    } catch (err) {
+      throw new Error(`Authoritative suppression check failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return { isSuppressed: false };
@@ -112,8 +97,10 @@ export class SuppressionService {
     };
 
     const pool = getPgPool();
-    if (pool) {
-      try {
+    if (!pool) {
+      throw new Error('PostgreSQL is required for authoritative suppression writes');
+    }
+    try {
         await pool.query(
           `INSERT INTO suppression_record (id, organization_id, phone_number, reason, source, suppressed_at)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -121,12 +108,10 @@ export class SuppressionService {
            DO UPDATE SET reason = EXCLUDED.reason, source = EXCLUDED.source, suppressed_at = EXCLUDED.suppressed_at`,
           [id, organizationId, formatted, reason, source, now]
         );
-      } catch (err: any) {
-        console.warn('PostgreSQL suppression insert fallback:', err.message);
-      }
+    } catch (err) {
+      throw new Error(`Authoritative suppression write failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    inMemorySuppressions.set(`${organizationId}:${formatted}`, record);
     return record;
   }
 
@@ -135,8 +120,10 @@ export class SuppressionService {
    */
   public static async listSuppressions(organizationId: string): Promise<SuppressionTableRecord[]> {
     const pool = getPgPool();
-    if (pool) {
-      try {
+    if (!pool) {
+      throw new Error('PostgreSQL is required for authoritative suppression reads');
+    }
+    try {
         const res = await pool.query(
           `SELECT id, organization_id, phone_number, reason, source, suppressed_at, expires_at 
            FROM suppression_record 
@@ -145,12 +132,9 @@ export class SuppressionService {
           [organizationId]
         );
         return res.rows;
-      } catch (err: any) {
-        console.warn('PostgreSQL list suppressions fallback:', err.message);
-      }
+    } catch (err) {
+      throw new Error(`Authoritative suppression read failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-
-    return Array.from(inMemorySuppressions.values()).filter((s) => s.organization_id === organizationId);
   }
 
   /**
@@ -158,25 +142,17 @@ export class SuppressionService {
    */
   public static async removeSuppression(organizationId: string, idOrPhone: string): Promise<boolean> {
     const pool = getPgPool();
-    if (pool) {
-      try {
+    if (!pool) {
+      throw new Error('PostgreSQL is required for authoritative suppression deletes');
+    }
+    try {
         const res = await pool.query(
           `DELETE FROM suppression_record WHERE organization_id = $1 AND (id = $2 OR phone_number = $2)`,
           [organizationId, idOrPhone]
         );
         return (res.rowCount || 0) > 0;
-      } catch (err: any) {
-        console.warn('PostgreSQL delete suppression fallback:', err.message);
-      }
+    } catch (err) {
+      throw new Error(`Authoritative suppression delete failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-
-    for (const [key, record] of inMemorySuppressions.entries()) {
-      if (record.organization_id === organizationId && (record.id === idOrPhone || record.phone_number === idOrPhone)) {
-        inMemorySuppressions.delete(key);
-        return true;
-      }
-    }
-
-    return false;
   }
 }
