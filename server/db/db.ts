@@ -1275,11 +1275,13 @@ if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'p
  * Initialize PostgreSQL connection or safely fall back with diagnostics
  */
 export async function initializeDatabase(): Promise<DatabaseStatus> {
-  const host = process.env.SQL_HOST || process.env.DB_HOST;
-  const port = parseInt(process.env.SQL_PORT || process.env.DB_PORT || '5432', 10);
-  const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER || process.env.DB_USER || 'postgres';
-  const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD || process.env.DB_PASS || '';
-  const database = process.env.SQL_DB_NAME || process.env.DB_NAME || 'vortex-one-database';
+  const databaseUrl = process.env.DATABASE_URL;
+  const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
+  const host = process.env.SQL_HOST || process.env.DB_HOST || parsedDatabaseUrl?.hostname;
+  const port = parseInt(process.env.SQL_PORT || process.env.DB_PORT || parsedDatabaseUrl?.port || '5432', 10);
+  const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER || process.env.DB_USER || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.username) : 'postgres');
+  const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD || process.env.DB_PASS || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.password) : '');
+  const database = process.env.SQL_DB_NAME || process.env.DB_NAME || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.pathname.slice(1)) : 'vortex-one-database');
   
   const isPostgresConfigured = !!host;
 
