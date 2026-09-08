@@ -377,14 +377,15 @@ export class UnifiedPropertyDataProvider {
     let savedCount = 0;
     const newlyDiscovered: NormalizedPropertyResult[] = [];
     const pool = getPgPool();
+    if (!pool && process.env.NODE_ENV === 'production') throw new Error('PostgreSQL is required for production property persistence');
 
     for (const item of results) {
       const { property, owner, geometry } = item;
-      let isNewProperty = !inMemoryStore.properties.some(
-        (p) => p.organization_id === orgId && (p.apn === property.apn || p.address === property.address)
-      );
+      let isNewProperty = process.env.NODE_ENV === 'production'
+        ? true
+        : !inMemoryStore.properties.some((p) => p.organization_id === orgId && (p.apn === property.apn || p.address === property.address));
 
-      if (pool && isNewProperty) {
+      if (pool) {
         try {
           const existing = await pool.query(
             `SELECT 1 FROM properties WHERE organization_id = $1 AND (apn = $2 OR address = $3) LIMIT 1`,
@@ -392,6 +393,7 @@ export class UnifiedPropertyDataProvider {
           );
           isNewProperty = existing.rowCount === 0;
         } catch (dbErr: any) {
+          if (process.env.NODE_ENV === 'production') throw dbErr;
           console.warn('[PropertyDataProvider] Could not verify property novelty:', dbErr.message);
           isNewProperty = false;
         }
@@ -402,43 +404,23 @@ export class UnifiedPropertyDataProvider {
         property.longitude = geometry.centroid.lon;
       }
 
-      // 1. Sync In-Memory Store
-      const existingPropIndex = inMemoryStore.properties.findIndex(
-        (p) => p.organization_id === orgId && (p.apn === property.apn || p.address === property.address)
-      );
-
-      if (existingPropIndex >= 0) {
-        inMemoryStore.properties[existingPropIndex] = property;
-      } else {
-        inMemoryStore.properties.unshift(property);
-      }
-
-      if (owner) {
-        const existingOwnerIndex = inMemoryStore.propertyOwners.findIndex(
-          (o) => o.organization_id === orgId && o.id === owner.id
+      // 1. PostgreSQL is authoritative in production. Memory is test/dev only.
+      if (process.env.NODE_ENV !== 'production') {
+        const existingPropIndex = inMemoryStore.properties.findIndex(
+          (p) => p.organization_id === orgId && (p.apn === property.apn || p.address === property.address)
         );
-        if (existingOwnerIndex >= 0) {
-          inMemoryStore.propertyOwners[existingOwnerIndex] = owner;
-        } else {
-          inMemoryStore.propertyOwners.unshift(owner);
+        if (existingPropIndex >= 0) inMemoryStore.properties[existingPropIndex] = property;
+        else inMemoryStore.properties.unshift(property);
+        if (owner) {
+          const existingOwnerIndex = inMemoryStore.propertyOwners.findIndex((o) => o.organization_id === orgId && o.id === owner.id);
+          if (existingOwnerIndex >= 0) inMemoryStore.propertyOwners[existingOwnerIndex] = owner;
+          else inMemoryStore.propertyOwners.unshift(owner);
         }
       }
 
       // 2. Persist to PostgreSQL if connected
       if (pool) {
         try {
-          // Ensure organization exists to satisfy foreign key constraints
-          await pool.query(
-            `INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
-             VALUES ($1, $2, $3, '{}'::jsonb, NOW(), NOW())
-             ON CONFLICT (id) DO NOTHING`,
-            [
-              orgId,
-              orgId === 'org_cmc_realty' ? 'CMC Realty & Property Management' : orgId.replace(/[-_]/g, ' '),
-              orgId.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'default-org',
-            ]
-          );
-
           if (owner) {
             await pool.query(
               `INSERT INTO property_owners (
@@ -508,6 +490,7 @@ export class UnifiedPropertyDataProvider {
             ]
           );
         } catch (dbErr: any) {
+          if (process.env.NODE_ENV === 'production') throw dbErr;
           console.error('[PropertyDataProvider] PostgreSQL persistence error:', dbErr.message);
         }
       }
@@ -529,7 +512,15 @@ export class UnifiedPropertyDataProvider {
       organization_id: orgId,
       source: results[0]?.provenance?.provider || 'County GIS API',
     };
-    inMemoryStore.auditLogs.unshift(auditEntry);
+    if (pool) {
+      await pool.query(
+        `INSERT INTO audit_logs (id, organization_id, agent, action, input, output, status, latency_ms, source, created_at)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`,
+        [auditEntry.id, orgId, auditEntry.agent, auditEntry.action, JSON.stringify(auditEntry.input), JSON.stringify(auditEntry.output), auditEntry.status, auditEntry.latency_ms || 0, auditEntry.source || null],
+      );
+    } else if (process.env.NODE_ENV !== 'production') {
+      inMemoryStore.auditLogs.unshift(auditEntry);
+    }
 
     return { savedCount, newlyDiscovered };
   }
