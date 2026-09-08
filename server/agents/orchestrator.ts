@@ -375,9 +375,9 @@ Identify the necessary tasks, assigned agents, objectives, and execution order.`
     }, auditLogs);
 
     // Stage 7: Agent 1 Final Synthesis according to strict contract
-    const recordsAnalyzed = res1.result?.records_analyzed || 4;
-    const qualifiedCount = res3.result?.qualified_leads?.length || 3;
-    const highPriorityCount = res3.result?.high_priority_count || 3;
+    const recordsAnalyzed = Number(res1.result?.records_analyzed || 0);
+    const qualifiedCount = Array.isArray(res3.result?.qualified_leads) ? res3.result.qualified_leads.length : 0;
+    const highPriorityCount = Number(res3.result?.high_priority_count || 0);
     const nextAction = topLead
       ? `Review the ${highPriorityCount} high-priority prospects and initiate personalized outreach to ${topLead.owner_name} (${topLead.property_address}).`
       : 'Review the identified property portfolio prospects.';

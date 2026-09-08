@@ -52,8 +52,6 @@ import { CrmKanbanBoard } from './CrmKanbanBoard';
 import { CrmAnalyticsView } from './CrmAnalyticsView';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
-import { LeadScoringControlBanner, ScoringFilterPreset } from './LeadScoringControlBanner';
-import { LeadScoreBreakdownModal } from './LeadScoreBreakdownModal';
 import { useToast } from '../contexts/ToastContext';
 
 interface LeadsViewProps {
@@ -97,7 +95,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   const [onlyTcpaSafe, setOnlyTcpaSafe] = useState(false);
   const [minScore, setMinScore] = useState<number>(0);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [scoringFilterPreset, setScoringFilterPreset] = useState<ScoringFilterPreset>('all');
   const [isRecalculatingScores, setIsRecalculatingScores] = useState(false);
 
   // Sorting State
@@ -147,10 +144,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
     }
   }, [initialSelectedLeadId, leadsList]);
 
-  // Surging Leads Count
-  const surgingLeadsCount = useMemo(() => {
-    return leadsList.filter((l) => (l.engagement_metrics?.score_delta || 0) > 0 || l.engagement_metrics?.score_trend === 'up').length;
-  }, [leadsList]);
 
   // Recalculate Dynamic Engagement Scores Handler
   const handleRecalculateScores = async () => {
@@ -174,44 +167,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       if (onRefreshLeads) onRefreshLeads();
     } catch (err: any) {
       addToast(err.message || 'Recalculation failed', 'error');
-    } finally {
-      setIsRecalculatingScores(false);
-    }
-  };
-
-  // Simulate Activity Wave Handler
-  const handleSimulateGlobalWave = async () => {
-    try {
-      setIsRecalculatingScores(true);
-      const targetLeads = leadsList.slice(0, 4);
-      for (const lead of targetLeads) {
-        const eventType = Math.random() > 0.5 ? 'call' : 'email_open';
-        await fetch('/api/leads/scoring-service/simulate-event', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            leadId: lead.id,
-            eventType,
-            payload: eventType === 'call' ? { duration_seconds: 180 } : undefined,
-          }),
-        });
-      }
-      const res = await fetch('/api/leads/scoring-service/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      const data = await res.json();
-      if (data.leads) {
-        setLeadsList(data.leads);
-        if (selectedLead) {
-          const updatedMatch = data.leads.find((l: LeadRecord) => l.id === selectedLead.id);
-          if (updatedMatch) setSelectedLead(updatedMatch);
-        }
-      }
-      addToast('Simulated incoming engagement events -> Lead scores surging!', 'success');
-      if (onRefreshLeads) onRefreshLeads();
-    } catch (err: any) {
-      addToast(err.message || 'Simulation failed', 'error');
     } finally {
       setIsRecalculatingScores(false);
     }
@@ -254,20 +209,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         // Min Score Filter
         const matchesMinScore = (lead.lead_score || 0) >= minScore;
 
-        // Dynamic Scoring Preset Filter
-        let matchesScoringPreset = true;
-        if (scoringFilterPreset === 'surging') {
-          matchesScoringPreset = (lead.engagement_metrics?.score_delta || 0) > 0 || lead.engagement_metrics?.score_trend === 'up';
-        } else if (scoringFilterPreset === 'high_calls') {
-          matchesScoringPreset = (lead.engagement_metrics?.total_talk_duration_seconds || 0) >= 90;
-        } else if (scoringFilterPreset === 'active_emails') {
-          matchesScoringPreset = (lead.engagement_metrics?.email_opened_count || 0) >= 2;
-        } else if (scoringFilterPreset === 'active_searches') {
-          matchesScoringPreset =
-            (lead.engagement_metrics?.gis_parcel_searches_count || 0) >= 2 ||
-            (lead.engagement_metrics?.property_views_count || 0) >= 3;
-        }
-
         return (
           matchesSearch &&
           matchesClassification &&
@@ -276,8 +217,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
           matchesDisposition &&
           matchesQuality &&
           matchesTcpa &&
-          matchesMinScore &&
-          matchesScoringPreset
+          matchesMinScore
         );
       })
       .sort((a, b) => {
@@ -321,7 +261,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
     selectedQuality,
     onlyTcpaSafe,
     minScore,
-    scoringFilterPreset,
     sortBy,
   ]);
 
@@ -876,16 +815,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Automated Lead Scoring Background Engine Controller */}
-      <LeadScoringControlBanner
-        activePreset={scoringFilterPreset}
-        onSelectPreset={(p) => setScoringFilterPreset(p)}
-        onRecalculateAll={handleRecalculateScores}
-        onSimulateGlobalActivity={handleSimulateGlobalWave}
-        isRecalculating={isRecalculatingScores}
-        surgingLeadsCount={surgingLeadsCount}
-      />
 
       {/* Multi-Option Filter & Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
@@ -1536,7 +1465,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
                               setSelectedDisposition('all');
                               setMinScore(0);
                               setOnlyTcpaSafe(false);
-                              setScoringFilterPreset('all');
                             }}
                             className="mt-2 text-xs text-cyan-600 hover:underline font-semibold cursor-pointer"
                           >
@@ -1875,32 +1803,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         />
       )}
 
-      {/* 12. Lead Dynamic Score & Engagement Breakdown Modal */}
-      {scoreBreakdownModalLead && (
-        <LeadScoreBreakdownModal
-          isOpen={Boolean(scoreBreakdownModalLead)}
-          onClose={() => setScoreBreakdownModalLead(null)}
-          lead={scoreBreakdownModalLead}
-          onSimulateEvent={async (leadId, eventType, payload) => {
-            try {
-              const res = await fetch('/api/leads/scoring-service/simulate-event', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ leadId, eventType, payload }),
-              });
-              const data = await res.json();
-              if (data.lead) {
-                setLeadsList((prev) => prev.map((l) => (l.id === data.lead.id ? data.lead : l)));
-                setScoreBreakdownModalLead(data.lead);
-                if (selectedLead?.id === data.lead.id) setSelectedLead(data.lead);
-                addToast(`Simulated ${eventType} event successfully! New dynamic score: ${data.lead.lead_score}`, 'success');
-              }
-            } catch (err: any) {
-              addToast(err.message || 'Event simulation failed', 'error');
-            }
-          }}
-        />
-      )}
     </div>
   );
 };

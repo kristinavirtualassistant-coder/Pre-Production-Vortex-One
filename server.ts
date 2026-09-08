@@ -26,7 +26,6 @@ import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
 import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
-import { leadScoringService } from './server/leadScoringService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
@@ -53,13 +52,6 @@ async function startServer() {
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
     if (isProduction) throw err;
-  }
-
-  // Start Automated Lead Scoring Background Engine (Recalculates every 30s based on calls, email opens, and property searches)
-  try {
-    leadScoringService.start();
-  } catch (scoreErr: any) {
-    console.error('[LeadScoringService] Startup error:', scoreErr.message);
   }
 
   // --- API Routes ---
@@ -292,6 +284,7 @@ async function startServer() {
 
   // --- Workflow Runs Subscription & Polling APIs ---
   app.get('/api/runs', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
     let runs = [...(inMemoryStore.runs || [])];
     const { workflow_id, status, limit } = req.query;
 
@@ -315,6 +308,7 @@ async function startServer() {
   });
 
   app.get('/api/runs/latest', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
     const runs = inMemoryStore.runs || [];
     if (runs.length === 0) {
       return res.json(null);
@@ -324,6 +318,7 @@ async function startServer() {
   });
 
   app.get('/api/runs/active', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
     const runs = inMemoryStore.runs || [];
     const active = runs.find((r) => r.status === 'running' || r.status === 'paused_approval');
     if (active) {
@@ -334,12 +329,14 @@ async function startServer() {
   });
 
   app.get('/api/runs/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
     const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
     if (!run) return res.status(404).json({ error: 'Workflow run not found' });
     res.json(run);
   });
 
   app.post('/api/runs/:id/abort', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run mutation API was removed; use PostgreSQL durable jobs.' });
     const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
     if (!run) return res.status(404).json({ error: 'Workflow run not found' });
 
@@ -890,10 +887,12 @@ async function startServer() {
 
   // Smart Forwarding API
   app.get('/api/settings/smart-forwarding', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     res.json(inMemoryStore.smartForwarding);
   });
 
   app.post('/api/settings/smart-forwarding', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     const { enabled, rules } = req.body;
     if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
     if (Array.isArray(rules)) inMemoryStore.smartForwarding.rules = rules;
@@ -902,6 +901,7 @@ async function startServer() {
 
   // Audit Logging API
   app.get('/api/audit/logs', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy audit-log API was removed; use /api/audit.' });
     try {
       res.json(inMemoryStore.auditLogs);
     } catch (err: any) {
@@ -911,6 +911,7 @@ async function startServer() {
   });
 
   app.post('/api/audit/log', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy audit-log writer was removed; audit events are persisted server-side.' });
     try {
       const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
       inMemoryStore.auditLogs.unshift({
@@ -2058,6 +2059,7 @@ async function startServer() {
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const schedules = (inMemoryStore.propertyRefreshSchedules || []).filter(
       (s) => !orgId || s.organization_id === orgId
@@ -2066,6 +2068,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
@@ -2129,6 +2132,7 @@ async function startServer() {
   });
 
   app.put('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2157,6 +2161,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules/:id/toggle', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2181,6 +2186,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2193,6 +2199,7 @@ async function startServer() {
   });
 
   app.delete('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2237,6 +2244,13 @@ async function startServer() {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updates = req.body;
+      if (isProduction) {
+        const pool = getPgPool();
+        if (!pool) return res.status(503).json({ error: 'Lead updates require PostgreSQL' });
+        const r = await pool.query('UPDATE leads SET stage=COALESCE($1,stage), lead_score=COALESCE($2,lead_score), classification=COALESCE($3,classification), assigned_agent=COALESCE($4,assigned_agent), dnc_compliant=COALESCE($5,dnc_compliant), next_recommended_action=COALESCE($6,next_recommended_action), updated_at=NOW(), last_activity_date=NOW() WHERE id=$7 AND organization_id=$8 RETURNING *', [updates.stage ?? null, updates.lead_score ?? null, updates.classification ?? null, updates.assigned_agent ?? null, updates.dnc_compliant ?? null, updates.next_recommended_action ?? null, id, orgId]);
+        if (!r.rowCount) return res.status(404).json({ error: 'Lead not found' });
+        return res.json(r.rows[0]);
+      }
 
       const index = inMemoryStore.leads.findIndex((l) => l.id === id && (!orgId || l.organization_id === orgId));
       if (index === -1) {
@@ -2327,6 +2341,13 @@ async function startServer() {
 
       const now = new Date().toISOString();
       let updatedCount = 0;
+      if (isProduction) {
+        const pool=getPgPool();
+        if(!pool) return res.status(503).json({error:'Lead updates require PostgreSQL'});
+        const u=updates||{};
+        const r=await pool.query('UPDATE leads SET stage=COALESCE($1,stage), lead_score=COALESCE($2,lead_score), classification=COALESCE($3,classification), assigned_agent=COALESCE($4,assigned_agent), dnc_compliant=COALESCE($5,dnc_compliant), next_recommended_action=COALESCE($6,next_recommended_action), updated_at=NOW(), last_activity_date=NOW() WHERE organization_id=$7 AND id=ANY($8::text[])',[u.stage??null,u.lead_score??null,u.classification??null,u.assigned_agent??null,u.dnc_compliant??null,u.next_recommended_action??null,orgId,leadIds]);
+        return res.json({success:true,updatedCount:r.rowCount||0});
+      }
 
       for (const id of leadIds) {
         const index = inMemoryStore.leads.findIndex((l) => l.id === id && (!orgId || l.organization_id === orgId));
@@ -2398,209 +2419,38 @@ async function startServer() {
     }
   });
 
-  // Re-Score Leads with Sub-Agent 2 Explainable Scoring Model
+  // PostgreSQL-authoritative explainable lead scoring.
   app.post('/api/leads/rescore', async (req, res) => {
     try {
-      const { leadIds, customWeights, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const targetIds: string[] = Array.isArray(leadIds) && leadIds.length > 0
-        ? leadIds
-        : inMemoryStore.leads.filter((l) => l.organization_id === orgId).map((l) => l.id);
-
-      const rescored: any[] = [];
-      const now = new Date().toISOString();
-
-      for (const id of targetIds) {
-        const index = inMemoryStore.leads.findIndex((l) => l.id === id);
-        if (index !== -1) {
-          const lead = inMemoryStore.leads[index];
-          const property = inMemoryStore.properties.find((p) => p.id === lead.primary_property_id || p.id === lead.property_id);
-          const owner = inMemoryStore.propertyOwners.find((o) => o.id === lead.owner_id);
-
-          // Calculate explainable weights
-          const factors: any[] = [];
-          let score = 0;
-
-          // 1. Absentee Landlord Factor
-          const isAbsentee = property?.is_absentee_owner ?? true;
-          const absenteeWeight = customWeights?.absentee ?? 25;
-          if (isAbsentee) {
-            score += absenteeWeight;
-            factors.push({
-              factor: 'Absentee Landlord',
-              score_contribution: absenteeWeight,
-              impact: absenteeWeight,
-              reasoning: 'Owner mailing address differs from subject parcel; high operational management friction.',
-            });
-          }
-
-          // 2. High Equity Factor
-          const equity = property?.estimated_equity || lead.estimated_equity || 850000;
-          const value = property?.estimated_value || lead.estimated_value || 1200000;
-          const equityRatio = value > 0 ? equity / value : 0.7;
-          const equityWeight = customWeights?.equity ?? 30;
-          if (equityRatio >= 0.5) {
-            const contribution = Math.round(equityWeight * Math.min(equityRatio, 1));
-            score += contribution;
-            factors.push({
-              factor: 'Substantial Equity (>50%)',
-              score_contribution: contribution,
-              impact: contribution,
-              reasoning: `Property has estimated $${(equity / 1000).toFixed(0)}k (${Math.round(equityRatio * 100)}%) equity, maximizing acquisition flexibility.`,
-            });
-          }
-
-          // 3. Multi-Unit / Commercial Scale
-          const units = property?.units_count || lead.units_count || 1;
-          const unitsWeight = customWeights?.units ?? 20;
-          if (units > 1) {
-            const contribution = Math.min(unitsWeight, 10 + units * 2);
-            score += contribution;
-            factors.push({
-              factor: `${units}-Unit Multi-Family Scale`,
-              score_contribution: contribution,
-              impact: contribution,
-              reasoning: `Multi-unit asset presents higher cashflow leverage and recurring management fee yield.`,
-            });
-          } else {
-            score += 10;
-            factors.push({
-              factor: 'Single Family Asset',
-              score_contribution: 10,
-              impact: 10,
-              reasoning: 'Standard single-family portfolio asset with active retail liquidity.',
-            });
-          }
-
-          // 4. Tax / Distress Indicator
-          const isDelinquent = property?.tax_delinquent ?? false;
-          if (isDelinquent) {
-            score += 20;
-            factors.push({
-              factor: 'Tax Delinquency Indicator',
-              score_contribution: 20,
-              impact: 20,
-              reasoning: 'Subject parcel flagged on County Assessor delinquent tax roll.',
-            });
-          } else {
-            score += 15;
-            factors.push({
-              factor: 'Clean Tax Roll & Title',
-              score_contribution: 15,
-              impact: 15,
-              reasoning: 'Zero delinquent tax liens registered with Orange County Tax Collector.',
-            });
-          }
-
-          // Clamp 0-100
-          const finalScore = Math.min(100, Math.max(10, score));
-          const classification = finalScore >= 80 ? 'high_priority' : finalScore >= 60 ? 'medium_priority' : 'nurture';
-
-          lead.lead_score = finalScore;
-          lead.classification = classification;
-          lead.priority_tier = classification;
-          lead.factors = factors;
-          lead.updated_at = now;
-
-          const currentLog = lead.activity_log || [];
-          currentLog.unshift({
-            id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-            timestamp: now,
-            action: `Sub-Agent 2 Re-scored lead to ${finalScore}/100 (${classification})`,
-            agent: 'sub_agent_2',
-          });
-          lead.activity_log = currentLog;
-
-          inMemoryStore.leads[index] = lead;
-          rescored.push(lead);
-        }
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Lead scoring requires PostgreSQL', code: 'LEAD_DATABASE_UNAVAILABLE' });
+      const ids = Array.isArray(req.body.leadIds) && req.body.leadIds.length ? req.body.leadIds : null;
+      const w = req.body.customWeights || {};
+      const aw = Number(w.absentee ?? 25), ew = Number(w.equity ?? 30), uw = Number(w.units ?? 20);
+      const q = await pool.query(`SELECT l.*, o.name AS owner_name, p.address AS property_address, p.is_absentee_owner, p.units_count, p.estimated_value, p.estimated_equity, p.tax_delinquent FROM leads l LEFT JOIN property_owners o ON o.id=l.owner_id AND o.organization_id=l.organization_id LEFT JOIN properties p ON p.id=l.primary_property_id AND p.organization_id=l.organization_id WHERE l.organization_id=$1 AND ($2::text[] IS NULL OR l.id=ANY($2::text[])) ORDER BY l.created_at DESC`, [orgId, ids]);
+      const leads:any[] = [];
+      for (const r of q.rows) {
+        const factors:any[]=[]; let score=0;
+        if (r.is_absentee_owner === true) { score+=aw; factors.push({factor:'Absentee Landlord',impact:aw,description:'Property record is marked absentee.'}); }
+        const value=Number(r.estimated_value)||0, equity=Number(r.estimated_equity)||0;
+        if (value>0 && equity/value>=0.5) { const c=Math.round(ew*Math.min(equity/value,1)); score+=c; factors.push({factor:'Substantial Equity (>=50%)',impact:c,description:'Stored property equity is at least 50% of stored value.'}); }
+        const units=Number(r.units_count)||0;
+        if (units>1) { const c=Math.min(uw,10+units*2); score+=c; factors.push({factor:`${units}-Unit Multi-Family Scale`,impact:c,description:'Stored property record indicates multiple units.'}); }
+        else if (units===1) { score+=10; factors.push({factor:'Single Family Asset',impact:10,description:'Stored property record indicates one unit.'}); }
+        if (r.tax_delinquent === true) { score+=20; factors.push({factor:'Tax Delinquency Indicator',impact:20,description:'Stored property record flags tax delinquency.'}); }
+        const finalScore=Math.min(100,Math.max(10,Math.round(score)));
+        const classification=finalScore>=80?'high_priority':finalScore>=60?'medium_priority':'nurture';
+        const u=await pool.query('UPDATE leads SET lead_score=$1, classification=$2, factors=$3, last_activity_date=NOW(), updated_at=NOW() WHERE id=$4 AND organization_id=$5 RETURNING *',[finalScore,classification,JSON.stringify(factors),r.id,orgId]);
+        if(u.rows[0]) leads.push({...u.rows[0],owner_name:r.owner_name||'',property_address:r.property_address||''});
       }
-
-      res.json({
-        success: true,
-        rescoredCount: rescored.length,
-        leads: rescored,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to re-score leads' });
-    }
-  });
-
-  // Automated Lead Scoring Service API Routes
-  app.get('/api/leads/scoring-service/status', (req, res) => {
-    try {
-      const status = leadScoringService.getStatus();
-      res.json(status);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to fetch scoring service status' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/toggle', (req, res) => {
-    try {
-      const isRunning = leadScoringService.toggle();
-      res.json({
-        success: true,
-        isRunning,
-        message: isRunning ? 'Automated Lead Scoring background service activated' : 'Automated Lead Scoring background service paused',
-        status: leadScoringService.getStatus(),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to toggle scoring service' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/trigger', (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const result = leadScoringService.recalculateAll(orgId);
-      res.json({
-        success: true,
-        updatedCount: result.updatedCount,
-        leads: result.leads,
-        status: leadScoringService.getStatus(),
-        message: `Dynamic engagement scores recalculated across ${result.updatedCount} leads based on recent call duration, email opens, and property searches.`,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to recalculate lead scores' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/simulate-event', (req, res) => {
-    try {
-      const { leadId, eventType, payload } = req.body;
-      if (!leadId || !eventType) {
-        return res.status(400).json({ error: 'leadId and eventType are required' });
-      }
-
-      const result = leadScoringService.simulateEngagementEvent(leadId, eventType, payload);
-      if (!result.success) {
-        return res.status(404).json({ error: result.message });
-      }
-
-      res.json({
-        success: true,
-        lead: result.lead,
-        delta: result.delta,
-        message: result.message,
-        status: leadScoringService.getStatus(),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to simulate engagement event' });
-    }
-  });
-
-  app.get('/api/leads/scoring-service/history', (req, res) => {
-    try {
-      const status = leadScoringService.getStatus();
-      res.json(status.latestScoreAdjustments || []);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to fetch scoring history' });
-    }
+      res.json({success:true,rescoredCount:leads.length,leads});
+    } catch(err:any) { console.error('PostgreSQL lead scoring error:',err); res.status(503).json({error:err.message||'Lead scoring unavailable'}); }
   });
 
   // Create Lead Manually
   app.post('/api/leads/create', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead creation route removed; create leads from canonical properties.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
@@ -2678,6 +2528,7 @@ async function startServer() {
 
   // Delete Individual Lead
   app.delete('/api/leads/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2697,6 +2548,7 @@ async function startServer() {
 
   // Batch Delete Leads
   app.post('/api/leads/batch-delete', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { leadIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2726,11 +2578,10 @@ async function startServer() {
       const { records, options } = req.body;
       let result;
 
-      if (records && Array.isArray(records) && records.length > 0) {
-        result = await DataImportService.reconcileBatch(orgId, records, options || {});
-      } else {
-        result = await DataImportService.syncProductionCrmSource(orgId, options || {});
+      if (!records || !Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ error: 'records is required; the legacy synthetic production feed has been removed.' });
       }
+      result = await DataImportService.reconcileBatch(orgId, records, options || {});
 
       res.status(200).json(result);
     } catch (err: any) {
@@ -2739,44 +2590,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/import/sync-production', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const result = await DataImportService.syncProductionCrmSource(orgId, {
-        autoScoreLeads: req.body.autoScoreLeads ?? true,
-        enforceDncVerification: req.body.enforceDncVerification ?? true,
-        assignedAgent: req.body.assignedAgent || 'sub_agent_2',
-      });
-      res.status(200).json(result);
-    } catch (err: any) {
-      console.error('Production CRM sync error:', err);
-      res.status(500).json({ error: err.message || 'Production sync failed' });
-    }
+  app.post('/api/import/sync-production', (_req, res) => {
+    res.status(410).json({ error: 'The legacy synthetic CRM feed was removed. Use the authoritative import endpoint.' });
   });
 
-  app.get('/api/import/summary', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === orgId);
-    const owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === orgId);
-    const leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === orgId);
-    const importAudits = (inMemoryStore.auditLogs || []).filter(
-      (a) => a.organization_id === orgId && a.action === 'reconcile_crm_import'
-    );
-
-    const totalEquity = properties.reduce((sum, p) => sum + (p.estimated_equity || 0), 0);
-    const totalValue = properties.reduce((sum, p) => sum + (p.estimated_value || 0), 0);
-    const dncCompliantLeads = leads.filter((l) => l.dnc_compliant).length;
-
-    res.json({
-      organization_id: orgId,
-      total_properties: properties.length,
-      total_owners: owners.length,
-      total_leads: leads.length,
-      dnc_compliant_leads: dncCompliantLeads,
-      total_portfolio_value: totalValue,
-      total_portfolio_equity: totalEquity,
-      recent_reconciliations: importAudits.slice(0, 10),
-    });
+  app.get('/api/import/summary', async (req, res) => {
+    try {
+      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
+      if(!pool) return res.status(503).json({error:'Import summary requires PostgreSQL'});
+      const r=await pool.query(`SELECT (SELECT COUNT(*) FROM properties WHERE organization_id=$1) AS total_properties, (SELECT COUNT(*) FROM property_owners WHERE organization_id=$1) AS total_owners, (SELECT COUNT(*) FROM leads WHERE organization_id=$1) AS total_leads, (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND dnc_compliant=true) AS dnc_compliant_leads, (SELECT COALESCE(SUM(estimated_value),0) FROM properties WHERE organization_id=$1) AS total_portfolio_value, (SELECT COALESCE(SUM(estimated_equity),0) FROM properties WHERE organization_id=$1) AS total_portfolio_equity`,[orgId]);
+      res.json({organization_id:orgId,...r.rows[0]});
+    } catch(err:any){res.status(503).json({error:'Import summary unavailable'});}
   });
 
   app.get('/api/import/validate-integrity', async (req, res) => {
@@ -3106,144 +2930,25 @@ async function startServer() {
     }
   });
 
+  // Direct outbound dial: provider is authoritative; no fabricated completed calls.
   app.post('/api/calls/dial', async (req, res) => {
     try {
-      const {
-        contact_name,
-        phone_number,
-        property_address,
-        call_strategy_brief,
-        campaign_id,
-        telephony_provider
-      } = req.body;
-
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const cleanNumber = phone_number || '(949) 555-0100';
-
-      // 1. Safe TCPA & DNC Pre-Dial Check (with defensive fallback)
-      try {
-        if (SuppressionService && typeof SuppressionService.isSuppressed === 'function') {
-          const suppression = await SuppressionService.isSuppressed(orgId, cleanNumber);
-          if (suppression && suppression.isSuppressed) {
-            inMemoryStore.auditLogs.unshift({
-              id: `audit_dnc_dial_${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              agent: 'sub_agent_7',
-              action: 'outbound_dial_blocked_by_dnc',
-              input: { phone_number: cleanNumber, contact_name },
-              output: { reason: suppression.reason || 'DNC Registry Match', blocked: true },
-              status: 'warning',
-              latency_ms: 8,
-              organization_id: orgId,
-            });
-
-            return res.status(403).json({
-              error: 'TCPA Compliance Block: Phone number is on the Do-Not-Call / Suppression Registry.',
-              isSuppressed: true,
-              reason: suppression.reason || 'DNC Registry Match',
-            });
-          }
-        }
-      } catch (suppressErr: any) {
-        console.warn('[Dialer] Suppression check fallback bypassed:', suppressErr.message);
-      }
-
-      // 2. Safe Telephony Adapter Dispatch via RingCentral
-      const provider = 'ringcentral';
-      let telephonyCallId = `rc_tel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-      try {
-        const adapter = getTelephonyAdapter('ringcentral');
-        if (adapter && typeof adapter.initiateCall === 'function') {
-          const telResult = await adapter.initiateCall({
-            organizationId: orgId,
-            campaignId: campaign_id || 'camp_401',
-            toNumber: cleanNumber,
-            contactName: contact_name || 'Property Owner',
-            callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
-          });
-          if (telResult?.telephonyCallId) {
-            telephonyCallId = telResult.telephonyCallId;
-          }
-        }
-      } catch (adapterErr: any) {
-        console.warn('[Dialer] RingCentral dispatch note:', adapterErr.message);
-      }
-
-      // 3. Create Completed Call Record
-      const callId = `call_${Date.now()}`;
-      const now = new Date().toISOString();
-      const duration = Math.floor(Math.random() * 75) + 35; // 35s - 110s realistic duration
-
-      const callRecord: CallRecord = {
-        id: callId,
-        organization_id: orgId,
-        campaign_id: campaign_id || 'camp_401',
-        telephony_call_id: telephonyCallId,
-        contact_name: contact_name || 'Property Owner',
-        phone_number: cleanNumber,
-        property_address: property_address || '1420 Newport Blvd, Costa Mesa, CA',
-        status: 'completed',
-        direction: 'outbound',
-        duration_seconds: duration,
-        disposition: 'interested',
-        call_strategy_brief: call_strategy_brief || 'Management introduction and maintenance review',
-        recording_url: `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`,
-        notes: 'Outbound call connected via RingCentral Telephony. Owner open to management review.',
-        created_at: now,
-      };
-
-      // 4. Persistence Store Sync
-      if (!inMemoryStore.calls) inMemoryStore.calls = [];
-      inMemoryStore.calls.unshift(callRecord);
-
-      // PostgreSQL Optional Sync
-      const pool = getPgPool();
-      if (pool) {
-        try {
-          await pool.query(
-            `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
-            [
-              callId,
-              orgId,
-              callRecord.campaign_id,
-              telephonyCallId,
-              callRecord.contact_name,
-              callRecord.phone_number,
-              callRecord.direction,
-              callRecord.status,
-              callRecord.disposition,
-              callRecord.duration_seconds,
-              callRecord.call_strategy_brief,
-              callRecord.recording_url,
-              now,
-            ]
-          );
-        } catch (pgErr: any) {
-          console.warn('[Dialer DB Sync] PG insert fallback:', pgErr.message);
-        }
-      }
-
-      // 5. Update Dialer Metrics in memory
-      inMemoryStore.auditLogs.unshift({
-        id: `audit_dial_${Date.now()}`,
-        timestamp: now,
-        agent: 'sub_agent_6',
-        action: 'outbound_call_connected',
-        input: { contact_name, phone_number: cleanNumber, provider },
-        output: { callId, duration_seconds: duration, disposition: 'interested' },
-        status: 'success',
-        latency_ms: 120,
-        organization_id: orgId,
-      });
-
-      return res.status(200).json(callRecord);
-    } catch (err: any) {
-      console.error('Fatal Dialer execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to dispatch outbound call' });
-    }
+      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool=getPgPool();
+      if(!pool) return res.status(503).json({error:'Outbound dialing requires PostgreSQL',code:'CALL_DATABASE_UNAVAILABLE'});
+      const {contact_name,phone_number,property_address,call_strategy_brief,campaign_id}=req.body;
+      if(!phone_number) return res.status(400).json({error:'phone_number is required'});
+      const suppression=await SuppressionService.isSuppressed(orgId,String(phone_number));
+      if(suppression.isSuppressed) return res.status(403).json({error:'TCPA Compliance Block: Phone number is suppressed.',isSuppressed:true,reason:suppression.reason});
+      if(!campaign_id) return res.status(400).json({error:'campaign_id is required for outbound dialing'});
+      const campaign=await pool.query('SELECT id FROM campaign WHERE id=$1 AND organization_id=$2',[campaign_id,orgId]);
+      if(!campaign.rowCount) return res.status(404).json({error:'Campaign not found'});
+      const callId=`call_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+      const adapter=getTelephonyAdapter('ringcentral');
+      const tel=await adapter.initiateCall({organizationId:orgId,campaignId:campaign_id,toNumber:String(phone_number),contactName:String(contact_name||'Unknown Contact'),callStrategyBrief:call_strategy_brief});
+      const result=await pool.query(`INSERT INTO call (id,organization_id,campaign_id,telephony_call_id,contact_name,phone_number,direction,status,call_strategy_brief,created_at) VALUES ($1,$2,$3,$4,$5,$6,'outbound','initiated',$7,NOW()) RETURNING *`,[callId,orgId,campaign_id,tel.telephonyCallId||null,contact_name||'Unknown Contact',phone_number,call_strategy_brief||null]);
+      res.status(201).json({...result.rows[0],property_address:property_address||null});
+    } catch(err:any){console.error('Outbound dial error:',err);res.status(502).json({error:err.message||'Outbound dial failed'});}
   });
 
   // DNC & Suppression List Management APIs
@@ -3337,13 +3042,14 @@ async function startServer() {
     }
   });
 
-  // Observability & Audit Logs
-  app.get('/api/audit', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.auditLogs || []).filter(
-      (a) => a.organization_id === orgId
-    );
-    res.json(filtered);
+  // PostgreSQL-authoritative audit log reader.
+  app.get('/api/audit', async (req, res) => {
+    try {
+      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
+      if(!pool) return res.status(503).json({error:'Audit logs require PostgreSQL'});
+      const result=await pool.query('SELECT * FROM audit_logs WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500',[orgId]);
+      res.json(result.rows);
+    } catch(err:any){res.status(503).json({error:'Audit logs are temporarily unavailable'});}
   });
 
   // Text-To-Speech API (gemini-3.1-flash-tts-preview)
@@ -3914,6 +3620,7 @@ ${transcript}`;
 
   // 1. List Templates with optional filters
   app.get('/api/outreach-templates', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production' && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
       seedInitialData();
     }
@@ -3965,6 +3672,7 @@ ${transcript}`;
 
   // 2. Get single template
   app.get('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Outreach template not found' });
     res.json(tpl);
@@ -3972,6 +3680,7 @@ ${transcript}`;
 
   // 3. Create template
   app.post('/api/outreach-templates', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { name, description, channel, category, subject, body, tags, is_default } = req.body;
@@ -4038,6 +3747,7 @@ ${transcript}`;
 
   // 4. Update template
   app.put('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4094,6 +3804,7 @@ ${transcript}`;
 
   // 5. Delete template
   app.delete('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4126,6 +3837,7 @@ ${transcript}`;
 
   // 6. Duplicate template
   app.post('/api/outreach-templates/:id/duplicate', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4160,6 +3872,7 @@ ${transcript}`;
 
   // 7. Render Template with dynamic property / owner / custom variables
   app.post('/api/outreach-templates/render', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const {
         templateId,
@@ -4263,6 +3976,7 @@ ${transcript}`;
 
   // 8. Record usage & performance for a template
   app.post('/api/outreach-templates/:id/use', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;

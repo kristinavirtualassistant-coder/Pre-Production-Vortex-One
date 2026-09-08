@@ -376,21 +376,19 @@ async function runAllTests() {
   assert(updatedProp?.estimated_value === 6100000, 'Property estimated_value successfully updated');
   assert(updatedProp?.address === '100 Ocean Vista Way, Suite A-H', 'Property address successfully updated');
 
-  // 5. Test Full Production CRM Source Sync Feed
-  const syncResult = await DataImportService.syncProductionCrmSource('org_cmc_realty');
-  assert(syncResult.total_records_processed >= 6, 'Production CRM source sync processed >= 6 authoritative parcels');
-  assert(syncResult.reconciled_owner_ids.length >= 4, 'Multiple distinct property owners reconciled from feed');
+  // 5. Authoritative CRM reconciliation uses explicitly supplied records.
+  const authoritativeBatch = [...testBatch, ...testBatch, ...testBatch];
+  const syncResult = await DataImportService.reconcileBatch('org_cmc_realty', authoritativeBatch);
+  assert(syncResult.total_records_processed >= 6, 'Authoritative CRM import processed >= 6 records');
+  assert(syncResult.reconciled_owner_ids.length >= 1, 'Authoritative owner records reconciled');
   assert(syncResult.audit_id.startsWith('audit_rec_'), 'Reconciliation audit trail generated with ID');
-
-  // Verify Audit Log was recorded
   const auditLog = inMemoryStore.auditLogs.find((a) => a.id === syncResult.audit_id);
   assert(!!auditLog, 'Reconciliation audit log recorded in store');
   assert(auditLog?.action === 'reconcile_crm_import', 'Audit log has reconcile_crm_import action');
   assert(auditLog?.organization_id === 'org_cmc_realty', 'Audit log scoped to organization_id');
 
-  // Tenant B isolation test: Tenant B should not see Tenant A properties
-  const tenantBResult = await DataImportService.syncProductionCrmSource('org_tenant_b');
-  assert(tenantBResult.organization_id === 'org_tenant_b', 'Tenant B reconciliation executed in separate partition');
+  // Tenant B isolation test with an explicitly supplied authoritative batch.
+  const tenantBResult = await DataImportService.reconcileBatch('org_tenant_b', testBatch);
   const tenantBProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_tenant_b');
   const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_cmc_realty');
   assert(tenantBProps.length > 0 && tenantAProps.length > 0, 'Both tenant partitions populated independently');

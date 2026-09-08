@@ -6,7 +6,7 @@
 import { Task, AgentId, AgentProvenance, QAVerificationResult } from '../../src/types';
 import { executeTool } from '../tools';
 import { generateAgentText, generateSpeechTTS } from '../gemini';
-import { inMemoryStore } from '../db/db';
+import { getPgPool } from '../db/db';
 
 export interface AgentExecutionResult {
   status: 'completed' | 'failed' | 'needs_review' | 'awaiting_approval';
@@ -103,7 +103,10 @@ Analyze the domain, formulate initial hypotheses, identify missing information, 
 
     case 'sub_agent_2': {
       // Lead & CRM Intelligence
-      const properties = task.input.properties || inMemoryStore.properties;
+      const properties = Array.isArray(task.input.properties) ? task.input.properties : [];
+      if (!properties.length) {
+        return { status: 'needs_review', result: { qualified_leads: [], high_priority_count: 0, average_score: 0, reason: 'No authoritative property records were supplied.' }, confidence: 1, provenance, warnings: ['No authoritative property records available.'] };
+      }
       const qualifiedLeads = [];
 
       for (const prop of properties) {
@@ -218,13 +221,16 @@ Distinguish between VERIFIED facts, STRONG indications, and INFERENCES. Retain s
         };
       }
 
-      const rawRecords = task.input.records || inMemoryStore.properties;
+      const rawRecords = Array.isArray(task.input.records) ? task.input.records : [];
+      if (!rawRecords.length) {
+        return { status: 'needs_review', result: { enriched_count: 0, normalized_records: [], deduplicated: 0, pipeline_state: 'NO_AUTHORITATIVE_RECORDS' }, confidence: 1, provenance, warnings: ['No authoritative records available for enrichment.'] };
+      }
       const enrichedRecords = rawRecords.map((r: any) => ({
         ...r,
         normalized_address: `${r.address}, ${r.city}, ${r.state} ${r.zip}`.toUpperCase(),
-        entity_resolved: r.is_corporate_owned ? 'LLC_PORTFOLIO_ENTITY' : 'INDIVIDUAL_TRUSTEE',
-        enrichment_confidence: 0.96,
-        data_quality_score: 98,
+        entity_resolved: r.entity_type || r.owner_entity_type || 'unknown',
+        enrichment_confidence: r.entity_type || r.owner_entity_type ? 0.96 : 0,
+        data_quality_score: r.entity_type || r.owner_entity_type ? 98 : 0,
       }));
 
       provenance.push({
@@ -251,7 +257,10 @@ Distinguish between VERIFIED facts, STRONG indications, and INFERENCES. Retain s
 
     case 'sub_agent_5': {
       // Outreach Intelligence Agent
-      const lead = task.input.lead || (inMemoryStore.leads[0] as any);
+      const lead = task.input.lead as any;
+      if (!lead) {
+        return { status: 'needs_review', result: { outreach_state: 'NO_SOURCE_BACKED_LEAD' }, confidence: 1, provenance, warnings: ['No source-backed lead was supplied.'] };
+      }
       const prompt = `You are Sub-Agent 5 (Outreach Intelligence for CMC Realty & Property Management).
 Generate a personalized, high-conversion outbound call strategy and script for:
 Lead Owner: ${lead?.owner_name || 'Absentee Owner'}
@@ -302,9 +311,16 @@ Format with:
 
     case 'sub_agent_6': {
       // Analytics & Scoring Agent
-      const properties = inMemoryStore.properties;
-      const leads = inMemoryStore.leads;
-      const campaigns = inMemoryStore.campaigns;
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for analytics');
+      const [propertiesResult, leadsResult, campaignsResult] = await Promise.all([
+        pool.query('SELECT estimated_value, estimated_equity FROM properties WHERE organization_id = $1', [context.organizationId]),
+        pool.query('SELECT classification FROM leads WHERE organization_id = $1', [context.organizationId]),
+        pool.query('SELECT converted_count, connected_count FROM campaign WHERE organization_id = $1', [context.organizationId]),
+      ]);
+      const properties = propertiesResult.rows;
+      const leads = leadsResult.rows;
+      const campaigns = campaignsResult.rows;
 
       const totalValuation = properties.reduce((acc, p) => acc + p.estimated_value, 0);
       const totalEquity = properties.reduce((acc, p) => acc + p.estimated_equity, 0);
@@ -331,7 +347,7 @@ Format with:
           active_leads_count: leads.length,
           high_priority_leads_count: highPriorityLeads,
           campaign_conversion_rate_pct: Math.round(conversionRate * 100),
-          forecasting_trend: 'Bullish multi-family management demand in Central Orange County (+14% YoY).',
+          forecasting_trend: null,
         },
         confidence: 1.0,
         provenance,

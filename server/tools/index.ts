@@ -39,8 +39,10 @@ export const TOOLS: Record<string, ToolDefinition> = {
       });
       return {
         skip_trace_result: result,
-        status: 'completed',
-        summary: `5-Step Skip Trace completed for ${result.address}. APN: ${result.step1_gis.apn}, Legal Owner: ${result.step2_assessor_owner.legal_owner_name}, Absentee Status: ${result.step3_mailing_analysis.absentee_tier}, SOS Entity: ${result.step4_corporate_trace.entity_name}, Platform Lookups: ${result.step5_contact_discovery.lookup_links.length} generated.`,
+        status: result.status || 'unavailable',
+        summary: result.status === 'completed'
+          ? `5-Step Skip Trace completed for ${result.address}.`
+          : '5-Step Skip Trace is unavailable because no authoritative source-backed enrichment was available.',
       };
     },
   },
@@ -278,21 +280,14 @@ export const TOOLS: Record<string, ToolDefinition> = {
     },
     execute: async (args, context) => {
       const orgId = requireOrganizationId(context.organizationId);
-      if (args.sync_from_production_feed || !args.records || args.records.length === 0) {
-        const result = await DataImportService.syncProductionCrmSource(orgId, {
-          autoScoreLeads: args.auto_score_leads ?? true,
-          enforceDncVerification: args.enforce_dnc ?? true,
-          assignedAgent: context.agentId,
-        });
-        return result;
-      } else {
-        const result = await DataImportService.reconcileBatch(orgId, args.records, {
-          autoScoreLeads: args.auto_score_leads ?? true,
-          enforceDncVerification: args.enforce_dnc ?? true,
-          assignedAgent: context.agentId,
-        });
-        return result;
+      if (!Array.isArray(args.records) || args.records.length === 0) {
+        throw new Error('records are required; the legacy synthetic production feed has been removed');
       }
+      return await DataImportService.reconcileBatch(orgId, args.records, {
+        autoScoreLeads: args.auto_score_leads ?? true,
+        enforceDncVerification: args.enforce_dnc ?? true,
+        assignedAgent: context.agentId,
+      });
     },
   },
 };

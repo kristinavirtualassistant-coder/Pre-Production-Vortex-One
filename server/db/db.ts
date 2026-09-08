@@ -45,14 +45,7 @@ let currentDbStatus: DatabaseStatus = {
 
 // In-memory persistent collections (synchronized across app execution)
 export const inMemoryStore = {
-  organizations: [
-    {
-      id: 'org_cmc_realty',
-      name: 'CMC Realty & Property Management',
-      slug: 'cmc-realty',
-      settings: { timezone: 'America/Los_Angeles', targetMarket: 'Orange County, CA' },
-    },
-  ],
+  organizations: [] as Array<{ id: string; name: string; slug: string; settings: Record<string, any> }>,
   properties: [] as Property[],
   propertyOwners: [] as PropertyOwner[],
   leads: [] as LeadRecord[],

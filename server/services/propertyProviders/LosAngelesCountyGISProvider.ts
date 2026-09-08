@@ -83,7 +83,7 @@ export class LosAngelesCountyGISProvider implements IPropertyDataProvider {
 
     const response = await fetchWithTimeout(targetUrl, {
       method: 'GET',
-    }, 10000);
+    }, 30000);
 
     if (!response.ok) {
       throw new Error(`LA County Assessor request failed with HTTP ${response.status}: ${response.statusText}`);
