@@ -128,12 +128,30 @@ export const TOOLS: Record<string, ToolDefinition> = {
         await pool.query(`UPDATE call SET status = 'failed', notes = $1, ended_at = CURRENT_TIMESTAMP WHERE id = $2 AND organization_id = $3`, [String(error), callId, context.organizationId]);
         throw error;
       }
-      const durationSeconds = Math.floor(Math.random() * 90) + 45;
-      const notes = `Automated call initiated by ${context.agentId} via ${provider.toUpperCase()}.`;
-      const recordingUrl = `https://storage.googleapis.com/vortex-one-recordings/${callId}.mp3`;
-      const updated = await pool.query(`UPDATE call SET telephony_call_id = $1, status = 'completed', disposition = 'interested', duration_seconds = $2, recording_url = $3, notes = $4, ended_at = CURRENT_TIMESTAMP WHERE id = $5 AND organization_id = $6 RETURNING id`, [telResult.telephonyCallId, durationSeconds, recordingUrl, notes, callId, context.organizationId]);
-      if (!updated.rows.length) throw new Error('Outbound call completed but authoritative call persistence failed');
-      return { success: true, call_id: callId, telephony_call_id: telResult.telephonyCallId, status: 'completed', duration_seconds: durationSeconds, recording_url: recordingUrl, notes };
+
+      if (!telResult?.success || !telResult.telephonyCallId) {
+        const providerError = telResult?.error || 'Telephony provider did not return a call identifier';
+        await pool.query(
+          `UPDATE call SET status = 'failed', notes = $1, ended_at = CURRENT_TIMESTAMP WHERE id = $2 AND organization_id = $3`,
+          [providerError, callId, context.organizationId],
+        );
+        return { success: false, call_id: callId, status: 'failed', error: providerError };
+      }
+
+      const notes = `Outbound call initiated by ${context.agentId} via ${provider.toUpperCase()}; awaiting provider events for completion state.`;
+      const updated = await pool.query(
+        `UPDATE call SET telephony_call_id = $1, status = 'initiated', notes = $2 WHERE id = $3 AND organization_id = $4 RETURNING id`,
+        [telResult.telephonyCallId, notes, callId, context.organizationId],
+      );
+      if (!updated.rows.length) throw new Error('Outbound call was initiated but authoritative call persistence could not be updated');
+
+      return {
+        success: true,
+        call_id: callId,
+        telephony_call_id: telResult.telephonyCallId,
+        status: 'initiated',
+        notes,
+      };
     },
   },
 

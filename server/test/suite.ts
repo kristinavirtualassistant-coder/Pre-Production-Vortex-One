@@ -35,6 +35,7 @@ import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
 import './phase7AgentRuntimeBoundary.test';
 import './agentRuntimePostgresAuthority.test';
+import './agentMakeCallStateIntegrity.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
