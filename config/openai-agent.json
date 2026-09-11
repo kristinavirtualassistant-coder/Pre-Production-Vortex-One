@@ -1,0 +1,15 @@
+{
+  "name": "New agent",
+  "model": "gpt-6-astra",
+  "instructions": "",
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  }
+}
