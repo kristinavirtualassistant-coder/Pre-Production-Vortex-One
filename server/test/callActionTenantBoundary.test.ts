@@ -51,3 +51,13 @@ function routeBody(marker: string, nextMarker: string): string {
 }
 
 console.log('call action tenant boundary tests passed');
+
+
+{
+  const body = routeBody("app.post('/api/calls/dial'", "  // DNC & Suppression List Management APIs");
+  assert.match(body, /requireOrganizationId/, 'manual dial must derive tenant from authenticated context');
+  assert.match(body, /getPgPool\(\)/, 'manual dial must require PostgreSQL');
+  assert.match(body, /idempotencyKey/, 'manual dial must require an idempotency key');
+  assert.match(body, /ManualDialService\.dial/, 'manual dial must use the authoritative dialing service');
+  assert.doesNotMatch(body, /555-0100|Math\.random\(\).*duration|status: 'completed'/, 'manual dial route must not synthesize calls or fake completion data');
+}

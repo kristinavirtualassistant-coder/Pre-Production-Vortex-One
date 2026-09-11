@@ -20,6 +20,7 @@ import { CampaignManager } from './server/dialer/campaignManager';
 import { SuppressionService } from './server/dialer/suppressionService';
 import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
+import { ManualDialService, ManualDialNotFoundError, ManualDialSuppressedError } from './server/dialer/manualDialService';
 import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
@@ -2945,23 +2946,55 @@ async function startServer() {
 
   // Direct outbound dial: provider is authoritative; no fabricated completed calls.
   app.post('/api/calls/dial', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'Manual dialing requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+
+    const {
+      contact_name,
+      phone_number,
+      property_address,
+      call_strategy_brief,
+      campaign_id,
+      lead_id,
+      contact_id,
+      idempotencyKey,
+      idempotency_key,
+      telephony_provider,
+    } = req.body || {};
+
+    if (telephony_provider && telephony_provider !== 'ringcentral') {
+      return res.status(400).json({ error: 'Only RingCentral is supported for manual dialing' });
+    }
+    if (!phone_number) return res.status(400).json({ error: 'phone_number is required', code: 'INVALID_PHONE' });
+    if (!idempotencyKey && !idempotency_key) return res.status(400).json({ error: 'idempotencyKey is required for manual dialing', code: 'IDEMPOTENCY_KEY_REQUIRED' });
+
     try {
-      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool=getPgPool();
-      if(!pool) return res.status(503).json({error:'Outbound dialing requires PostgreSQL',code:'CALL_DATABASE_UNAVAILABLE'});
-      const {contact_name,phone_number,property_address,call_strategy_brief,campaign_id}=req.body;
-      if(!phone_number) return res.status(400).json({error:'phone_number is required'});
-      const suppression=await SuppressionService.isSuppressed(orgId,String(phone_number));
-      if(suppression.isSuppressed) return res.status(403).json({error:'TCPA Compliance Block: Phone number is suppressed.',isSuppressed:true,reason:suppression.reason});
-      if(!campaign_id) return res.status(400).json({error:'campaign_id is required for outbound dialing'});
-      const campaign=await pool.query('SELECT id FROM campaign WHERE id=$1 AND organization_id=$2',[campaign_id,orgId]);
-      if(!campaign.rowCount) return res.status(404).json({error:'Campaign not found'});
-      const callId=`call_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-      const adapter=getTelephonyAdapter('ringcentral');
-      const tel=await adapter.initiateCall({organizationId:orgId,campaignId:campaign_id,toNumber:String(phone_number),contactName:String(contact_name||'Unknown Contact'),callStrategyBrief:call_strategy_brief});
-      const result=await pool.query(`INSERT INTO call (id,organization_id,campaign_id,telephony_call_id,contact_name,phone_number,direction,status,call_strategy_brief,created_at) VALUES ($1,$2,$3,$4,$5,$6,'outbound','initiated',$7,NOW()) RETURNING *`,[callId,orgId,campaign_id,tel.telephonyCallId||null,contact_name||'Unknown Contact',phone_number,call_strategy_brief||null]);
-      res.status(201).json({...result.rows[0],property_address:property_address||null});
-    } catch(err:any){console.error('Outbound dial error:',err);res.status(502).json({error:err.message||'Outbound dial failed'});}
+      const result = await ManualDialService.dial(pool, getTelephonyAdapter('ringcentral'), {
+        organizationId: orgId,
+        idempotencyKey: String(idempotencyKey || idempotency_key),
+        contactName: String(contact_name || 'Property Owner'),
+        phoneNumber: String(phone_number),
+        propertyAddress: property_address ? String(property_address) : undefined,
+        callStrategyBrief: call_strategy_brief ? String(call_strategy_brief) : undefined,
+        campaignId: campaign_id ? String(campaign_id) : undefined,
+        leadId: lead_id ? String(lead_id) : undefined,
+        contactId: contact_id ? String(contact_id) : undefined,
+      });
+      return res.status(result.status === 'duplicate_ignored' ? 200 : result.status === 'failed' ? 502 : 200).json(result);
+    } catch (err: any) {
+      if (err instanceof ManualDialSuppressedError || err?.code === 'CALL_SUPPRESSED') {
+        return res.status(409).json({ error: err.message, code: 'CALL_SUPPRESSED', isSuppressed: true });
+      }
+      if (err instanceof ManualDialNotFoundError || err?.code === 'CALL_REFERENCE_NOT_FOUND') {
+        return res.status(404).json({ error: err.message, code: 'CALL_REFERENCE_NOT_FOUND' });
+      }
+      if (err?.message?.includes('10-digit US phone')) {
+        return res.status(400).json({ error: err.message, code: 'INVALID_PHONE' });
+      }
+      console.error('[Dialer] Manual dial failed:', err);
+      return res.status(503).json({ error: 'Manual dialing is temporarily unavailable', code: 'CALL_DIAL_UNAVAILABLE' });
+    }
   });
 
   // DNC & Suppression List Management APIs

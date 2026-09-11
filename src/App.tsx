@@ -482,6 +482,7 @@ export default function App() {
         },
         body: JSON.stringify({
           ...payload,
+          idempotencyKey: payload?.idempotencyKey || crypto.randomUUID(),
           organization_id: orgId,
           organizationId: orgId,
         }),
