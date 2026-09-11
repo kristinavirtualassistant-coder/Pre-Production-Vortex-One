@@ -33,6 +33,7 @@ import {
 import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
+import './manualDialService.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
@@ -60,7 +61,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 10, 'Migration count is 10', `Expected 10, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 11, 'Migration count is 11', `Expected 11, got ${MIGRATIONS.length}`);
   
   const migrationNames = MIGRATIONS.map(m => m.name);
   assert(
