@@ -72,15 +72,6 @@ RingCentral is an external telephony provider. Configure its credentials only th
 
 Do not expose RingCentral credentials through `VITE_*` variables or store them in PostgreSQL records.
 
-## OpenAI Agents
-
-OpenAI is an optional external agent provider. Configure:
-
-- `OPENAI_API_KEY`
-- optional `OPENAI_PROJECT_ID`
-
-The OpenAI agent runner keeps its persisted conversation identifier under the local `.openai/` state directory. That state is local runtime state and must not be committed. A provider 404 does not automatically replace the stored conversation identifier.
-
 ## Database migrations
 
 Application startup applies the repository migrations transactionally. PostgreSQL is authoritative for production state.
