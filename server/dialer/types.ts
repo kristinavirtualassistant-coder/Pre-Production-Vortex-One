@@ -31,6 +31,9 @@ export type CallDisposition =
 
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived' | 'scheduled';
 
+/** Provider identifiers are configuration values; RingCentral is the current implementation. */
+export type TelephonyProvider = 'ringcentral' | (string & {});
+
 export type ContactDialStatus =
   | 'queued'
   | 'dialing'
@@ -48,7 +51,7 @@ export interface CampaignRecord {
   description?: string;
   status: CampaignStatus;
   target_market: string;
-  telephony_provider: 'ringcentral';
+  telephony_provider: TelephonyProvider;
   total_contacts: number;
   dialed_count: number;
   connected_count: number;

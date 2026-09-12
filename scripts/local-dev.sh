@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PGDATA="${VORTEX_LOCAL_PGDATA:-$HOME/.vortex-one-postgres}"
 PGPORT="${VORTEX_LOCAL_PGPORT:-5433}" # isolated local port 5433
 PGSOCKET="${VORTEX_LOCAL_PGSOCKET:-/tmp}"
-PGDATABASE="${SQL_DATABASE:-vortex-one-database}"
+PGDATABASE="${SQL_DB_NAME:-${SQL_DATABASE:-vortex-one-database}}"
 PGUSER="${SQL_USER:-postgres}"
 
 if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1 || ! command -v psql >/dev/null 2>&1; then
@@ -54,6 +54,6 @@ export VITE_LOCAL_DEV_AUTH=true
 export SQL_HOST="$PGSOCKET"
 export SQL_PORT="$PGPORT"
 export SQL_USER="$PGUSER"
-export SQL_DATABASE="$PGDATABASE"
+export SQL_DB_NAME="$PGDATABASE"
 
 npm run dev

@@ -41,7 +41,7 @@ export const SyncStatusFooter: React.FC<SyncStatusFooterProps> = ({
   const [timeAgo, setTimeAgo] = useState<string>('Just now');
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
-  const [dbInfo, setDbInfo] = useState<any>(dbStatus || { type: 'PostgreSQL Cloud SQL', connected: true });
+  const [dbInfo, setDbInfo] = useState<any>(dbStatus || { type: 'postgresql', connected: true });
 
   // Measure latency to backend /api/health
   const pingBackend = useCallback(async () => {

@@ -10,6 +10,7 @@ import {
   DialingSessionRecord,
   CallTableRecord,
   CallEventRecord,
+  TelephonyProvider,
 } from './types';
 import { SuppressionService, normalizePhoneNumber } from './suppressionService';
 import { getTelephonyAdapter } from './telephonyAdapter';
@@ -53,7 +54,7 @@ export class CampaignManager {
     name: string;
     description?: string;
     targetMarket?: string;
-    telephonyProvider?: 'ringcentral';
+    telephonyProvider?: TelephonyProvider;
     totalContacts?: number;
     scheduledAt?: string;
     scheduledBy?: string;
@@ -70,7 +71,7 @@ export class CampaignManager {
       description: params.description || '',
       status: isScheduled ? 'scheduled' : 'draft',
       target_market: params.targetMarket || 'Orange County, CA',
-      telephony_provider: 'ringcentral',
+      telephony_provider: params.telephonyProvider || 'ringcentral',
       total_contacts: params.totalContacts || 0,
       dialed_count: 0,
       connected_count: 0,
@@ -354,7 +355,7 @@ export class CampaignManager {
     campaignId: string;
     sessionId?: string;
     customBrief?: string;
-    provider?: 'ringcentral';
+    provider?: TelephonyProvider;
   }): Promise<{
     status: 'dialed' | 'suppressed' | 'queue_empty';
     contact?: CampaignContactRecord;

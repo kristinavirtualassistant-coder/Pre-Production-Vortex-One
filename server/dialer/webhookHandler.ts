@@ -8,7 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { getPgPool } from '../db/db';
 import { getTelephonyAdapter } from './telephonyAdapter';
 import { SuppressionService } from './suppressionService';
-import { NormalizedCallEvent } from './types';
+import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
@@ -76,7 +76,7 @@ export class WebhookHandler {
    * Ingest and normalize an incoming telephony provider webhook
    */
   public static async processWebhook(
-    provider: 'ringcentral' = 'ringcentral',
+    provider: TelephonyProvider = 'ringcentral',
     organizationId: string,
     rawPayload: any,
     headers?: Record<string, any>
