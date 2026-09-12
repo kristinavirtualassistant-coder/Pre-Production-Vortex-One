@@ -54,6 +54,6 @@ export VITE_LOCAL_DEV_AUTH=true
 export SQL_HOST="$PGSOCKET"
 export SQL_PORT="$PGPORT"
 export SQL_USER="$PGUSER"
-export SQL_DATABASE="$PGDATABASE"
+export SQL_DB_NAME="$PGDATABASE"
 
 npm run dev

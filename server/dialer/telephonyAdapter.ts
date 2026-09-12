@@ -3,7 +3,7 @@
  * Production RingCentral REST & Telephony Session Integration
  */
 
-import { CallStatus, CallDisposition, NormalizedCallEvent } from './types';
+import { CallStatus, CallDisposition, NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { SDK as RingCentralSDK } from '@ringcentral/sdk';
@@ -25,13 +25,13 @@ export interface TelephonyCallResult {
   telephonySessionId?: string;
   ringcentralPartyId?: string;
   status: CallStatus;
-  provider: 'ringcentral';
+  provider: TelephonyProvider;
   rawResponse?: any;
   error?: string;
 }
 
 export interface TelephonyAdapter {
-  providerName: 'ringcentral';
+  providerName: TelephonyProvider;
   initiateCall(params: InitiateCallParams): Promise<TelephonyCallResult>;
   terminateCall(telephonyCallId: string, partyId?: string, ringoutId?: string): Promise<boolean>;
   normalizeWebhookPayload(rawPayload: any, headers?: Record<string, any>): NormalizedCallEvent;
@@ -42,7 +42,7 @@ export interface TelephonyAdapter {
  * Normalizes RingCentral Telephony Sessions and Webhook notifications
  */
 export class RingCentralTelephonyAdapter implements TelephonyAdapter {
-  public providerName: 'ringcentral' = 'ringcentral';
+  public providerName: TelephonyProvider = 'ringcentral';
 
   private sdk: any;
   private platform: any;
@@ -234,6 +234,11 @@ export class RingCentralTelephonyAdapter implements TelephonyAdapter {
 /**
  * Singleton Adapter Resolver for RingCentral Telephony
  */
-export function getTelephonyAdapter(provider: string = 'ringcentral'): TelephonyAdapter {
-  return new RingCentralTelephonyAdapter();
+export function getTelephonyAdapter(provider: TelephonyProvider = 'ringcentral'): TelephonyAdapter {
+  switch (provider) {
+    case 'ringcentral':
+      return new RingCentralTelephonyAdapter();
+    default:
+      throw new Error(`Unsupported telephony provider: ${provider}`);
+  }
 }

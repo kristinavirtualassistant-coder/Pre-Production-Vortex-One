@@ -1271,7 +1271,7 @@ export class DataImportService {
           is_corporate_owned: r.is_corporate_owned,
           tax_delinquent: r.tax_delinquent,
           provenance: {
-            source: 'PostgreSQL Cloud SQL Instance',
+            source: 'PostgreSQL Database',
             sourceType: 'database',
             retrievedAt: r.updated_at || r.created_at || new Date().toISOString(),
             confidence: 0.99,
@@ -1323,7 +1323,7 @@ export class DataImportService {
         }));
       } catch (err) {
         if (process.env.NODE_ENV === 'production') throw err;
-        console.warn('Failed to query Cloud SQL directly for integrity check; local development may use memory fixtures:', err);
+        console.warn('Failed to query PostgreSQL directly for integrity check; local development may use memory fixtures:', err);
         properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === cleanOrgId);
         owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === cleanOrgId);
         leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === cleanOrgId);
