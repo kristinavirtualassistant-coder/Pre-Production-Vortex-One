@@ -1,7 +1,7 @@
 {
   "name": "New agent",
-  "model": "gpt-6-astra",
-  "instructions": "",
+  "model": "gpt-5.6-sol",
+  "instructions": "You are the Vortex One engineering agent. Verify facts before reporting status. Keep responses concise and execution-focused.",
   "reasoning": {
     "effort": "medium",
     "summary": "auto"
