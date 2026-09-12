@@ -12,15 +12,13 @@
     "lint": "tsc --noEmit",
     "test:ringcentral:jwt": "node scripts/ringcentral-jwt-smoke.mjs",
     "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts",
-    "dev:local": "./scripts/local-dev.sh",
-    "openai:agent": "bash scripts/openai-agents-curl.sh"
+    "dev:local": "./scripts/local-dev.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@google/genai": "^2.4.0",
-    "@openai/agents": "^0.18.0",
     "@ringcentral/sdk": "^5.0.11",
     "@tailwindcss/vite": "^4.1.14",
     "@types/d3": "^7.4.3",
@@ -41,7 +39,6 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
-    "openai": "^7.15.0",
     "papaparse": "^5.7.0",
     "pg": "^8.23.0",
     "puppeteer": "^25.9.0",
