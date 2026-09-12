@@ -1300,22 +1300,25 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
   const database = config?.database ?? 'vortex-one-database';
   
   const isPostgresConfigured = !!config;
+  // Keep application credentials least-privileged; migrations may use a separate admin login.
+  const migrationUser = process.env.SQL_ADMIN_USER || user;
+  const migrationPassword = process.env.SQL_ADMIN_PASSWORD || password;
 
   // If explicit PostgreSQL config is available, attempt connection
   if (isPostgresConfigured) {
     try {
-      pgPool = new Pool({
+      const migrationPool = new Pool({
         host: host,
         port: port,
-        user: user,
-        password: password,
+        user: migrationUser,
+        password: migrationPassword,
         database: database,
         max: 10,
         connectionTimeoutMillis: 5000,
         ssl: config?.ssl ? { rejectUnauthorized: false } : undefined,
       });
 
-      const client = await pgPool.connect();
+      const client = await migrationPool.connect();
       try {
         // Run migrations transactionally
         await client.query('BEGIN');
@@ -1357,7 +1360,20 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         throw migErr;
       } finally {
         client.release();
+        await migrationPool.end();
       }
+
+      // The application pool always uses the restricted runtime credentials.
+      pgPool = new Pool({
+        host,
+        port,
+        user,
+        password,
+        database,
+        max: 10,
+        connectionTimeoutMillis: 5000,
+        ssl: process.env.SQL_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+      });
     } catch (err: any) {
       if (pgPool) {
         pgPool.end().catch(() => {});
