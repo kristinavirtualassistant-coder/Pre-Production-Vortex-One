@@ -30,6 +30,23 @@ const standardEnv = getDatabaseConnectionConfig({
 assert.equal(standardEnv?.host, '127.0.0.1');
 assert.equal(standardEnv?.database, 'vortex-one-database');
 
+const separatedEnv = getDatabaseConnectionConfig({
+  SQL_HOST: 'db.example.test',
+  SQL_PORT: '5432',
+  SQL_USER: 'runtime_user',
+  SQL_PASSWORD: 'runtime_password',
+  SQL_ADMIN_USER: 'migration_user',
+  SQL_ADMIN_PASSWORD: 'migration_password',
+  SQL_DB_NAME: 'vortex_one',
+  SQL_SSL: 'true',
+});
+assert.equal(separatedEnv?.user, 'runtime_user');
+assert.equal(separatedEnv?.password, 'runtime_password');
+assert.notEqual(separatedEnv?.user, 'migration_user');
+assert.notEqual(separatedEnv?.password, 'migration_password');
+assert.equal(separatedEnv?.database, 'vortex_one');
+assert.equal(separatedEnv?.ssl, true);
+
 assert.equal(getDatabaseConnectionConfig({}), null);
 
 console.log('databaseConfig.test.ts: PASS');
