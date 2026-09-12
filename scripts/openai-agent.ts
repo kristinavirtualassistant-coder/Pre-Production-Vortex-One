@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import OpenAI from 'openai';
 import { Agent, OpenAIConversationsSession, run } from '@openai/agents';
 
 type AgentConfig = {
@@ -37,8 +38,14 @@ try {
   // First run: OpenAIConversationsSession will create the conversation lazily.
 }
 
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  project,
+});
+
 const session = new OpenAIConversationsSession({
   conversationId,
+  client: openai,
   project,
 });
 
