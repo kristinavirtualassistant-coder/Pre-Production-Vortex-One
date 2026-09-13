@@ -26,6 +26,7 @@ await requireAuth(req, res, () => { nextCalled = true; });
 assert.equal(nextCalled, true);
 assert.equal(req.dbUser.id, 'local_dev_user');
 assert.equal(req.dbUser.organization_id, 'org_cmc_realty');
+assert.equal(req.dbUser.uid, 'local_dev_user');
 assert.equal(req.query.organizationId, 'org_cmc_realty');
 assert.equal(req.headers['x-organization-id'], 'org_cmc_realty');
 
