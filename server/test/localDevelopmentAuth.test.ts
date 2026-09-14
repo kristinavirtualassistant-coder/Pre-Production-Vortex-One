@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { isLocalDevelopmentAuthEnabled, shouldBypassApiAuth } from '../middleware/auth';
+import './postgresqlAuthMigration.test';
 
 assert.equal(isLocalDevelopmentAuthEnabled(), false, 'local development authentication must remain disabled');
 assert.equal(shouldBypassApiAuth('/health'), true, 'health must remain publicly reachable');
