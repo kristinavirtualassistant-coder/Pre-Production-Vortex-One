@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { getPgPool } from '../db/db';
 import { hashPassword, verifyPassword, createSessionToken, hashSessionToken } from '../services/postgresqlAuth';
 
@@ -27,7 +28,7 @@ postgresqlAuthRouter.post('/login', async (req: Request, res: Response) => {
   await pool.query(
     `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
      VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
-    [`sess_${crypto.randomUUID()}`, user.id, tokenHash],
+    [`sess_${randomUUID()}`, user.id, tokenHash],
   );
   await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
 
@@ -47,7 +48,7 @@ postgresqlAuthRouter.post('/signup', async (req: Request, res: Response) => {
   const pool = getPgPool();
   if (!pool) return res.status(503).json({ error: 'Database unavailable' });
   const passwordHash = await hashPassword(password);
-  const id = `user_${crypto.randomUUID()}`;
+  const id = `user_${randomUUID()}`;
   try {
     const result = await pool.query(
       `INSERT INTO users (id, organization_id, email, name, role, password_hash)
