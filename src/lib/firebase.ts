@@ -5,6 +5,9 @@
  * intentionally contains no Firebase runtime dependency. Legacy UI code that
  * still imports DEMO_USERS receives an empty list so synthetic identities can
  * never become production accounts.
+ *
+ * This type is retained only for legacy UI compile compatibility; it is not
+ * an authentication or persistence model.
  */
 export interface DemoPersona {
   id: string;
