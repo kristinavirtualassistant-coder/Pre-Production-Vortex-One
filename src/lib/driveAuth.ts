@@ -56,7 +56,7 @@ function loadGoogleIdentityServices(): Promise<void> {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
   if (gisLoadPromise) return gisLoadPromise;
 
-  gisLoadPromise = new Promise((resolve, reject) => {
+  gisLoadPromise = new Promise<void>((resolve, reject) => {
     const existing = document.getElementById(GIS_SCRIPT_ID) as HTMLScriptElement | null;
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true });
