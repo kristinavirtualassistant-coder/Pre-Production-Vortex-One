@@ -1,38 +1,30 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { requireAuth } from '../middleware/auth';
+import { isLocalDevelopmentAuthEnabled, requireAuth } from '../middleware/auth';
 
-process.env.VORTEX_LOCAL_DEV_AUTH = 'true';
+assert.equal(isLocalDevelopmentAuthEnabled(), false, 'local development authentication must remain disabled');
 
 const req: any = {
-  headers: {
-    'x-organization-id': 'org_cmc_realty',
-    'x-user-id': 'local_dev_user',
-    'x-user-email': 'local@cmcrealty.com',
-    'x-user-role': 'executive',
-  },
+  path: '/tasks',
+  method: 'GET',
+  headers: {},
   query: {},
   body: {},
 };
+let statusCode = 0;
+let payload: unknown;
 const res: any = {
-  status: () => res,
-  json: () => res,
+  status(code: number) { statusCode = code; return this; },
+  json(value: unknown) { payload = value; return this; },
 };
 let nextCalled = false;
 
-await requireAuth(req, res, () => { nextCalled = true; });
+const originalPool = process.env.DATABASE_URL;
+if (!originalPool) {
+  // The middleware must not silently grant access when no database is configured.
+  await requireAuth(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, false);
+  assert.equal(statusCode, 503);
+  assert.deepEqual(payload, { error: 'Database unavailable' });
+}
 
-assert.equal(nextCalled, true);
-assert.equal(req.dbUser.id, 'local_dev_user');
-assert.equal(req.dbUser.organization_id, 'org_cmc_realty');
-assert.equal(req.query.organizationId, 'org_cmc_realty');
-assert.equal(req.headers['x-organization-id'], 'org_cmc_realty');
-
-const authContextSource = readFileSync(path.join(process.cwd(), 'src/contexts/AuthContext.tsx'), 'utf8');
-if (!authContextSource.includes("import.meta.env.VITE_LOCAL_DEV_AUTH === 'true' || ['localhost', '127.0.0.1'].includes(window.location.hostname)")) throw new Error('Frontend auth must have an explicit local development mode');
-if (!authContextSource.includes('testFirestoreConnection')) throw new Error('Production Firebase behavior must remain present');
-if (!authContextSource.includes('Local development auth')) throw new Error('Frontend local auth branch must be explicit');
-if (!authContextSource.includes("if (import.meta.env.VITE_LOCAL_DEV_AUTH === 'true') {\n        setUser(null);\n        setUserProfile(null);")) throw new Error('Local auth must bypass Firebase sign-out');
-
-console.log('local development auth middleware checks passed');
+console.log('PostgreSQL auth middleware retirement checks passed');
