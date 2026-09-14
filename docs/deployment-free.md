@@ -8,7 +8,7 @@ This deployment keeps PostgreSQL authoritative and separates the frontend from t
 - Cloudflare Pages: React/Vite frontend
 - Render Free: Node/Express API for development and controlled pilot use
 - Neon Free: PostgreSQL database
-- Firebase Authentication: existing identity provider
+- PostgreSQL sessions: application identity and authentication authority
 - RingCentral: telephony provider
 
 ## 1. Create Neon PostgreSQL
@@ -17,7 +17,7 @@ Create a Neon PostgreSQL project and copy its connection string.
 
 Set this value in Render as `DATABASE_URL`. Do not commit it to Git.
 
-The application now accepts `DATABASE_URL` in addition to the existing SQL_* variables.
+The application accepts `DATABASE_URL` in addition to the existing SQL_* variables.
 
 ## 2. Create the Render API
 
@@ -44,7 +44,7 @@ Build settings:
 
 The frontend currently uses relative `/api/...` requests. After the Render API URL exists, route `/api/*` from the Cloudflare Pages site to the Render API so browser requests remain same-origin.
 
-Do not expose database credentials or RingCentral secrets as `VITE_*` variables. Only browser-safe Firebase and frontend configuration belongs in Cloudflare Pages environment variables.
+Do not expose database credentials or RingCentral secrets as `VITE_*` variables. Browser configuration must not contain PostgreSQL credentials or authentication secrets.
 
 ## 5. Production boundary
 
