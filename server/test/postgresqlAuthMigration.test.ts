@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { MIGRATIONS } from '../db/migrations';
+import { POSTGRESQL_AUTH_MIGRATION } from '../db/postgresqlAuthMigration';
 
-const migration12 = MIGRATIONS.find((migration) => migration.version === 12);
+const migration12 = POSTGRESQL_AUTH_MIGRATION;
 
-assert.ok(migration12, 'PostgreSQL authentication migration 12 must exist');
-assert.equal(migration12?.name, '012_create_postgresql_auth_schema');
+assert.equal(migration12.version, 12);
+assert.equal(migration12.name, '012_create_postgresql_auth_schema');
 
-const sql = migration12?.sql ?? '';
+const sql = migration12.sql;
 assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash/i);
 assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at/i);
 assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at/i);
