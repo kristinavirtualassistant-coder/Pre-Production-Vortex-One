@@ -1,10 +1,10 @@
 /**
  * Vortex One external webhook delivery service.
  * Sends signed property discovery and lead enrichment events to tenant endpoints.
+ * PostgreSQL is the sole persistence layer for endpoint and delivery state.
  */
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getApps } from 'firebase-admin/app';
+import { getPgPool } from '../db/db';
 
 export type ExternalWebhookEventType = 'property.discovered' | 'lead.enriched';
 
@@ -61,11 +61,47 @@ interface ExternalWebhookServiceOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-const COLLECTION = 'webhook_endpoints';
-const DELIVERY_COLLECTION = 'webhook_deliveries';
 const MAX_ATTEMPTS = 4;
 const REQUEST_TIMEOUT_MS = 10_000;
 const RETRY_DELAYS_MS = [250, 1_000, 4_000];
+
+function requirePool() {
+  const pool = getPgPool();
+  if (!pool) throw new Error('Database unavailable');
+  return pool;
+}
+
+function endpointFromRow(row: any, includeSecret = false): ExternalWebhookEndpoint {
+  const endpoint: ExternalWebhookEndpoint = {
+    id: row.id,
+    organizationId: row.organization_id,
+    url: row.url,
+    events: Array.isArray(row.events) ? row.events : [],
+    enabled: Boolean(row.enabled),
+    description: row.description ?? undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+  if (includeSecret) endpoint.secret = row.secret;
+  return endpoint;
+}
+
+function deliveryFromRow(row: any): ExternalWebhookDelivery {
+  return {
+    id: row.id,
+    endpointId: row.endpoint_id,
+    organizationId: row.organization_id,
+    eventId: row.event_id,
+    eventType: row.event_type,
+    url: row.url,
+    status: row.status,
+    statusCode: row.status_code ?? undefined,
+    attempts: Number(row.attempts),
+    error: row.error ?? undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    completedAt: new Date(row.completed_at ?? row.created_at).toISOString(),
+  };
+}
 
 export function isSupportedWebhookUrl(value: string): boolean {
   try {
@@ -102,15 +138,21 @@ export class ExternalWebhookService {
   }
 
   async listEndpoints(organizationId: string): Promise<ExternalWebhookEndpoint[]> {
-    const snapshot = await getFirestore()
-      .collection('organizations').doc(organizationId).collection(COLLECTION).get();
-    return snapshot.docs.map((doc) => this.publicEndpoint({ id: doc.id, ...doc.data() } as ExternalWebhookEndpoint));
+    const { rows } = await requirePool().query(
+      `SELECT id, organization_id, url, events, enabled, description, secret, created_at, updated_at
+       FROM webhook_endpoints WHERE organization_id = $1 ORDER BY created_at DESC`,
+      [organizationId],
+    );
+    return rows.map((row) => endpointFromRow(row));
   }
 
   private async getStoredEndpoint(organizationId: string, endpointId: string): Promise<ExternalWebhookEndpoint | null> {
-    const doc = await getFirestore().collection('organizations').doc(organizationId)
-      .collection(COLLECTION).doc(endpointId).get();
-    return doc.exists ? ({ id: doc.id, ...doc.data() } as ExternalWebhookEndpoint) : null;
+    const { rows } = await requirePool().query(
+      `SELECT id, organization_id, url, events, enabled, description, secret, created_at, updated_at
+       FROM webhook_endpoints WHERE organization_id = $1 AND id = $2 LIMIT 1`,
+      [organizationId, endpointId],
+    );
+    return rows[0] ? endpointFromRow(rows[0], true) : null;
   }
 
   async createEndpoint(input: {
@@ -123,7 +165,7 @@ export class ExternalWebhookService {
     this.validateEndpointInput(input.url, input.events);
     const now = new Date().toISOString();
     const endpoint: ExternalWebhookEndpoint = {
-      id: randomUUID(),
+      id: `wh_${randomUUID()}`,
       organizationId: input.organizationId,
       url: input.url,
       events: [...new Set(input.events)],
@@ -133,9 +175,14 @@ export class ExternalWebhookService {
       updatedAt: now,
       secret: randomBytes(32).toString('hex'),
     };
-    await getFirestore().collection('organizations').doc(input.organizationId)
-      .collection(COLLECTION).doc(endpoint.id).set(endpoint);
-    return this.publicEndpoint(endpoint, true);
+    const { rows } = await requirePool().query(
+      `INSERT INTO webhook_endpoints
+       (id, organization_id, url, events, enabled, description, secret, created_at, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $8)
+       RETURNING id, organization_id, url, events, enabled, description, secret, created_at, updated_at`,
+      [endpoint.id, endpoint.organizationId, endpoint.url, JSON.stringify(endpoint.events), endpoint.enabled, endpoint.description ?? null, endpoint.secret, now],
+    );
+    return endpointFromRow(rows[0], true);
   }
 
   async updateEndpoint(organizationId: string, endpointId: string, patch: {
@@ -145,51 +192,54 @@ export class ExternalWebhookService {
     description?: string;
     rotateSecret?: boolean;
   }): Promise<ExternalWebhookEndpoint | null> {
-    const ref = getFirestore().collection('organizations').doc(organizationId)
-      .collection(COLLECTION).doc(endpointId);
-    const doc = await ref.get();
-    if (!doc.exists) return null;
-    if (patch.url !== undefined || patch.events !== undefined) {
-      this.validateEndpointInput(patch.url || String(doc.data()?.url || ''), patch.events || (doc.data()?.events as ExternalWebhookEventType[] || []));
-    }
-    const update: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-    if (patch.url !== undefined) update.url = patch.url;
-    if (patch.events !== undefined) update.events = [...new Set(patch.events)];
-    if (patch.enabled !== undefined) update.enabled = patch.enabled;
-    if (patch.description !== undefined) update.description = patch.description;
-    if (patch.rotateSecret) update.secret = randomBytes(32).toString('hex');
-    await ref.update(update);
-    return this.publicEndpoint({ id: doc.id, ...doc.data(), ...update } as ExternalWebhookEndpoint, Boolean(patch.rotateSecret));
+    const existing = await this.getStoredEndpoint(organizationId, endpointId);
+    if (!existing) return null;
+    const nextUrl = patch.url ?? existing.url;
+    const nextEvents = patch.events ?? existing.events;
+    this.validateEndpointInput(nextUrl, nextEvents);
+    const nextSecret = patch.rotateSecret ? randomBytes(32).toString('hex') : existing.secret;
+    const now = new Date().toISOString();
+    const { rows } = await requirePool().query(
+      `UPDATE webhook_endpoints
+       SET url = $3, events = $4::jsonb, enabled = $5, description = $6, secret = $7, updated_at = $8
+       WHERE organization_id = $1 AND id = $2
+       RETURNING id, organization_id, url, events, enabled, description, secret, created_at, updated_at`,
+      [organizationId, endpointId, nextUrl, JSON.stringify([...new Set(nextEvents)]), patch.enabled ?? existing.enabled, patch.description ?? existing.description ?? null, nextSecret, now],
+    );
+    return rows[0] ? endpointFromRow(rows[0], Boolean(patch.rotateSecret)) : null;
   }
 
   async deleteEndpoint(organizationId: string, endpointId: string): Promise<boolean> {
-    const ref = getFirestore().collection('organizations').doc(organizationId)
-      .collection(COLLECTION).doc(endpointId);
-    const doc = await ref.get();
-    if (!doc.exists) return false;
-    await ref.delete();
-    return true;
+    const result = await requirePool().query(
+      'DELETE FROM webhook_endpoints WHERE organization_id = $1 AND id = $2',
+      [organizationId, endpointId],
+    );
+    return result.rowCount === 1;
   }
 
   async listDeliveries(organizationId: string, endpointId: string, limit = 50): Promise<ExternalWebhookDelivery[]> {
-    const snapshot = await getFirestore()
-      .collection('organizations').doc(organizationId).collection(DELIVERY_COLLECTION)
-      .where('endpointId', '==', endpointId).limit(Math.min(limit, 200)).get();
-    return snapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() } as ExternalWebhookDelivery))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const { rows } = await requirePool().query(
+      `SELECT id, endpoint_id, organization_id, event_id, event_type, url, status,
+              status_code, attempts, error, created_at, completed_at
+       FROM webhook_deliveries
+       WHERE organization_id = $1 AND endpoint_id = $2
+       ORDER BY created_at DESC LIMIT $3`,
+      [organizationId, endpointId, Math.min(Math.max(limit, 1), 200)],
+    );
+    return rows.map(deliveryFromRow);
   }
 
   async publish<T>(organizationId: string, type: ExternalWebhookEventType, data: T): Promise<ExternalWebhookDelivery[]> {
-    // Webhook delivery is an optional integration. Keep it disabled unless explicitly enabled,
-    // so property/lead workflows never depend on Firebase/Firestore being reachable.
     if (process.env.VORTEX_ONE_ENABLE_EXTERNAL_WEBHOOKS !== '1') return [];
-    if (getApps().length === 0) return [];
-    const snapshot = await getFirestore()
-      .collection('organizations').doc(organizationId).collection(COLLECTION).get();
-    const endpoints = snapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() } as ExternalWebhookEndpoint))
-      .filter((endpoint) => endpoint.enabled && endpoint.events.includes(type) && Boolean(endpoint.secret));
+    const { rows } = await requirePool().query(
+      `SELECT id, organization_id, url, events, enabled, description, secret, created_at, updated_at
+       FROM webhook_endpoints
+       WHERE organization_id = $1 AND enabled = true`,
+      [organizationId],
+    );
+    const endpoints = rows
+      .map((row) => endpointFromRow(row, true))
+      .filter((endpoint) => Boolean(endpoint.secret) && endpoint.events.includes(type));
     if (endpoints.length === 0) return [];
 
     const event: ExternalWebhookEvent<T> = {
@@ -200,8 +250,7 @@ export class ExternalWebhookService {
       organizationId,
       data,
     };
-    const results = await Promise.all(endpoints.map((endpoint) => this.deliver(endpoint, event)));
-    return results;
+    return Promise.all(endpoints.map((endpoint) => this.deliver(endpoint, event)));
   }
 
   async testEndpoint(endpoint: ExternalWebhookEndpoint): Promise<ExternalWebhookDelivery> {
@@ -225,22 +274,28 @@ export class ExternalWebhookService {
 
   async deliverForTest(input: DeliveryTestInput): Promise<{ success: boolean; attempts: number }> {
     const endpoint: ExternalWebhookEndpoint = {
-      id: input.endpointId, organizationId: input.organizationId, url: input.url,
-      events: [input.eventType], enabled: true, createdAt: '', updatedAt: '', secret: input.secret,
+      id: input.endpointId,
+      organizationId: input.organizationId,
+      url: input.url,
+      events: [input.eventType],
+      enabled: true,
+      createdAt: '',
+      updatedAt: '',
+      secret: input.secret,
     };
     const event: ExternalWebhookEvent = {
-      id: input.eventId, type: input.eventType, version: '1',
-      occurredAt: new Date().toISOString(), organizationId: input.organizationId, data: input.payload,
+      id: input.eventId,
+      type: input.eventType,
+      version: '1',
+      occurredAt: new Date().toISOString(),
+      organizationId: input.organizationId,
+      data: input.payload,
     };
     const result = await this.deliver(endpoint, event, false);
     return { success: result.status === 'delivered', attempts: result.attempts };
   }
 
-  private async deliver(
-    endpoint: ExternalWebhookEndpoint,
-    event: ExternalWebhookEvent,
-    persist = true,
-  ): Promise<ExternalWebhookDelivery> {
+  private async deliver(endpoint: ExternalWebhookEndpoint, event: ExternalWebhookEvent, persist = true): Promise<ExternalWebhookDelivery> {
     const body = JSON.stringify(event);
     const timestamp = event.occurredAt;
     const signature = buildWebhookSignature(endpoint.secret || '', timestamp, body);
@@ -292,9 +347,15 @@ export class ExternalWebhookService {
       createdAt: event.occurredAt,
       completedAt: now,
     };
+
     if (persist) {
-      await getFirestore().collection('organizations').doc(endpoint.organizationId)
-        .collection(DELIVERY_COLLECTION).doc(delivery.id).set(delivery);
+      await requirePool().query(
+        `INSERT INTO webhook_deliveries
+         (id, endpoint_id, organization_id, event_id, event_type, url, status, status_code, attempts, error, created_at, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [delivery.id, delivery.endpointId, delivery.organizationId, delivery.eventId, delivery.eventType, delivery.url,
+          delivery.status, delivery.statusCode ?? null, delivery.attempts, delivery.error ?? null, delivery.createdAt, delivery.completedAt],
+      );
     }
     return delivery;
   }
