@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
+import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashSessionToken } from '../services/postgresqlAuth';
 
 export interface AuthRequest extends Request {
@@ -94,6 +95,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
   }
 
   try {
+    await ensurePostgreSQLAuthSchema(pool);
     const tokenHash = hashSessionToken(authorization.slice('Bearer '.length));
     const { rows } = await pool.query(
       `SELECT u.id, u.organization_id, u.email, u.name, u.role
