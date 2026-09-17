@@ -1,0 +1,50 @@
+name: Final Auth Type Fix
+
+on:
+  push:
+    branches:
+      - refactor/postgresql-only-auth-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    if: github.actor == 'kristinavirtualassistant-coder'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/postgresql-only-auth-recovery
+          fetch-depth: 0
+      - name: Fix remaining auth type and verify Firebase removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/components/GoogleSheetsSyncModal.tsx')
+          s = p.read_text()
+          s = s.replace("import { getCachedToken, signInWithGoogle, getOAuthUser   DriveOAuthUser,\n", "import { getCachedToken, signInWithGoogle, getOAuthUser, DriveOAuthUser,\n")
+          s = s.replace("import { getCachedToken, signInWithGoogle, getOAuthUser, DriveOAuthUser,\n} from '../lib/driveAuth';", "import { getCachedToken, signInWithGoogle, getOAuthUser, DriveOAuthUser,\n} from '../lib/driveAuth';")
+          s = s.replace('useState<User | null>(getOAuthUser())', 'useState<DriveOAuthUser | null>(getOAuthUser())')
+          p.write_text(s)
+          PY
+          if git grep -n -E "from ['\"]firebase|require\(['\"]firebase|firebase-admin|firebase/app|firebase/auth|firebase/firestore" -- 'src' 'server' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.json' 2>/dev/null; then
+            echo 'ERROR: Firebase runtime references remain.'
+            exit 1
+          fi
+          test ! -f firebase-applet-config.json
+          test ! -f firebase-blueprint.json
+          test ! -f firestore.rules
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git rm -f .github/workflows/final-auth-type-fix.yml 2>/dev/null || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix(auth): finalize Google Workspace type boundary'
+          git push origin HEAD:refactor/postgresql-only-auth-recovery
