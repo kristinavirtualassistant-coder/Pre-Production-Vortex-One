@@ -61,7 +61,6 @@ import { AutomatedSkipTracePipelineModal } from './AutomatedSkipTracePipelineMod
 import { DataImportModal } from './DataImportModal';
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
 import { PropertyBulkEditModal } from './PropertyBulkEditModal';
-import firebaseConfig from '../../firebase-applet-config.json';
 
 export type PropertyColumnId =
   | 'address'
