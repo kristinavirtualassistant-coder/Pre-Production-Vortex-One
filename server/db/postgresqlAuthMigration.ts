@@ -1,7 +1,7 @@
 import type { Migration } from './migrations';
 
 /**
- * PostgreSQL-only authentication and webhook persistence migration.
+ * PostgreSQL-only authentication, webhook, and voicemail persistence migration.
  *
  * Kept as a standalone migration artifact so the recovered migration history
  * is never reconstructed or overwritten by an automated patch.
@@ -59,5 +59,16 @@ export const POSTGRESQL_AUTH_MIGRATION: Migration = {
       ON webhook_deliveries(organization_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint
       ON webhook_deliveries(endpoint_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS voicemail_library (
+      id VARCHAR(64) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      label VARCHAR(255) NOT NULL,
+      url VARCHAR(2048) NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_voicemail_library_org
+      ON voicemail_library(organization_id, created_at DESC);
   `,
 };
