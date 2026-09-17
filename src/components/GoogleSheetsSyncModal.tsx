@@ -22,8 +22,8 @@ import {
   listSpreadsheets,
   GoogleSpreadsheetInfo,
 } from '../lib/sheetsService';
-import { getCachedToken, signInWithGoogle, getOAuthUser } from '../lib/driveAuth';
-import { User } from 'firebase/auth';
+import { getCachedToken, signInWithGoogle, getOAuthUser   DriveOAuthUser,
+} from '../lib/driveAuth';
 
 interface GoogleSheetsSyncModalProps {
   isOpen: boolean;

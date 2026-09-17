@@ -5,11 +5,9 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { getFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
 // Firebase Admin is initialized idempotently by the shared middleware module.
-const getFirestoreDb = () => getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
