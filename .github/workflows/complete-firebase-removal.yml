@@ -30,13 +30,18 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+          import json
 
-          p = Path('src/components/GoogleDriveView.tsx')
-          s = p.read_text()
-          s = s.replace("import { User } from 'firebase/auth';\n", "")
-          s = s.replace("  initAuth,\n", "  initAuth,\n  DriveOAuthUser,\n")
-          s = s.replace('useState<User | null>(null)', 'useState<DriveOAuthUser | null>(null)')
-          p.write_text(s)
+          for filename in ('src/components/GoogleDriveView.tsx', 'src/components/GoogleSheetsSyncModal.tsx'):
+              p = Path(filename)
+              s = p.read_text()
+              s = s.replace("import { User } from 'firebase/auth';\n", "")
+              if 'DriveOAuthUser' not in s:
+                  marker = "} from '../lib/driveAuth';"
+                  if marker in s:
+                      s = s.replace(marker, "  DriveOAuthUser,\n} from '../lib/driveAuth';")
+              s = s.replace('useState<User | null>(null)', 'useState<DriveOAuthUser | null>(null)')
+              p.write_text(s)
 
           p = Path('server.ts')
           s = p.read_text()
@@ -45,7 +50,6 @@ jobs:
           p.write_text(s)
 
           p = Path('package.json')
-          import json
           data = json.loads(p.read_text())
           for section in ('dependencies', 'devDependencies', 'optionalDependencies'):
               if section in data:
