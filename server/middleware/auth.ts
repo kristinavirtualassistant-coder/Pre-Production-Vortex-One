@@ -1,10 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
-import { adminAuth } from './firebase-admin';
-import { DecodedIdToken } from 'firebase-admin/auth';
 import { getPgPool } from '../db/db';
+import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
+import { createSessionToken, hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 
 export interface AuthRequest extends Request {
-  user?: DecodedIdToken;
+  user?: {
+    uid: string;
+    email: string;
+    name: string;
+    role: string;
+  };
   dbUser?: {
     id: string;
     organization_id: string;
@@ -29,7 +35,7 @@ export function shouldBypassApiAuth(path: string): boolean {
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {
-  return process.env.VORTEX_LOCAL_DEV_AUTH === 'true';
+  return false;
 }
 
 export function resolveAuthenticatedOrganizationId(
@@ -39,33 +45,21 @@ export function resolveAuthenticatedOrganizationId(
   if (!dbUser?.organization_id) {
     throw new AuthorizationError('Forbidden: No organization is associated with the authenticated user');
   }
-
   if (requestedOrganizationId && requestedOrganizationId !== dbUser.organization_id) {
     throw new AuthorizationError('Forbidden: Organization does not match authenticated user');
   }
-
   return dbUser.organization_id;
 }
 
-/**
- * Make the authenticated organization the only tenant context available to
- * downstream handlers. Legacy handlers still read organizationId from query,
- * body, or headers, so those values must be validated and then canonicalized.
- */
 export function canonicalizeOrganizationContext(req: AuthRequest): string {
   const organizationId = resolveAuthenticatedOrganizationId(req.dbUser);
-
   const queryOrganizationId = req.query.organizationId;
   const body = req.body && typeof req.body === 'object' ? req.body : undefined;
-  const bodyOrganizationId = body?.organizationId;
-  const bodyOrganization_id = body?.organization_id;
-  const headerOrganizationId = req.headers['x-organization-id'];
-
   const requestedValues = [
     queryOrganizationId,
-    bodyOrganizationId,
-    bodyOrganization_id,
-    headerOrganizationId,
+    body?.organizationId,
+    body?.organization_id,
+    req.headers['x-organization-id'],
   ].flatMap((value) => Array.isArray(value) ? value : [value]).filter(
     (value): value is string => typeof value === 'string' && value.length > 0,
   );
@@ -74,106 +68,121 @@ export function canonicalizeOrganizationContext(req: AuthRequest): string {
     throw new AuthorizationError('Forbidden: Organization does not match authenticated user');
   }
 
-  // Preserve compatibility with legacy handlers while preventing tenant
-  // selection by request payloads after authentication has succeeded.
   req.headers['x-organization-id'] = organizationId;
-  req.query.organizationId = organizationId;
-
   if (body) {
     body.organizationId = organizationId;
     body.organization_id = organizationId;
   }
-
   return organizationId;
 }
 
-export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  if (isLocalDevelopmentAuthEnabled()) {
-    const organizationId = (req.headers['x-organization-id'] as string | undefined) || 'org_cmc_realty';
-    const email = (req.headers['x-user-email'] as string | undefined) || 'local@cmcrealty.com';
-    const name = (req.headers['x-user-name'] as string | undefined) || 'Local Development User';
-    const role = (req.headers['x-user-role'] as string | undefined) || 'executive';
-    const userId = (req.headers['x-user-id'] as string | undefined) || 'local_dev_user';
+async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
-    req.user = {
-      uid: userId,
-      email,
-      name,
-      role,
-      aud: 'vortex-one-local',
-      auth_time: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 86400,
-      iat: Math.floor(Date.now() / 1000),
-      iss: 'local-development',
-      sub: userId,
-    } as unknown as DecodedIdToken;
-    req.dbUser = {
-      id: userId,
-      organization_id: organizationId,
-      email,
-      name,
-      role,
-    };
+  const result = await pool.query(
+    `SELECT id, organization_id, email, name, role, password_hash, disabled_at
+     FROM users WHERE lower(email) = $1 LIMIT 1`,
+    [email],
+  );
+  const user = result.rows[0];
+  if (!user || user.disabled_at || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  const token = createSessionToken();
+  await pool.query(
+    `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
+    [`sess_${randomUUID()}`, user.id, hashSessionToken(token)],
+  );
+  await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+
+  return res.json({
+    token,
+    user: { id: user.id, organization_id: user.organization_id, email: user.email, name: user.name, role: user.role },
+  });
+}
+
+async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const organizationId = typeof req.body?.organizationId === 'string' ? req.body.organizationId.trim() : '';
+  if (!email || !password || !name || !organizationId) {
+    return res.status(400).json({ error: 'Email, password, name, and organizationId are required' });
+  }
+
+  const passwordHash = await hashPassword(password);
+  try {
+    const result = await pool.query(
+      `INSERT INTO users (id, organization_id, email, name, role, password_hash)
+       VALUES ($1, $2, $3, $4, 'member', $5)
+       RETURNING id, organization_id, email, name, role`,
+      [`user_${randomUUID()}`, organizationId, email, name, passwordHash],
+    );
+    return res.status(201).json({ user: result.rows[0] });
+  } catch (error: any) {
+    if (error?.code === '23505') return res.status(409).json({ error: 'An account with this email already exists in the organization' });
+    if (error?.code === '23503') return res.status(400).json({ error: 'Organization does not exist' });
+    throw error;
+  }
+}
+
+export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const pool = getPgPool();
+  if (!pool) return res.status(503).json({ error: 'Database unavailable' });
+
+  try {
+    await ensurePostgreSQLAuthSchema(pool);
+
+    if (req.path === '/auth/login' && req.method === 'POST') return handleLogin(req, res, pool);
+    if (req.path === '/auth/signup' && req.method === 'POST') return handleSignup(req, res, pool);
+    if (req.path === '/auth/logout' && req.method === 'POST') {
+      const authorization = req.headers.authorization;
+      if (authorization?.startsWith('Bearer ')) {
+        await pool.query('DELETE FROM auth_sessions WHERE token_hash = $1', [hashSessionToken(authorization.slice(7))]);
+      }
+      return res.status(204).send();
+    }
+
+    const authorization = req.headers.authorization;
+    if (!authorization?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+
+    const tokenHash = hashSessionToken(authorization.slice('Bearer '.length));
+    const { rows } = await pool.query(
+      `SELECT u.id, u.organization_id, u.email, u.name, u.role
+       FROM auth_sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = $1
+         AND s.expires_at > CURRENT_TIMESTAMP
+         AND u.disabled_at IS NULL
+       LIMIT 1`,
+      [tokenHash],
+    );
+
+    const dbUser = rows[0];
+    if (!dbUser) return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
+
+    req.dbUser = dbUser;
+    req.user = { uid: dbUser.id, email: dbUser.email, name: dbUser.name, role: dbUser.role };
+    await pool.query('UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = $1', [tokenHash]);
     canonicalizeOrganizationContext(req);
     return next();
-  }
-
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing token' });
-  }
-
-  const token = authHeader.slice('Bearer '.length);
-  try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    req.user = decodedToken;
-
-    const pool = getPgPool();
-    if (!pool) {
-      return res.status(503).json({ error: 'Database unavailable' });
-    }
-
-    const requestedOrgId = req.headers['x-organization-id'] as string | undefined;
-    if (!requestedOrgId) {
-      return res.status(400).json({ error: 'Missing organization context' });
-    }
-
-    const client = await pool.connect();
-    try {
-      const { rows } = await client.query(
-        'SELECT id, organization_id, email, name, role FROM users WHERE email = $1 AND organization_id = $2',
-        [decodedToken.email, requestedOrgId],
-      );
-
-      if (rows.length === 0) {
-        return res.status(403).json({ error: 'Forbidden: User is not a member of this organization' });
-      }
-
-      req.dbUser = rows[0];
-      canonicalizeOrganizationContext(req);
-    } finally {
-      client.release();
-    }
-
-    next();
   } catch (error: any) {
-    if (error instanceof AuthorizationError) {
-      return res.status(error.statusCode).json({ error: error.message });
-    }
-    console.error('Error verifying Firebase ID token:', error);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    if (error instanceof AuthorizationError) return res.status(error.statusCode).json({ error: error.message });
+    console.error('PostgreSQL authentication error:', error);
+    return res.status(500).json({ error: 'Authentication service unavailable' });
   }
 };
 
 export const requireRole = (roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.dbUser) {
-      return res.status(401).json({ error: 'Unauthorized: User not found in DB' });
-    }
-    if (!roles.includes(req.dbUser.role)) {
-      return res.status(403).json({ error: `Forbidden: Requires one of roles: ${roles.join(', ')}` });
-    }
+    if (!req.dbUser) return res.status(401).json({ error: 'Unauthorized: User not found in DB' });
+    if (!roles.includes(req.dbUser.role)) return res.status(403).json({ error: `Forbidden: Requires one of roles: ${roles.join(', ')}` });
     next();
   };
 };
