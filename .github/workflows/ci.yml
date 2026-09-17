@@ -62,8 +62,8 @@ jobs:
           PY
           node -e "const fs=require('fs');const p=require('./package.json');delete p.dependencies?.firebase;delete p.dependencies?.['firebase-admin'];delete p.devDependencies?.firebase;delete p.devDependencies?.['firebase-admin'];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')"
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          rm -f firebase-applet-config.json firebase-blueprint.json firestore.rules .github/workflows/repair-pr30-final.yml .github/workflows/repair-pr30-final.trigger .github/workflows/pr30-self-repair.yml .github/workflows/fix-postgres-boundary.yml postgres-boundary-repair.trigger pr30-self-repair.trigger
-          if grep -RInE "from ['\"]firebase|firebase-admin|getFirestoreDb|firebase-applet-config" --exclude-dir=.git --exclude-dir=docs .; then exit 1; fi
+          rm -f firebase-applet-config.json firebase-blueprint.json firestore.rules bun.lock .github/workflows/repair-pr30-final.yml .github/workflows/repair-pr30-final.trigger .github/workflows/pr30-self-repair.yml .github/workflows/fix-postgres-boundary.yml .github/workflows/complete-firebase-removal.yml .github/workflows/postgres-dialer-boundary-fix-v2.yml .github/workflows/fix-server-firebase.yml .github/workflows/postgres-dialer-boundary-fix.yml postgres-boundary-repair.trigger pr30-self-repair.trigger
+          if grep -RInE "from ['\"]firebase|firebase-admin|firebase/app|firebase/auth|firebase/firestore|getFirestoreDb|firebase-applet-config" src server package.json package-lock.json 2>/dev/null; then exit 1; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
