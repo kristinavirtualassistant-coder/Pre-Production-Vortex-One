@@ -5,6 +5,7 @@ on:
     branches: [refactor/postgresql-only-auth-recovery]
     paths:
       - .github/workflows/fix-postgres-boundary.yml
+      - postgres-boundary-repair.trigger
 
 permissions:
   contents: write
@@ -30,7 +31,6 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           server = Path('server.ts')
           text = server.read_text()
@@ -109,7 +109,7 @@ jobs:
         const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
         if (!url) return res.status(400).json({ error: 'Voicemail URL is required' });
         await ensureVoicemailLibrary(pool);
-        const id = `vm_${crypto.randomUUID()}`;
+        const id = `vm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         const result = await pool.query(
           `INSERT INTO voicemail_library (id, organization_id, label, url) VALUES ($1, $2, $3, $4) RETURNING id, organization_id, label, url, created_at`,
           [id, orgId, label, url],
@@ -151,7 +151,7 @@ jobs:
 
           node -e "const p=require('./package.json'); delete p.dependencies?.firebase; delete p.dependencies?.['firebase-admin']; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2)+'\\n')"
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          rm -f firebase-applet-config.json firebase-blueprint.json firestore.rules
+          rm -f firebase-applet-config.json firebase-blueprint.json firestore.rules postgres-boundary-repair.trigger
 
       - name: Validate Firebase removal and source
         shell: bash
@@ -172,6 +172,6 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add server.ts src/components/PropertiesView.tsx package.json package-lock.json firebase-applet-config.json firebase-blueprint.json firestore.rules .github/workflows/fix-postgres-boundary.yml
+          git add server.ts src/components/PropertiesView.tsx package.json package-lock.json firebase-applet-config.json firebase-blueprint.json firestore.rules postgres-boundary-repair.trigger .github/workflows/fix-postgres-boundary.yml
           git commit -m 'fix: complete PostgreSQL runtime boundary and Firebase removal'
           git push origin HEAD:refactor/postgresql-only-auth-recovery
