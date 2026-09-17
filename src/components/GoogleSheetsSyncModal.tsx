@@ -22,7 +22,7 @@ import {
   listSpreadsheets,
   GoogleSpreadsheetInfo,
 } from '../lib/sheetsService';
-import { getCachedToken, signInWithGoogle, getOAuthUser   DriveOAuthUser,
+import { getCachedToken, signInWithGoogle, getOAuthUser, DriveOAuthUser,
 } from '../lib/driveAuth';
 
 interface GoogleSheetsSyncModalProps {
@@ -47,7 +47,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [activeTab, setActiveTab] = useState<'properties' | 'leads' | 'spreadsheets'>(
     initialMode === 'leads' ? 'leads' : initialMode === 'list' ? 'spreadsheets' : 'properties'
   );
-  const [user, setUser] = useState<User | null>(getOAuthUser());
+  const [user, setUser] = useState<DriveOAuthUser | null>(getOAuthUser());
   const [token, setToken] = useState<string | null>(getCachedToken());
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
