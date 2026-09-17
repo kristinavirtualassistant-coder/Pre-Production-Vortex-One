@@ -1,0 +1,130 @@
+name: Temporary PR30 repair runner
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/postgresql-only-auth-recovery
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Repair feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          server = Path('server.ts')
+          text = server.read_text()
+          start = text.index("  // --- Dialer Metrics API (Single, Safe Implementation) ---")
+          end = text.index("  app.post('/api/calls/:id/drop-voicemail'", start)
+          replacement = '''  // --- Dialer Metrics API (PostgreSQL authoritative) ---
+    app.get('/api/dialer/metrics', async (req, res) => {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Dialer metrics require PostgreSQL', code: 'METRICS_DATABASE_UNAVAILABLE' });
+      try {
+        const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+        const result = await pool.query(`SELECT COUNT(*)::int AS call_volume, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_calls, COALESCE(AVG(duration_seconds) FILTER (WHERE status = 'completed'), 0)::float AS avg_talk_time, COUNT(*) FILTER (WHERE status IN ('initiated','ringing'))::int AS active_calls FROM call WHERE organization_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'`, [orgId]);
+        const row = result.rows[0] || { call_volume: 0, completed_calls: 0, avg_talk_time: 0, active_calls: 0 };
+        const volume = Number(row.call_volume) || 0;
+        const completed = Number(row.completed_calls) || 0;
+        res.json([{ organization_id: orgId, date: new Date().toISOString().split('T')[0], call_volume: volume, success_rate: volume ? Number(((completed / volume) * 100).toFixed(1)) : 0, avg_talk_time: Number(row.avg_talk_time) || 0, abandonment_rate: volume ? Number((((volume - completed) / volume) * 100).toFixed(1)) : 0, active_calls: Number(row.active_calls) || 0 }]);
+      } catch (err: any) {
+        console.error('Dialer metrics error:', err);
+        res.status(503).json({ error: 'Dialer metrics unavailable' });
+      }
+    });
+
+    // --- Voicemail Drop Library API (PostgreSQL authoritative) ---
+    async function ensureVoicemailLibrary(pool: NonNullable<ReturnType<typeof getPgPool>>) {
+      await pool.query(`CREATE TABLE IF NOT EXISTS voicemail_library (id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, label VARCHAR(255) NOT NULL, url VARCHAR(2048) NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL); CREATE INDEX IF NOT EXISTS idx_voicemail_library_org ON voicemail_library(organization_id, created_at DESC);`);
+    }
+
+    app.get('/api/dialer/voicemails', async (req, res) => {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Voicemail library requires PostgreSQL', code: 'VOICEMAIL_DATABASE_UNAVAILABLE' });
+      try {
+        const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+        await ensureVoicemailLibrary(pool);
+        const result = await pool.query(`SELECT id, organization_id, label, url, created_at FROM voicemail_library WHERE organization_id = $1 ORDER BY created_at DESC`, [orgId]);
+        res.json(result.rows);
+      } catch (err: any) { console.error('Voicemail list error:', err); res.status(503).json({ error: 'Voicemail library unavailable' }); }
+    });
+
+    app.post('/api/dialer/voicemails', async (req, res) => {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Voicemail library requires PostgreSQL', code: 'VOICEMAIL_DATABASE_UNAVAILABLE' });
+      try {
+        const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+        const label = typeof req.body?.label === 'string' && req.body.label.trim() ? req.body.label.trim() : 'Custom Voicemail Audio';
+        const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+        if (!url) return res.status(400).json({ error: 'Voicemail URL is required' });
+        await ensureVoicemailLibrary(pool);
+        const id = `vm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const result = await pool.query(`INSERT INTO voicemail_library (id, organization_id, label, url) VALUES ($1, $2, $3, $4) RETURNING id, organization_id, label, url, created_at`, [id, orgId, label, url]);
+        res.status(201).json(result.rows[0]);
+      } catch (err: any) { console.error('Voicemail create error:', err); res.status(503).json({ error: 'Voicemail library unavailable' }); }
+    });
+
+    app.delete('/api/dialer/voicemails/:id', async (req, res) => {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Voicemail library requires PostgreSQL', code: 'VOICEMAIL_DATABASE_UNAVAILABLE' });
+      try {
+        const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+        await ensureVoicemailLibrary(pool);
+        const result = await pool.query(`DELETE FROM voicemail_library WHERE id = $1 AND organization_id = $2 RETURNING id`, [req.params.id, orgId]);
+        if (!result.rowCount) return res.status(404).json({ error: 'Voicemail not found' });
+        res.json({ success: true, deletedId: result.rows[0].id });
+      } catch (err: any) { console.error('Voicemail delete error:', err); res.status(503).json({ error: 'Voicemail library unavailable' }); }
+    });
+
+'''
+          server.write_text(text[:start] + replacement + text[end:])
+          props = Path('src/components/PropertiesView.tsx')
+          props.write_text(props.read_text().replace("import firebaseConfig from '../../firebase-applet-config.json';\n", ''))
+          PY
+          node -e "const p=require('./package.json'); delete p.dependencies?.firebase; delete p.dependencies?.['firebase-admin']; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2)+'\\n')"
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          rm -f firebase-applet-config.json firebase-blueprint.json firestore.rules postgres-boundary-repair.trigger .github/workflows/fix-postgres-boundary.yml
+          cat > .github/workflows/ci.yml <<'YAML'
+          name: Vortex One CI
+          on:
+            push:
+              branches: [main]
+            pull_request:
+              branches: [main]
+          permissions:
+            contents: read
+          jobs:
+            validate:
+              runs-on: ubuntu-latest
+              timeout-minutes: 15
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-node@v4
+                  with:
+                    node-version: 22
+                    cache: npm
+                - run: npm ci
+                - run: npm run lint
+                - run: npm run build
+                - run: npm test
+          YAML
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: complete PostgreSQL runtime boundary and Firebase removal'
+          git push origin HEAD:refactor/postgresql-only-auth-recovery
