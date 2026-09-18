@@ -43,6 +43,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   isGuest: boolean;
+  signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
@@ -202,6 +203,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [accessToken, userProfile]);
   const getAccessToken = useCallback(async () => accessToken, [accessToken]);
 
+  const signInWithGoogle = useCallback(async () => {
+    throw new Error('Google sign-in is not available. Use PostgreSQL email/password authentication.');
+  }, []);
+
   const value: AuthContextType = {
     user,
     userProfile,
@@ -210,6 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loading,
     error,
     isGuest: false,
+    signInWithGoogle,
     signInWithEmail,
     signUpWithEmail,
     signOut,
