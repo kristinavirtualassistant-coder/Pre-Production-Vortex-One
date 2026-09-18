@@ -17,8 +17,12 @@ postgresqlAuthRouter.post('/login', async (req: Request, res: Response) => {
   try {
     await ensurePostgreSQLAuthSchema(pool);
     const result = await pool.query(
-      `SELECT id, organization_id, email, name, role, password_hash, disabled_at
-       FROM users WHERE lower(email) = $1 LIMIT 1`,
+      `SELECT u.id, u.organization_id, u.email, u.name, u.role, u.password_hash, u.disabled_at,
+              o.name AS organization_name, o.slug AS organization_slug, o.settings AS organization_settings
+       FROM users u
+       JOIN organizations o ON o.id = u.organization_id
+       WHERE lower(u.email) = $1
+       LIMIT 1`,
       [email],
     );
     const user = result.rows[0];
@@ -37,7 +41,16 @@ postgresqlAuthRouter.post('/login', async (req: Request, res: Response) => {
 
     return res.json({
       token,
-      user: { id: user.id, organization_id: user.organization_id, email: user.email, name: user.name, role: user.role },
+      user: {
+        id: user.id,
+        organization_id: user.organization_id,
+        organization_name: user.organization_name,
+        organization_slug: user.organization_slug,
+        organization_settings: user.organization_settings,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
     });
   } catch (error) {
     console.error('PostgreSQL login error:', error);
