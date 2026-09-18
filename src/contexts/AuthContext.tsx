@@ -57,7 +57,18 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const SESSION_KEY = 'vortex_postgresql_session';
 
-function profileFromUser(user: { id: string; email: string; name: string; role: UserProfile['role']; organization_id: string }): UserProfile {
+type SessionUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: UserProfile['role'];
+  organization_id: string;
+  organization_name?: string;
+  organization_slug?: string;
+  organization_settings?: Record<string, unknown>;
+};
+
+function profileFromUser(user: SessionUser): UserProfile {
   const now = new Date().toISOString();
   return {
     uid: user.id,
@@ -65,7 +76,7 @@ function profileFromUser(user: { id: string; email: string; name: string; role: 
     displayName: user.name,
     role: user.role,
     organization_id: user.organization_id,
-    organization_name: user.organization_id,
+    organization_name: user.organization_name || user.organization_id,
     tenant_ids: [user.organization_id],
     createdAt: now,
     lastLoginAt: now,
@@ -81,13 +92,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
-  const applySession = useCallback((payload: { token: string; user: { id: string; email: string; name: string; role: UserProfile['role']; organization_id: string } }) => {
+  const applySession = useCallback((payload: { token: string; user: SessionUser }) => {
     const profile = profileFromUser(payload.user);
     const tenant: OrganizationTenant = {
       id: profile.organization_id,
       name: profile.organization_name,
-      slug: profile.organization_id.replace(/^org_/, ''),
-      plan: 'Enterprise',
+      slug: payload.user.organization_slug || profile.organization_id.replace(/^org_/, ''),
+      settings: payload.user.organization_settings,
     };
     setAccessToken(payload.token);
     setUser({ uid: payload.user.id, email: payload.user.email, displayName: payload.user.name });
@@ -142,12 +153,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           email: params.email,
           password: params.password,
           name: params.name,
           organizationName: params.organizationName,
-        }),
+        },
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Sign-up failed');
