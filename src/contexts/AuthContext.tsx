@@ -153,12 +153,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: {
+        body: JSON.stringify({
           email: params.email,
           password: params.password,
           name: params.name,
           organizationName: params.organizationName,
-        },
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Sign-up failed');
@@ -194,7 +194,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!userProfile || orgId !== userProfile.organization_id) {
       throw new Error('Organization switching is limited to authenticated PostgreSQL memberships');
     }
-    setActiveTenant({ id: orgId, name: orgName, slug: orgId.replace(/^org_/, ''), plan: 'Enterprise' });
+    setActiveTenant({ id: orgId, name: orgName, slug: orgId.replace(/^org_/, '') });
   }, [userProfile]);
 
   const updateUserProfileData = useCallback(async (updates: Partial<UserProfile>) => {
