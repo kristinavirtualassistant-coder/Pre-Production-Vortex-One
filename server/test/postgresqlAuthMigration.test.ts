@@ -19,5 +19,8 @@ assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry/i);
 assert.match(sql, /CREATE TABLE IF NOT EXISTS webhook_endpoints/i);
 assert.match(sql, /CREATE TABLE IF NOT EXISTS webhook_deliveries/i);
 assert.match(sql, /REFERENCES webhook_endpoints\(id\) ON DELETE CASCADE/i);
+assert.match(sql, /CREATE TABLE IF NOT EXISTS voicemail_library/i);
+assert.match(sql, /REFERENCES organizations\(id\) ON DELETE CASCADE/i);
+assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_voicemail_library_org/i);
 
 console.log('PostgreSQL authentication migration 12 checks passed');

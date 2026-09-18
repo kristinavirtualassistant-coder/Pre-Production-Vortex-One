@@ -29,13 +29,13 @@ import {
   FolderDown,
   FileSpreadsheet as FileSpreadsheetIcon,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
 import {
   initAuth,
   googleSignIn,
   logout,
   getAccessToken,
   SCOPES,
+  DriveOAuthUser,
 } from '../lib/driveAuth';
 import {
   driveService,
@@ -59,7 +59,7 @@ export const GoogleDriveView: React.FC<GoogleDriveViewProps> = ({
   properties,
   leads,
 }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<DriveOAuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState<boolean>(true);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);

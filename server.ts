@@ -5,11 +5,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { getFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
-// Firebase Admin is initialized idempotently by the shared middleware module.
-const getFirestoreDb = () => getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
@@ -3111,93 +3108,24 @@ async function startServer() {
     }
   });
 
-  // --- Dialer Metrics API (Single, Safe Implementation) ---
-  app.get('/api/dialer/metrics', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-
-      // Fallback mock metrics if Firestore is unconfigured
-      const defaultMetrics = [
-        { id: 'met_1', organization_id: orgId, date: new Date().toISOString().split('T')[0], call_volume: 142, success_rate: 68.4, avg_talk_time: 84, abandonment_rate: 4.2 },
-        { id: 'met_2', organization_id: orgId, date: new Date(Date.now() - 86400000).toISOString().split('T')[0], call_volume: 118, success_rate: 64.2, avg_talk_time: 79, abandonment_rate: 3.8 },
-      ];
-
-      try {
-        const snapshot = await getFirestoreDb().collection('dialer_metrics')
-          .where('organization_id', '==', orgId)
-          .orderBy('date', 'desc')
-          .limit(7)
-          .get();
-        if (!snapshot.empty) {
-          return res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        }
-      } catch (fsErr) {
-        // Fallback gracefully
-      }
-
-      res.json(defaultMetrics);
-    } catch (err: any) {
-      res.json([]);
-    }
-  });
-
-  // --- Voicemail Drop Library API ---
-  app.get('/api/dialer/voicemails', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const defaultVoicemails = [
-        { id: 'vm_1', organization_id: orgId, label: 'Standard Multi-Family Introduction', url: 'https://actions.google.com/sounds/v1/speech/greeting.ogg', created_at: new Date().toISOString() },
-        { id: 'vm_2', organization_id: orgId, label: 'Off-Market Valuation Follow-Up', url: 'https://actions.google.com/sounds/v1/speech/followup.ogg', created_at: new Date().toISOString() }
-      ];
-
-      try {
-        const snapshot = await getFirestoreDb().collection('voicemails')
-          .where('organization_id', '==', orgId)
-          .get();
-        if (!snapshot.empty) {
-          return res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        }
-      } catch (fsErr) {}
-
-      res.json(defaultVoicemails);
-    } catch (err: any) {
-      res.json([]);
-    }
-  });
-
-  app.post('/api/dialer/voicemails', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const { label, url } = req.body;
-      const newVoicemail = {
-        organization_id: orgId,
-        label: label || 'Custom Voicemail Audio',
-        url: url || 'https://actions.google.com/sounds/v1/speech/greeting.ogg',
-        created_at: new Date().toISOString(),
-      };
-      try {
-        const docRef = await getFirestoreDb().collection('voicemails').add(newVoicemail);
-        return res.status(201).json({ id: docRef.id, ...newVoicemail });
-      } catch (fsErr) {
-        return res.status(201).json({ id: `vm_${Date.now()}`, ...newVoicemail });
-      }
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete('/api/dialer/voicemails/:id', async (req, res) => {
-    try {
-      const { id } = req.params;
-      try {
-        await getFirestoreDb().collection('voicemails').doc(id).delete();
-      } catch (fsErr) {}
-      res.json({ success: true, deletedId: id });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
+  // --- Dialer Metrics API (PostgreSQL authoritative) ---
+app.get('/api/dialer/metrics', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Dialer metrics require PostgreSQL'}); const result=await pool.query(`SELECT CURRENT_DATE::text AS date, COUNT(*)::int AS call_volume, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_calls, COALESCE(AVG(duration_seconds) FILTER (WHERE status = 'completed'),0)::float AS avg_talk_time FROM call WHERE organization_id=$1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'`,[orgId]); const row=result.rows[0]||{}; const volume=Number(row.call_volume)||0; const completed=Number(row.completed_calls)||0; return res.json([{organization_id:orgId,date:row.date,call_volume:volume,success_rate:volume?Number(((completed/volume)*100).toFixed(1)):0,avg_talk_time:Number(row.avg_talk_time)||0,abandonment_rate:volume?Number((((volume-completed)/volume)*100).toFixed(1)):0}]); }
+  catch(err:any){return res.status(503).json({error:err.message||'Dialer metrics unavailable'});}
+});
+// --- Voicemail Drop Library API (PostgreSQL authoritative) ---
+app.get('/api/dialer/voicemails', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`SELECT id,organization_id,label,url,created_at FROM voicemail_library WHERE organization_id=$1 ORDER BY created_at DESC`,[orgId]); return res.json(result.rows); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
+app.post('/api/dialer/voicemails', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const label=String(req.body?.label||'').trim(); const url=String(req.body?.url||'').trim(); if(!label||!url)return res.status(400).json({error:'label and url are required'}); const id=`vm_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; const result=await pool.query(`INSERT INTO voicemail_library (id,organization_id,label,url) VALUES ($1,$2,$3,$4) RETURNING id,organization_id,label,url,created_at`,[id,orgId,label,url]); return res.status(201).json(result.rows[0]); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
+app.delete('/api/dialer/voicemails/:id', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`DELETE FROM voicemail_library WHERE id=$1 AND organization_id=$2 RETURNING id`,[req.params.id,orgId]); if(!result.rowCount)return res.status(404).json({error:'Voicemail not found'}); return res.json({success:true,deletedId:result.rows[0].id}); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
   app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Voicemail drop requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });

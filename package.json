@@ -34,8 +34,6 @@
     "drizzle-orm": "^0.45.2",
     "esbuild": "^0.25.0",
     "express": "^4.21.2",
-    "firebase": "^12.18.0",
-    "firebase-admin": "^14.3.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
