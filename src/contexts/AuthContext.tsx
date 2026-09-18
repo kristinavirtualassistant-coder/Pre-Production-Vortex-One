@@ -32,23 +32,19 @@ interface SignUpParams {
   email: string;
   password: string;
   name: string;
-  organizationName?: string;
-  role?: 'admin' | 'executive' | 'manager' | 'agent';
+  organizationName: string;
 }
 
 interface AuthContextType {
   user: AuthUser | null;
   userProfile: UserProfile | null;
-  activeTenant: OrganizationTenant;
+  activeTenant: OrganizationTenant | null;
   availableTenants: OrganizationTenant[];
   loading: boolean;
   error: string | null;
   isGuest: boolean;
-  continueAsGuest: () => void;
-  signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (params: SignUpParams) => Promise<void>;
-  signInAsDemoPersona: (personaId: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchOrganization: (orgId: string, orgName: string) => Promise<void>;
   updateUserProfileData: (updates: Partial<UserProfile>) => Promise<void>;
@@ -56,14 +52,6 @@ interface AuthContextType {
   getAuthHeaders: () => Record<string, string>;
   getAccessToken: () => Promise<string | null>;
 }
-
-const DEFAULT_TENANT: OrganizationTenant = {
-  id: 'org_cmc_realty',
-  name: 'CMC Realty',
-  slug: 'cmc-realty',
-  plan: 'Enterprise',
-  settings: { timezone: 'America/Los_Angeles', targetMarket: 'Orange County, CA' },
-};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const SESSION_KEY = 'vortex_postgresql_session';
@@ -76,7 +64,7 @@ function profileFromUser(user: { id: string; email: string; name: string; role: 
     displayName: user.name,
     role: user.role,
     organization_id: user.organization_id,
-    organization_name: user.organization_id === DEFAULT_TENANT.id ? DEFAULT_TENANT.name : user.organization_id,
+    organization_name: user.organization_id,
     tenant_ids: [user.organization_id],
     createdAt: now,
     lastLoginAt: now,
@@ -86,27 +74,25 @@ function profileFromUser(user: { id: string; email: string; name: string; role: 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [activeTenant, setActiveTenant] = useState<OrganizationTenant>(DEFAULT_TENANT);
-  const [availableTenants, setAvailableTenants] = useState<OrganizationTenant[]>([DEFAULT_TENANT]);
+  const [activeTenant, setActiveTenant] = useState<OrganizationTenant | null>(null);
+  const [availableTenants, setAvailableTenants] = useState<OrganizationTenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isGuest, setIsGuest] = useState(false);
 
   const applySession = useCallback((payload: { token: string; user: { id: string; email: string; name: string; role: UserProfile['role']; organization_id: string } }) => {
     const profile = profileFromUser(payload.user);
-    setAccessToken(payload.token);
-    setUser({ uid: payload.user.id, email: payload.user.email, displayName: payload.user.name });
-    setUserProfile(profile);
     const tenant: OrganizationTenant = {
       id: profile.organization_id,
       name: profile.organization_name,
       slug: profile.organization_id.replace(/^org_/, ''),
       plan: 'Enterprise',
     };
+    setAccessToken(payload.token);
+    setUser({ uid: payload.user.id, email: payload.user.email, displayName: payload.user.name });
+    setUserProfile(profile);
     setActiveTenant(tenant);
     setAvailableTenants([tenant]);
-    setIsGuest(false);
     localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
   }, []);
 
@@ -116,7 +102,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
       return;
     }
-
     try {
       const saved = JSON.parse(raw);
       if (!saved?.token || !saved?.user?.id) throw new Error('Invalid session');
@@ -153,9 +138,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setError(null);
     try {
-      const organizationId = params.organizationName
-        ? `org_${params.organizationName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`
-        : DEFAULT_TENANT.id;
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,7 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: params.email,
           password: params.password,
           name: params.name,
-          organizationId,
+          organizationName: params.organizationName,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -191,19 +173,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAccessToken(null);
       setUser(null);
       setUserProfile(null);
-      setActiveTenant(DEFAULT_TENANT);
-      setAvailableTenants([DEFAULT_TENANT]);
-      setIsGuest(false);
+      setActiveTenant(null);
+      setAvailableTenants([]);
     }
   }, [accessToken]);
-
-  const continueAsGuest = useCallback(() => {
-    setError(null);
-    setIsGuest(true);
-    setUser(null);
-    setUserProfile(null);
-    setAccessToken(null);
-  }, []);
 
   const switchOrganization = useCallback(async (orgId: string, orgName: string) => {
     if (!userProfile || orgId !== userProfile.organization_id) {
@@ -214,10 +187,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserProfileData = useCallback(async (updates: Partial<UserProfile>) => {
     setUserProfile((current) => current ? { ...current, ...updates } : current);
-    setUser((current) => current ? {
-      ...current,
-      displayName: updates.displayName ?? current.displayName,
-    } : current);
+    setUser((current) => current ? { ...current, displayName: updates.displayName ?? current.displayName } : current);
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
@@ -232,14 +202,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [accessToken, userProfile]);
   const getAccessToken = useCallback(async () => accessToken, [accessToken]);
 
-  const signInWithGoogle = useCallback(async () => {
-    throw new Error('Google sign-in is not available. Use PostgreSQL email/password authentication.');
-  }, []);
-
-  const signInAsDemoPersona = useCallback(async (_personaId: string) => {
-    throw new Error('Demo personas are disabled. Use a real PostgreSQL account.');
-  }, []);
-
   const value: AuthContextType = {
     user,
     userProfile,
@@ -247,12 +209,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     availableTenants,
     loading,
     error,
-    isGuest,
-    continueAsGuest,
-    signInWithGoogle,
+    isGuest: false,
     signInWithEmail,
     signUpWithEmail,
-    signInAsDemoPersona,
     signOut,
     switchOrganization,
     updateUserProfileData,
