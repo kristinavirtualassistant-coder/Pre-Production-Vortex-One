@@ -18,9 +18,12 @@ assert.equal(authView.includes('signInWithGoogle'), false, 'AuthView must not ex
 assert.equal(authView.includes('signInWithEmail'), true, 'AuthView must use PostgreSQL email authentication');
 assert.equal(authView.includes('signUpWithEmail'), true, 'AuthView must use PostgreSQL signup');
 
-const authRoutes = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/postgresqlAuthRoutes.ts'), 'utf8');
-assert.equal(authRoutes.includes('organizationName'), true, 'signup must accept an organization name');
-assert.equal(authRoutes.includes('BEGIN'), true, 'signup must create tenant and user transactionally');
-assert.equal(authRoutes.includes("VALUES ($1, $2, $3, $4, 'admin', $5)"), true, 'first organization user must be an admin');
+
+const authMiddleware = fs.readFileSync(path.resolve(process.cwd(), 'server/middleware/auth.ts'), 'utf8');
+assert.equal(authMiddleware.includes('organizationName'), true, 'runtime signup must accept an organization name');
+assert.equal(authMiddleware.includes('BEGIN'), true, 'runtime signup must create tenant and user transactionally');
+assert.equal(authMiddleware.includes("VALUES ($1, $2, $3, $4, 'admin', $5)"), true, 'runtime first organization user must be an admin');
+assert.equal(authMiddleware.includes("SELECT u.id, u.organization_id, u.email, u.name, u.role, u.password_hash, u.disabled_at"), true, 'runtime login must load the canonical organization membership');
+assert.equal(authMiddleware.includes("const organizationId = typeof req.body?.organizationId"), false, 'runtime signup must not trust a client-supplied organization id');
 
 console.log('PostgreSQL-only authentication boundary checks passed');
