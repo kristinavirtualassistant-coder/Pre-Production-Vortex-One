@@ -896,6 +896,7 @@ async function runAllTests() {
   assert(sacProvider.isGovernmentSource === true, 'Sacramento County provider flagged as official government source');
 
   // Live government GIS calls are integration tests, not deterministic CI tests.
+  // CI intentionally exercises deterministic provider fixtures instead.
   // Run them explicitly with VORTEX_ONE_LIVE_GIS_TESTS=1 when the external
   // provider should be exercised. CI validates provider routing and parsing
   // with deterministic fixtures above instead of depending on endpoint uptime.
