@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { isLocalDevelopmentAuthEnabled, shouldBypassApiAuth } from '../middleware/auth';
 import './postgresqlAuthMigration.test';
 
@@ -8,4 +10,17 @@ assert.equal(shouldBypassApiAuth('/ready'), true, 'readiness must remain publicl
 assert.equal(shouldBypassApiAuth('/tasks'), false, 'application routes must require PostgreSQL authentication');
 assert.equal(shouldBypassApiAuth('/telephony/webhook/ringcentral'), true, 'telephony webhooks must remain publicly reachable for provider delivery');
 
-console.log('local development auth retirement checks passed');
+const authView = fs.readFileSync(path.resolve(process.cwd(), 'src/components/AuthView.tsx'), 'utf8');
+assert.equal(authView.includes("../lib/firebase"), false, 'AuthView must not import Firebase');
+assert.equal(authView.includes('signInAsDemoPersona'), false, 'AuthView must not expose demo personas');
+assert.equal(authView.includes('continueAsGuest'), false, 'AuthView must not expose guest access');
+assert.equal(authView.includes('signInWithGoogle'), false, 'AuthView must not expose provider authentication');
+assert.equal(authView.includes('signInWithEmail'), true, 'AuthView must use PostgreSQL email authentication');
+assert.equal(authView.includes('signUpWithEmail'), true, 'AuthView must use PostgreSQL signup');
+
+const authRoutes = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/postgresqlAuthRoutes.ts'), 'utf8');
+assert.equal(authRoutes.includes('organizationName'), true, 'signup must accept an organization name');
+assert.equal(authRoutes.includes('BEGIN'), true, 'signup must create tenant and user transactionally');
+assert.equal(authRoutes.includes("VALUES ($1, $2, $3, $4, 'admin', $5)"), true, 'first organization user must be an admin');
+
+console.log('PostgreSQL-only authentication boundary checks passed');

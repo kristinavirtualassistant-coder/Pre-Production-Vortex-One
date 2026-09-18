@@ -14,7 +14,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [organizationId, setOrganizationId] = useState('');
+  const [organizationName, setOrganizationName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -26,8 +26,8 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
       addToast('Email and password are required.', 'error');
       return;
     }
-    if (mode === 'signup' && (!name.trim() || !organizationId.trim())) {
-      addToast('Name and an existing organization ID are required.', 'error');
+    if (mode === 'signup' && (!name.trim() || !organizationName.trim())) {
+      addToast('Name and organization are required.', 'error');
       return;
     }
     if (password.length < 12) {
@@ -45,7 +45,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
           email: normalizedEmail,
           password,
           name: name.trim(),
-          organizationName: organizationId.trim(),
+          organizationName: organizationName.trim(),
         });
         addToast('Account created and signed in successfully.', 'success');
       }
@@ -110,14 +110,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
                   Name
                   <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                     <UserRound className="h-4 w-4 text-slate-500" />
-                    <input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="name" />
+                    <input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="name" required />
                   </div>
                 </label>
                 <label className="block text-sm text-slate-300">
-                  Existing organization ID
+                  Organization name
                   <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                     <Building2 className="h-4 w-4 text-slate-500" />
-                    <input value={organizationId} onChange={(e) => setOrganizationId(e.target.value)} placeholder="org_..." className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="organization" />
+                    <input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Your company or organization" className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="organization" required />
                   </div>
                 </label>
               </>
