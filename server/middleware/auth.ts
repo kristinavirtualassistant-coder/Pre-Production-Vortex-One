@@ -101,7 +101,24 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
      VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
     [`sess_${randomUUID()}`, user.id, hashSessionToken(token)],
   );
-  await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMPasync function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+
+  return res.json({
+    token,
+    user: {
+      id: user.id,
+      organization_id: user.organization_id,
+      organization_name: user.organization_name,
+      organization_slug: user.organization_slug,
+      organization_settings: user.organization_settings,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
+  });
+}
+
+async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
