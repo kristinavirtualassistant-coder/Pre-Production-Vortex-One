@@ -1,0 +1,2 @@
+Temporary GitHub Actions trigger for the Firebase removal pass.
+Second recovery cleanup trigger.
