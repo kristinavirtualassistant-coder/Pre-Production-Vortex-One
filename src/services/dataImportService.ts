@@ -1091,12 +1091,12 @@ export function validateImportRecord(
     return isNaN(parsed) ? fallback : Math.max(0, parsed);
   };
 
-  const estimated_value = parseNum(raw.estimated_value || raw.value || raw.avm || raw.market_value, 2500000);
-  const estimated_equity = parseNum(raw.estimated_equity || raw.equity || raw.net_equity, Math.round(estimated_value * 0.7));
-  const mortgage_balance = parseNum(raw.mortgage_balance || raw.mortgage || raw.loan_balance, Math.max(0, estimated_value - estimated_equity));
-  const units_count = Math.max(1, Math.round(parseNum(raw.units_count || raw.units, 4)));
-  const square_feet = Math.max(0, Math.round(parseNum(raw.square_feet || raw.sqft, 4500)));
-  const year_built = Math.max(1850, Math.min(new Date().getFullYear(), Math.round(parseNum(raw.year_built || raw.year, 1988))));
+  const estimated_value = parseNum(raw.estimated_value ?? raw.value ?? raw.avm ?? raw.market_value, 0);
+  const estimated_equity = parseNum(raw.estimated_equity ?? raw.equity ?? raw.net_equity, 0);
+  const mortgage_balance = parseNum(raw.mortgage_balance ?? raw.mortgage ?? raw.loan_balance, 0);
+  const units_count = Math.max(0, Math.round(parseNum(raw.units_count ?? raw.units, 0)));
+  const square_feet = Math.max(0, Math.round(parseNum(raw.square_feet ?? raw.sqft, 0)));
+  const year_built = Math.max(0, Math.min(new Date().getFullYear(), Math.round(parseNum(raw.year_built ?? raw.year, 0))));
 
   // Entity Type Resolution
   let entity_type: RawOwnerData['entity_type'] = raw.entity_type || ownerObj?.entity_type;
@@ -1108,22 +1108,22 @@ export function validateImportRecord(
     else entity_type = 'individual';
   }
 
-  const is_absentee = raw.is_absentee_owner ?? (ownerObj?.mailing_address ? !ownerObj.mailing_address.toLowerCase().includes(address.toLowerCase().split(' ')[0]) : true);
+  const is_absentee = raw.is_absentee_owner ?? false;
   const is_corporate = raw.is_corporate_owned ?? (entity_type === 'llc' || entity_type === 'corporation' || entity_type === 'trust');
 
   const sanitizedRecord: RawPropertyData = {
-    apn: apn || `APN-${index + 1}-${Date.now().toString().slice(-4)}`,
-    address: address || '100 Newport Blvd',
-    city: city || 'Costa Mesa',
-    state: state || 'CA',
-    zip: zip || '92627',
-    county: county || 'Orange County',
-    property_type: raw.property_type || 'Multi-Family',
+    apn,
+    address,
+    city,
+    state,
+    zip,
+    county,
+    property_type: raw.property_type || 'Unknown',
     units_count,
     square_feet,
     year_built,
     estimated_value,
-    assessed_tax_value: parseNum(raw.assessed_tax_value, Math.round(estimated_value * 0.72)),
+    assessed_tax_value: parseNum(raw.assessed_tax_value, 0),
     estimated_equity,
     mortgage_balance,
     is_absentee_owner: is_absentee,
@@ -1134,11 +1134,11 @@ export function validateImportRecord(
     source_provenance: raw.source_provenance || 'Vortex One Validated Ingestion Pipeline',
     source_record_id: raw.source_record_id || raw.id,
     owner: {
-      name: ownerName || 'Private Landlord',
+      name: ownerName,
       entity_type,
       mailing_address: ownerObj?.mailing_address || raw.mailing_address || raw.owner_address || '',
       mailing_city: ownerObj?.mailing_city || raw.mailing_city || raw.owner_city || '',
-      mailing_state: (ownerObj?.mailing_state || raw.mailing_state || raw.owner_state || 'CA').toUpperCase(),
+      mailing_state: (ownerObj?.mailing_state || raw.mailing_state || raw.owner_state || '').toUpperCase(),
       mailing_zip: ownerObj?.mailing_zip || raw.mailing_zip || raw.owner_zip || '',
       phone_numbers: normalizedPhones.map((p) => ({
         number: p.formatted,
