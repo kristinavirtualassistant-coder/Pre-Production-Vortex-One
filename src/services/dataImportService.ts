@@ -455,7 +455,7 @@ export function parsePropertyJson(input: string | any[] | Record<string, any>): 
 
 /**
  * Automated, idempotent batch-processing ingestion function.
- * Ingests property, owner, and lead records from raw JSON or CSV into the Cloud SQL database / datastore.
+ * Ingests property, owner, and lead records from raw JSON or CSV into the PostgreSQL database.
  * Partitions by the explicitly supplied organization_id and applies TCPA/DNC suppression constraints.
  */
 export async function ingestData(
