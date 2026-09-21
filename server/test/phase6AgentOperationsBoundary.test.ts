@@ -17,19 +17,19 @@ function extractRouteBlock(routeStart: string, nextMarkers: string[]): string {
   return source.slice(start, end);
 }
 
-const taskListBlock = extractRouteBlock("  app.get('/api/tasks'", ["  app.post('/api/tasks'"]);
-const taskCreateBlock = extractRouteBlock("  app.post('/api/tasks'", ["  app.get('/api/workflows'"]);
-const workflowBlock = extractRouteBlock("  app.get('/api/workflows'", ["  app.get('/api/workflows/:id'"]);
-const workflowIdBlock = extractRouteBlock("  app.get('/api/workflows/:id'", ["  app.post('/api/workflows'"]);
-const workflowCreateBlock = extractRouteBlock("  app.post('/api/workflows'", ["  app.put('/api/workflows/:id'"]);
-const workflowUpdateBlock = extractRouteBlock("  app.put('/api/workflows/:id'", ["  app.delete('/api/workflows/:id'"]);
-const workflowDeleteBlock = extractRouteBlock("  app.delete('/api/workflows/:id'", ["  app.get('/api/runs'"]);
+const taskListBlock = extractRouteBlock("  app.get('/api/tasks',", ["  app.post('/api/tasks',"]);
+const taskCreateBlock = extractRouteBlock("  app.post('/api/tasks',", ["  app.get('/api/workflows',"]);
+const workflowListBlock = extractRouteBlock("  app.get('/api/workflows',", ["  app.get('/api/workflows/:id',"]);
+const workflowGetBlock = extractRouteBlock("  app.get('/api/workflows/:id',", ["  app.post('/api/workflows',"]);
+const workflowCreateBlock = extractRouteBlock("  app.post('/api/workflows',", ["  app.put('/api/workflows/:id',"]);
+const workflowUpdateBlock = extractRouteBlock("  app.put('/api/workflows/:id',", ["  app.delete('/api/workflows/:id',"]);
+const workflowDeleteBlock = extractRouteBlock("  app.delete('/api/workflows/:id',", ["  app.get('/api/runs',"]);
 
 const operationsBlock = [
   taskListBlock,
   taskCreateBlock,
-  workflowBlock,
-  workflowIdBlock,
+  workflowListBlock,
+  workflowGetBlock,
   workflowCreateBlock,
   workflowUpdateBlock,
   workflowDeleteBlock,
