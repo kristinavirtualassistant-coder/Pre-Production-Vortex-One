@@ -575,9 +575,6 @@ async function startServer() {
         }
       });
 
-      if (!inMemoryStore.runs) inMemoryStore.runs = [];
-      inMemoryStore.runs.unshift(workflowRun);
-
       const runStartTime = Date.now();
 
       sendEvent('workflow_start', {
