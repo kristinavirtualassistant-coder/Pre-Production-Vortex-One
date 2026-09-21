@@ -280,68 +280,25 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow delete error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  // --- Workflow Runs Subscription & Polling APIs ---
-  app.get('/api/runs', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
-    let runs = [...(inMemoryStore.runs || [])];
-    const { workflow_id, status, limit } = req.query;
-
-    if (workflow_id && typeof workflow_id === 'string') {
-      runs = runs.filter((r) => r.workflow_id === workflow_id);
-    }
-    if (status && typeof status === 'string') {
-      runs = runs.filter((r) => r.status === status);
-    }
-
-    runs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    if (limit) {
-      const parsedLimit = parseInt(limit as string, 10);
-      if (!isNaN(parsedLimit) && parsedLimit > 0) {
-        runs = runs.slice(0, parsedLimit);
-      }
-    }
-
-    res.json(runs);
+  // Workflow run read/mutation APIs were intentionally retired until durable PostgreSQL workflow-run persistence is available.
+  app.get('/api/runs', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/latest', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
-    const runs = inMemoryStore.runs || [];
-    if (runs.length === 0) {
-      return res.json(null);
-    }
-    const sorted = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    res.json(sorted[0]);
+  app.get('/api/runs/latest', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/active', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
-    const runs = inMemoryStore.runs || [];
-    const active = runs.find((r) => r.status === 'running' || r.status === 'paused_approval');
-    if (active) {
-      return res.json(active);
-    }
-    const latest = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
-    res.json(latest);
+  app.get('/api/runs/active', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/:id', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
-    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
-    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
-    res.json(run);
+  app.get('/api/runs/:id', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.post('/api/runs/:id/abort', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Workflow run mutation API was removed; use PostgreSQL durable jobs.' });
-    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
-    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
-
-    run.status = 'failed';
-    run.final_summary = 'Run aborted by user request.';
-    run.completed_at = new Date().toISOString();
-    res.json(run);
+  app.post('/api/runs/:id/abort', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run mutation API was removed; durable workflow-run persistence is required.' });
   });
 
   // Execute Custom Workflow Chain Step-by-Step
@@ -387,9 +344,6 @@ async function startServer() {
           };
         }
       });
-
-      if (!inMemoryStore.runs) inMemoryStore.runs = [];
-      inMemoryStore.runs.unshift(workflowRun);
 
       const runStartTime = Date.now();
 
