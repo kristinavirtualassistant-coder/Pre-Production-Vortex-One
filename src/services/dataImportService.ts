@@ -41,7 +41,7 @@ export interface RawPropertyData {
   state: string;
   zip: string;
   county: string;
-  property_type: 'Single Family' | 'Multi-Family' | 'Commercial' | 'Condo' | 'Industrial' | 'Unknown';
+  property_type: 'Single Family' | 'Multi-Family' | 'Commercial' | 'Condo' | 'Industrial';
   units_count?: number;
   square_feet?: number;
   year_built?: number;
@@ -312,7 +312,7 @@ export function parsePropertyCsv(csvContent: string): RawPropertyData[] {
     }
 
     const rawType = typeIdx >= 0 ? cols[typeIdx].toLowerCase() : '';
-    let property_type: RawPropertyData['property_type'] = 'Unknown';
+    let property_type: RawPropertyData['property_type'] = 'Single Family';
     if (rawType.includes('commercial') || rawType.includes('retail') || rawType.includes('office')) {
       property_type = 'Commercial';
     } else if (rawType.includes('single') || rawType.includes('sfr')) {
@@ -433,7 +433,7 @@ export function parsePropertyJson(input: string | any[] | Record<string, any>): 
       state: item.state || '',
       zip: item.zip || item.zip_code || '',
       county: item.county || '',
-      property_type: item.property_type || 'Unknown',
+      property_type: ['Single Family', 'Multi-Family', 'Commercial', 'Condo', 'Industrial'].includes(item.property_type) ? item.property_type : 'Single Family',
       units_count: item.units_count ?? item.units ?? 0,
       square_feet: item.square_feet ?? item.sqft ?? 0,
       year_built: item.year_built ?? 0,
