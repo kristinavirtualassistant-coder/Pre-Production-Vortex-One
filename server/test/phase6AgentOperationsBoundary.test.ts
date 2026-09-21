@@ -7,16 +7,24 @@ for (const route of ["app.get('/api/tasks'", "app.post('/api/tasks'", "app.get('
   assert.ok(source.includes(route), `Phase 6 route remains present: ${route}`);
 }
 
-const start = source.indexOf("  // Tasks & Workflow APIs — PostgreSQL authoritative");
-const end = source.indexOf("  // --- Workflow Runs Subscription & Polling APIs ---", start);
-const operationsBlock = source.slice(start, end);
+const operationsStart = source.indexOf("  // Tasks & Workflow APIs — PostgreSQL authoritative");
+const approvalsStart = source.indexOf('  // Human Approval Center APIs — PostgreSQL authoritative');
+assert.ok(operationsStart >= 0, 'Authoritative task/workflow section marker remains present');
+assert.ok(approvalsStart > operationsStart, 'Authoritative approval section follows task/workflow APIs');
+
+const operationsBlock = source.slice(operationsStart, approvalsStart);
 assert.equal(operationsBlock.includes('inMemoryStore.tasks'), false, 'Task API block has no in-memory task fallback');
 assert.equal(operationsBlock.includes('inMemoryStore.workflows'), false, 'Workflow API block has no in-memory workflow fallback');
 
-const approvalStart = source.indexOf('  // Human Approval Center APIs — PostgreSQL authoritative');
-const approvalEnd = source.indexOf('  // Observability & Audit Logs', approvalStart);
-const approvalBlock = source.slice(approvalStart, approvalEnd);
+const approvalEndCandidates = [
+  source.indexOf('  // Observability & Audit Logs', approvalsStart),
+  source.indexOf('  // Property Intelligence APIs', approvalsStart),
+  source.indexOf('  // Property Intelligence & Live County GIS Search APIs', approvalsStart),
+].filter((index) => index > approvalsStart);
+const approvalEnd = approvalEndCandidates.length > 0 ? Math.min(...approvalEndCandidates) : source.length;
+const approvalBlock = source.slice(approvalsStart, approvalEnd);
 assert.equal(approvalBlock.includes('inMemoryStore.approvals'), false, 'Approval API block has no in-memory approval fallback');
+
 assert.match(operationsBlock, /PostgreSQL is required for authoritative task state/);
 assert.match(operationsBlock, /PostgreSQL is required for authoritative workflow state/);
 assert.match(approvalBlock, /PostgreSQL is required for authoritative approval state/);
