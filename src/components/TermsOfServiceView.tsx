@@ -102,7 +102,7 @@ export const TermsOfServiceView: React.FC<TermsOfServiceViewProps> = ({ onNaviga
               1. Acceptance of Terms &amp; Authority
             </h2>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-              By accessing, deploying, or utilizing the Vortex One Multi-Agent Intelligence software platform, related APIs, Cloud SQL databases, and sub-agent dispatch consoles (collectively, the "Platform"), you agree to be bound by these Terms of Service. If you represent an enterprise organization (such as a brokerage, investment fund, or property management entity), you represent that you possess the requisite authority to bind that entity.
+              By accessing, deploying, or utilizing the Vortex One Multi-Agent Intelligence software platform, related APIs, PostgreSQL databases, and sub-agent dispatch consoles (collectively, the "Platform"), you agree to be bound by these Terms of Service. If you represent an enterprise organization (such as a brokerage, investment fund, or property management entity), you represent that you possess the requisite authority to bind that entity.
             </p>
           </section>
 
