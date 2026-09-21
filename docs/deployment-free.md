@@ -11,43 +11,39 @@ This deployment keeps PostgreSQL authoritative and separates the frontend from t
 - PostgreSQL sessions: application identity and authentication authority
 - RingCentral: telephony provider
 
-## 1. Create Neon PostgreSQL
+## 1. Create PostgreSQL
 
-Create a Neon PostgreSQL project and copy its connection string.
+Create a hosted PostgreSQL database and copy its connection string.
 
-Set this value in Render as `DATABASE_URL`. Do not commit it to Git.
+Set this value in the API host as `DATABASE_URL`. Do not commit it to Git.
 
 The application accepts `DATABASE_URL` in addition to the existing SQL_* variables.
 
-## 2. Create the Render API
+## 2. Deploy the API
 
-Connect GitHub repository `kristinavirtualassistant-coder/Pre-Production-Vortex-One`.
+Connect the repository `kristinavirtualassistant-coder/Pre-Production-Vortex-One` to the API host.
 
-Render can use the repository's `render.yaml` blueprint. The service is configured to build with `npm ci && npm run build`, start with `npm start`, use `NODE_ENV=production`, disable demo data, disable external webhooks until configured, and use `/api/ready` for health checks.
+The repository's `render.yaml` blueprint configures the Node API to build with `npm ci && npm run build`, start with `npm start`, use `NODE_ENV=production`, disable demo data, disable external webhooks until configured, and use `/api/ready` for health checks.
 
-Add `DATABASE_URL` as a secret environment variable in Render.
-
-Do not use Render Free Postgres for Vortex One's authoritative database; Render documents that its free databases expire after 30 days.
+Add `DATABASE_URL` as a secret environment variable in the API host.
 
 ## 3. Verify the API
 
-After the first successful Render deploy, verify `/api/health`, `/api/ready`, PostgreSQL connectivity, migrations, and the absence of demo records. Production must not fall back to in-memory state.
+After the first successful API deploy, verify `/api/health`, `/api/ready`, PostgreSQL connectivity, migrations, and the absence of demo records. Production must not fall back to in-memory state.
 
-## 4. Cloudflare Pages frontend
+## 4. Frontend
 
-Create a Cloudflare Pages project from the same GitHub repository.
+Create the frontend deployment from the same GitHub repository.
 
 Build settings:
 
 - Build command: `npm run build`
 - Output directory: `dist`
 
-The frontend currently uses relative `/api/...` requests. After the Render API URL exists, route `/api/*` from the Cloudflare Pages site to the Render API so browser requests remain same-origin.
+The frontend currently uses relative `/api/...` requests. After the API URL exists, route `/api/*` from the frontend host to the API so browser requests remain same-origin.
 
 Do not expose database credentials or RingCentral secrets as `VITE_*` variables. Browser configuration must not contain PostgreSQL credentials or authentication secrets.
 
 ## 5. Production boundary
 
-The free Render service is a development/controlled-pilot host, not the final dialer host. Render Free services can spin down after 15 minutes of inactivity and restart with approximately one minute of startup latency.
-
-When live RingCentral webhook reliability becomes a requirement, move the API to an always-on compute tier without changing the PostgreSQL-authoritative application architecture.
+Use an always-on API host for live RingCentral webhook and dialer workloads. The application architecture remains portable because PostgreSQL is authoritative and provider-specific deployment configuration is external to the runtime.
