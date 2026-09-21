@@ -72,12 +72,12 @@ export class RedfinProvider implements IPropertyDataProvider {
               state: stateZip[0] || query.state || 'CA',
               zip: stateZip[1] || query.zip || '92627',
               county: query.county || 'Orange County',
-              price: 2850000 + idx * 310000,
-              sqft: 3700 + idx * 300,
-              yearBuilt: 1993 + (idx % 20),
-              numUnits: 4 + (idx % 8),
-              apn: query.apn || `424-${130 + idx}-${50 + idx}`,
-              isAbsentee: idx % 2 === 0,
+              price: 0,
+              sqft: 0,
+              yearBuilt: 0,
+              numUnits: 0,
+              apn: '',
+              isAbsentee: false,
             };
           });
         }
