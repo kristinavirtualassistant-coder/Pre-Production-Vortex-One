@@ -368,7 +368,7 @@ export class UnifiedPropertyDataProvider {
   }
 
   /**
-   * Persists property search results into PostgreSQL Cloud SQL and In-Memory Store
+   * Persists property search results into PostgreSQL and development-only in-memory state
    */
   private async persistResults(results: NormalizedPropertyResult[], orgId: string): Promise<{
     savedCount: number;
