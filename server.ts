@@ -444,20 +444,26 @@ async function startServer() {
             }
           }
 
-          // Log audit entry for step
-          inMemoryStore.auditLogs.unshift({
-            id: `audit_step_${Date.now()}_${i}`,
-            timestamp: new Date().toISOString(),
-            agent: step.assigned_agent,
-            task_id: taskId,
-            action: `workflow_step_${step.type.toLowerCase()}`,
-            input: { stepName: step.name, objective: step.objective },
-            output: { summary: Object.keys(subAgentRes.result || {}).join(', ') },
-            status: 'success',
-            latency_ms: task.executionTimeMs,
-            confidence: subAgentRes.confidence,
-            organization_id: orgId,
-          });
+          // Persist audit entry in PostgreSQL
+          await pool.query(
+            `INSERT INTO audit_logs
+              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
+            [
+              `audit_step_${Date.now()}_${i}`,
+              orgId,
+              step.assigned_agent,
+              taskId,
+              `workflow_step_${step.type.toLowerCase()}`,
+              JSON.stringify({ stepName: step.name, objective: step.objective }),
+              JSON.stringify({ summary: Object.keys(subAgentRes.result || {}).join(', ') }),
+              'success',
+              task.executionTimeMs,
+              subAgentRes.confidence,
+              'workflow_stream',
+              new Date().toISOString(),
+            ],
+          );
         } catch (stepErr: any) {
           task.status = 'failed';
           task.error = stepErr.message || 'Step execution encountered an error';
@@ -474,18 +480,26 @@ async function startServer() {
           }
           workflowRun.status = 'failed';
 
-          inMemoryStore.auditLogs.unshift({
-            id: `audit_step_fail_${Date.now()}_${i}`,
-            timestamp: new Date().toISOString(),
-            agent: step.assigned_agent,
-            task_id: taskId,
-            action: 'workflow_step_failed',
-            input: { stepName: step.name },
-            output: { error: task.error },
-            status: 'error',
-            latency_ms: task.executionTimeMs,
-            organization_id: orgId,
-          });
+          // Persist failure audit entry in PostgreSQL
+          await pool.query(
+            `INSERT INTO audit_logs
+              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
+            [
+              `audit_step_fail_${Date.now()}_${i}`,
+              orgId,
+              step.assigned_agent,
+              taskId,
+              'workflow_step_failed',
+              JSON.stringify({ stepName: step.name }),
+              JSON.stringify({ error: task.error }),
+              'error',
+              task.executionTimeMs,
+              null,
+              'workflow_stream',
+              new Date().toISOString(),
+            ],
+          );
 
           // Break loop on failure unless step allows continuation
           break;
