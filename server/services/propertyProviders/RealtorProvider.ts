@@ -59,13 +59,13 @@ export class RealtorProvider implements IPropertyDataProvider {
               state: rawState,
               zip: rawZip,
               county: query.county || 'Orange County',
-              list_price: 2750000 + idx * 320000,
-              sqft: 3450 + idx * 380,
-              year_built: 1989 + (idx % 22),
-              units: 4 + (idx % 6),
-              apn: query.apn || `424-${120 + idx}-${40 + idx}`,
-              owner_name: `Realtor Registered Titleholder ${idx + 1}`,
-              is_absentee: idx % 2 === 0,
+              list_price: 0,
+              sqft: 0,
+              year_built: 0,
+              units: 0,
+              apn: '',
+              owner_name: 'Owner information not available',
+              is_absentee: false,
             };
           });
         }
