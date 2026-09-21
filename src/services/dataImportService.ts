@@ -1,7 +1,7 @@
 /**
  * Vortex One - Client & Frontend Data Import & CRM Ingestion Service
  * Idempotent batch-processing function to ingest property, owner, and lead records
- * from raw JSON or CSV data into the Cloud SQL database / datastore,
+ * from raw JSON or CSV data into the PostgreSQL database,
  * adhering strictly to authenticated organization_id partitioning and DNC/TCPA suppression logic.
  */
 
