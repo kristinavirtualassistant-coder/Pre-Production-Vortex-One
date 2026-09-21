@@ -59,7 +59,8 @@ export class NetrOnlineProvider implements IPropertyDataProvider {
     const orgId = requireOrganizationId(query.organizationId);
 
     return records.map((item: any, idx: number): NormalizedPropertyResult => {
-      const rawId = item.id || item.recordId;\n      if (!rawId) throw new Error('NETR record is missing a source record identifier');
+      const rawId = item.id || item.recordId;
+      if (!rawId) throw new Error('NETR record is missing a source record identifier');
       const apn = item.apn || item.parcelNumber || '';
       const ownerName = item.grantee || item.ownerName || item.taxpayerName || 'Owner information not available';
 
