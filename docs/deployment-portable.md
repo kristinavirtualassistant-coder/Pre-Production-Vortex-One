@@ -1,6 +1,6 @@
 # Vortex One Portable Deployment Contract
 
-Vortex One is designed to run with standard Node.js and PostgreSQL configuration. GCP services are optional deployment targets during migration and are not required by the application runtime.
+Vortex One is designed to run with standard Node.js and PostgreSQL configuration. The runtime has no infrastructure-provider dependency.
 
 ## Required runtime configuration
 
@@ -57,7 +57,7 @@ docker run --rm -p 8080:8080 \
   vortex-one:local
 ```
 
-The container does not require Cloud Run, Cloud SQL, Google Secret Manager, or Google-specific database sockets.
+The container requires only Node.js, PostgreSQL, and the configured external integrations.
 
 ## RingCentral
 
@@ -97,7 +97,3 @@ A 503 readiness response is expected when PostgreSQL is unavailable.
 A hosted deployment may use a free/low-cost web host and a PostgreSQL provider with a suitable free tier where current provider limits permit it. The application architecture does not depend on a particular vendor.
 
 Free tiers must not be treated as equivalent to production-grade availability, backup retention, webhook reliability, or sustained dialer capacity. Live RingCentral calling also incurs telephony/provider costs even when application hosting is free.
-
-## GCP migration status
-
-Existing GCP resources remain untouched during this portability work. Do not delete Cloud Run, Cloud SQL, Secret Manager, VPC, or related resources until the documented cutover and rollback gates have passed.
