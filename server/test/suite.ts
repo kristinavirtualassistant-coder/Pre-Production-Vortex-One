@@ -391,7 +391,7 @@ async function runAllTests() {
   // Tenant B isolation test with an explicitly supplied authoritative batch.
   const tenantBResult = await DataImportService.reconcileBatch('org_tenant_b', testBatch);
   const tenantBProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_tenant_b');
-  const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_cmc_realty');
+  const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === TEST_ORG_ID);
   assert(tenantBProps.length > 0 && tenantAProps.length > 0, 'Both tenant partitions populated independently');
   assert(
     tenantBProps.every((p) => p.organization_id === 'org_tenant_b'),
@@ -401,7 +401,7 @@ async function runAllTests() {
   // Test Group 10: Client Data Import Service Parsing & Utilities (src/services/dataImportService.ts)
   console.log('\n[Group 10: Client Data Import Service Parsing & Normalization]');
 
-  assert(TEST_ORG_ID === 'org_cmc_realty', 'Explicit test organization fixture is org_cmc_realty');
+  assert(TEST_ORG_ID === 'org_test', 'Explicit test organization fixture is org_test');
   assert(normalizePhone('(949) 555-1234') === '9495551234', 'Phone normalization strips non-digits');
   assert(normalizePhone('+1 949 555 1234') === '9495551234', 'Phone normalization strips leading US country code +1');
   assert(formatPhoneDisplay('9495551234') === '(949) 555-1234', 'Phone formatting produces US display standard');
