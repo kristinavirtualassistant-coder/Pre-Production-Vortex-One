@@ -96,7 +96,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onNavigate
               </li>
               <li className="flex items-start space-x-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-cyan-700 shrink-0 mt-0.5" />
-                <span><strong>Cryptographic Provenance:</strong> Ingested data is recorded in Cloud SQL PostgreSQL with SHA-256 tamper-evident provenance hashes.</span>
+                <span><strong>Cryptographic Provenance:</strong> Ingested data is recorded in PostgreSQL with SHA-256 tamper-evident provenance hashes.</span>
               </li>
             </ul>
           </div>
@@ -140,7 +140,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onNavigate
               3. Artificial Intelligence &amp; Multi-Agent Processing
             </h2>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-              Our autonomous agent fleet operates via server-side secure proxies utilizing Google Gemini enterprise APIs. In accordance with Google Cloud and Vertex AI security policies:
+              Our autonomous agent fleet operates via server-side secure proxies utilizing configured enterprise AI APIs. Their provider-specific retention and training policies govern AI processing:
             </p>
             <ul className="list-disc list-inside space-y-1.5 text-xs sm:text-sm text-slate-700 pl-2">
               <li>Customer prompts, property records, and owner intelligence are strictly ephemeral during execution.</li>
@@ -167,13 +167,13 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onNavigate
           {/* Section 5: Data Security & Cloud SQL Persistence */}
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">
-              5. Data Security, Cloud SQL &amp; Cryptographic Provenance
+              5. Data Security &amp; Cryptographic Provenance
             </h2>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
               We implement enterprise security controls to protect information stored in Vortex One:
             </p>
             <ul className="list-disc list-inside space-y-1.5 text-xs sm:text-sm text-slate-700 pl-2">
-              <li><strong>Relational Encryption:</strong> Cloud SQL PostgreSQL databases are encrypted at rest with AES-256 and in transit via TLS 1.3.</li>
+              <li><strong>Relational Encryption:</strong> PostgreSQL databases are encrypted at rest and protected in transit using the database provider's supported transport security.</li>
               <li><strong>SHA-256 Audit Ledger:</strong> Every data ingest, enrichment step, and workflow execution receives an immutable cryptographic hash.</li>
               <li><strong>Role-Based Access Controls (RBAC):</strong> Access to confidential owner intelligence and skip-trace contacts is restricted to authorized operations personnel.</li>
             </ul>
