@@ -72,55 +72,30 @@ export class RedfinProvider implements IPropertyDataProvider {
               state: stateZip[0] || query.state || 'CA',
               zip: stateZip[1] || query.zip || '92627',
               county: query.county || 'Orange County',
-              price: 2850000 + idx * 310000,
-              sqft: 3700 + idx * 300,
-              yearBuilt: 1993 + (idx % 20),
-              numUnits: 4 + (idx % 8),
-              apn: query.apn || `424-${130 + idx}-${50 + idx}`,
-              isAbsentee: idx % 2 === 0,
+              price: 0,
+              sqft: 0,
+              yearBuilt: 0,
+              numUnits: 0,
+              apn: '',
+              isAbsentee: false,
             };
           });
         }
       }
     } catch (openErr: any) {
-      console.warn('[RedfinProvider] Open search request warning, utilizing open search property synthesis:', openErr.message);
+      throw new Error(`Redfin open property lookup failed: ${openErr.message}`);
     }
 
-    // 2. If open network returned empty, synthesize verified open search property records
-    if (propsList.length === 0) {
-      const city = query.city || 'Costa Mesa';
-      const state = query.state || 'CA';
-      const zip = query.zip || '92627';
-      const county = query.county || 'Orange County';
-
-      const countToGen = Math.min(limit, 5);
-      for (let i = 0; i < countToGen; i++) {
-        const estVal = 2850000 + i * 360000;
-        propsList.push({
-          propertyId: `rdf_open_${Date.now()}_${i}`,
-          address: i === 0 && query.address ? query.address : `${500 + i * 25} Newport Center Dr`,
-          city,
-          state,
-          zip,
-          county,
-          price: estVal,
-          sqft: 3700 + i * 320,
-          yearBuilt: 1993 + (i % 20),
-          numUnits: 4 + i * 2,
-          apn: query.apn || `424-${135 + i}-${55 + i}`,
-          isAbsentee: true,
-        });
-      }
-    }
+    if (propsList.length === 0) return [];
 
     return propsList.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.propertyId || item.mlsId || `redfin_${idx}_${Date.now()}`;
       const apn = item.apn || query.apn || `APN-RDF-${rawId}`;
-      const ownerName = item.ownerName || 'Property Owner (Redfin Open Roll)';
+      const ownerName = item.ownerName || 'Owner information not available';
 
-      const estVal = Number(item.price || 2850000);
-      const assessedVal = Math.round(estVal * 0.73);
-      const equity = Math.round(estVal * 0.61);
+      const estVal = Number(item.price ?? 0);
+      const assessedVal = 0;
+      const equity = 0;
 
       const propId = `redfin_prop_${rawId}`;
       const ownerId = `redfin_owner_${rawId}`;
@@ -142,27 +117,27 @@ export class RedfinProvider implements IPropertyDataProvider {
       const property: Property = {
         id: propId,
         organization_id: orgId,
-        address: item.address || query.address || 'Property Address',
-        city: item.city || query.city || 'Costa Mesa',
-        state: item.state || query.state || 'CA',
-        zip: item.zip || query.zip || '92627',
-        county: item.county || query.county || 'Orange County',
-        apn,
+        address: item.address || '',
+        city: item.city || '',
+        state: item.state || '',
+        zip: item.zip || '',
+        county: item.county || '',
+        apn: item.apn || '',
         property_type: 'Multi-Family',
-        units_count: Number(item.numUnits || 4),
-        square_feet: Number(item.sqft || 3700),
-        year_built: Number(item.yearBuilt || 1993),
+        units_count: Number(item.numUnits ?? 0),
+        square_feet: Number(item.sqft ?? 0),
+        year_built: Number(item.yearBuilt ?? 0),
         estimated_value: estVal,
         assessed_tax_value: assessedVal,
         estimated_equity: equity,
-        mortgage_balance: estVal - equity,
+        mortgage_balance: 0,
         owner_id: ownerId,
         owner_name: ownerName,
-        is_absentee_owner: Boolean(item.isAbsentee !== false),
+        is_absentee_owner: Boolean(item.isAbsentee === true),
         is_corporate_owned: Boolean(item.isCorporate || false),
-        last_sale_date: item.lastSoldDate || '2022-04-18',
-        last_sale_price: Math.round(estVal * 0.82),
-        tax_delinquent: false,
+        last_sale_date: item.lastSoldDate,
+        last_sale_price: item.lastSalePrice != null ? Number(item.lastSalePrice) : undefined,
+        tax_delinquent: Boolean(item.taxDelinquent === true),
         provenance: {
           source: this.providerName,
           sourceType: 'public_records',
@@ -178,10 +153,10 @@ export class RedfinProvider implements IPropertyDataProvider {
         organization_id: orgId,
         name: ownerName,
         entity_type: 'individual',
-        mailing_address: property.address,
-        mailing_city: property.city,
-        mailing_state: property.state,
-        mailing_zip: property.zip,
+        mailing_address: item.mailingAddress || '',
+        mailing_city: item.mailingCity || '',
+        mailing_state: item.mailingState || '',
+        mailing_zip: item.mailingZip || '',
         phone_numbers: [],
         email_addresses: [],
         properties_owned_count: 1,
