@@ -1,5 +1,5 @@
 /**
- * Vortex One - Database Layer with Cloud SQL / PostgreSQL Support & In-Memory Store
+ * Vortex One - PostgreSQL Database Layer & In-Memory Development Store
  */
 
 import { Pool, PoolClient } from 'pg';
