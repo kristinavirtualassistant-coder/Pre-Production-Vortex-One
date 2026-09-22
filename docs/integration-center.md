@@ -41,3 +41,22 @@ Google/Microsoft sign-in is an account-creation convenience; it does not make Go
 Core navigation, tenant state, PostgreSQL persistence, audit records, and platform workflows must continue to function when an integration is disconnected.
 
 Provider-dependent features should show a clear connection state and direct the user to the Integration Center rather than failing platform startup.
+
+## OAuth implementation
+
+The Integration Center uses server-side OAuth 2.0 Authorization Code flow with PKCE for Google Workspace and Microsoft 365. OAuth state and PKCE verifier records are short-lived and stored server-side. Access and refresh tokens are encrypted at rest with `INTEGRATION_ENCRYPTION_KEY`; tokens are never placed in `VITE_*` variables or browser storage.
+
+### Required server configuration
+
+- `APP_URL`: public base URL of the Vortex One web/API server.
+- `INTEGRATION_ENCRYPTION_KEY`: base64-encoded 32-byte key. Generate with `openssl rand -base64 32`.
+- `GOOGLE_INTEGRATION_CLIENT_ID` / `GOOGLE_INTEGRATION_CLIENT_SECRET`: Google OAuth web client.
+- `MICROSOFT_INTEGRATION_CLIENT_ID` / `MICROSOFT_INTEGRATION_CLIENT_SECRET`: Microsoft Entra web application credentials.
+
+### Redirect URIs
+
+Google: `APP_URL/api/integrations/oauth/callback/google-workspace`
+
+Microsoft: `APP_URL/api/integrations/oauth/callback/microsoft-365`
+
+Register the exact production and local redirect URIs in each provider console.

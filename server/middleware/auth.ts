@@ -31,7 +31,7 @@ export class AuthorizationError extends Error {
 }
 
 export function shouldBypassApiAuth(path: string): boolean {
-  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/');
+  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/');
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {

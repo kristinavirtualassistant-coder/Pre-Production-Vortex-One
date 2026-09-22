@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Blocks,
   CheckCircle2,
   Circle,
   Link2,
   LogIn,
+  Unplug,
   Search,
   ShieldCheck,
 } from 'lucide-react';
@@ -40,6 +42,54 @@ const authLabel = (auth: Integration['auth']) =>
 export const IntegrationCenterView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<'all' | IntegrationCategory>('all');
+  const [connections, setConnections] = useState<Record<string, { account_email?: string; status: string }>>({});
+  const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const { getAuthHeaders } = useAuth();
+
+  const loadConnections = async () => {
+    const response = await fetch('/api/integrations', { headers: getAuthHeaders() });
+    if (!response.ok) return;
+    const data = await response.json();
+    setConnections(Object.fromEntries((data.connections || []).map((connection: { provider: string; account_email?: string; status: string }) => [connection.provider, connection])));
+  };
+
+  useEffect(() => {
+    void loadConnections();
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('connected');
+    const error = params.get('integrationError');
+    if (connected) setMessage(`${connected} connected successfully.`);
+    if (error) setMessage(error);
+  }, []);
+
+  const connect = async (provider: string) => {
+    setBusyProvider(provider);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/integrations/oauth/start/${provider}`, { headers: getAuthHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'OAuth connection could not start');
+      window.location.assign(data.authorizationUrl);
+    } catch (error: any) {
+      setMessage(error.message || 'OAuth connection could not start');
+      setBusyProvider(null);
+    }
+  };
+
+  const disconnect = async (provider: string) => {
+    setBusyProvider(provider);
+    try {
+      const response = await fetch(`/api/integrations/${provider}`, { method: 'DELETE', headers: getAuthHeaders() });
+      if (!response.ok) throw new Error('Disconnect failed');
+      await loadConnections();
+      setMessage('Integration disconnected.');
+    } catch (error: any) {
+      setMessage(error.message || 'Disconnect failed');
+    } finally {
+      setBusyProvider(null);
+    }
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -88,9 +138,12 @@ export const IntegrationCenterView: React.FC = () => {
         </div>
       </div>
 
+      {message && <div className='bg-cyan-50 border border-cyan-200 text-cyan-900 rounded-xl px-4 py-3 text-xs'>{message}</div>}
+
       <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'>
         {filtered.map((integration) => {
-          const isConnected = false;
+          const connection = connections[integration.id];
+          const isConnected = connection?.status === 'connected';
           return (
             <div key={integration.id} className='bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col'>
               <div className='flex items-start justify-between gap-3'>
@@ -106,11 +159,19 @@ export const IntegrationCenterView: React.FC = () => {
               <p className='mt-3 text-xs leading-relaxed text-slate-600 flex-1'>{integration.description}</p>
               <div className='mt-4 pt-3 border-t border-slate-100 space-y-3'>
                 <div className='flex items-center justify-between text-[10px] text-slate-500'><span>{authLabel(integration.auth)}</span><span className='font-semibold text-slate-700'>{integration.supportsGoogle && integration.supportsMicrosoft ? 'Google or Microsoft' : integration.supportsGoogle ? 'Google sign-in' : integration.supportsMicrosoft ? 'Microsoft sign-in' : 'Provider account'}</span></div>
-                <button type='button' disabled className='w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-500 cursor-not-allowed'>
-                  <LogIn className='w-3.5 h-3.5' />
-                  Connect Account
-                </button>
-                <p className='text-[10px] text-slate-400'>Account connection UI is the provider boundary; credentials are never embedded in the application.</p>
+                {integration.auth === 'oauth' ? (
+                  <button type='button' onClick={() => isConnected ? void disconnect(integration.id) : void connect(integration.id)} disabled={busyProvider === integration.id} className={'w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ' + (isConnected ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-cyan-600 text-white hover:bg-cyan-700')}>
+                    {isConnected ? <Unplug className='w-3.5 h-3.5' /> : <LogIn className='w-3.5 h-3.5' />}
+                    {busyProvider === integration.id ? 'Connecting...' : isConnected ? 'Disconnect' : 'Connect Account'}
+                  </button>
+                ) : (
+                  <button type='button' disabled className='w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-500 cursor-not-allowed'>
+                    <LogIn className='w-3.5 h-3.5' />
+                    Configure Integration
+                  </button>
+                )}
+                {connection?.account_email && <p className='text-[10px] text-emerald-700'>Connected as {connection.account_email}</p>}
+                <p className='text-[10px] text-slate-400'>OAuth uses a server-side authorization-code flow with PKCE. Tokens never enter browser storage.</p>
               </div>
             </div>
           );
