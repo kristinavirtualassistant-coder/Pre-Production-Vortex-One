@@ -1,20 +1,21 @@
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
 import { defineConfig } from 'vite';
 
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
     },
-    server: {
-      // HMR websocket is disabled in containerized sandboxed environment to prevent connection errors
-      hmr: false,
-      watch: null,
-    },
-  };
+  },
+  server: {
+    // HMR websocket is disabled in containerized sandboxed environment to prevent connection errors
+    hmr: false,
+    watch: null,
+  },
 });
