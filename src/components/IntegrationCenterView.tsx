@@ -92,7 +92,7 @@ export const IntegrationCenterView: React.FC = () => {
 
       <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'>
         {filtered.map((integration) => {
-          const isConnected = Boolean(connected[integration.id]);
+          const isConnected = false;
           return (
             <div key={integration.id} className='bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col'>
               <div className='flex items-start justify-between gap-3'>
