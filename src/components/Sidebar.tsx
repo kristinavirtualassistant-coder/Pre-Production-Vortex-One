@@ -32,6 +32,7 @@ import {
   ChevronDown,
   ChevronUp,
   Radio,
+  Blocks,
 } from 'lucide-react';
 import { AgentDefinition } from '../types';
 
@@ -118,6 +119,7 @@ export const PRIMARY_NAV_SECTIONS: {
     category: 'SYSTEM',
     items: [
       { id: 'settings', label: 'Settings', symbol: '⚙', icon: Settings },
+      { id: 'integrations', label: 'Integrations', symbol: '⛓', icon: Blocks, badge: 'Apps' },
     ],
   },
 ];
