@@ -41,7 +41,7 @@ const authLabel = (auth: Integration['auth']) =>
 export const IntegrationCenterView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<'all' | IntegrationCategory>('all');
-  const [connected, setConnected] = useState<Record<string, boolean>>({});
+  const [connected] = useState<Record<string, boolean>>({});
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
