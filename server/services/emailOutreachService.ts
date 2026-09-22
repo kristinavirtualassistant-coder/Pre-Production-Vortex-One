@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { enqueueJob } from './jobService';
 import { requireOrganizationId } from './organizationContext';
+import { ensureDefaultEmailTemplate } from './emailTemplateService';
 
 export const EMAIL_JOB_TYPE = 'email_outreach.send';
 const DEFAULT_TEMPLATE_ID = 'tpl_email_absentee_01';
@@ -52,13 +53,13 @@ export async function queueEmailOutreach(
 
     const leadRow = lead.rows[0];
     const emails = Array.isArray(leadRow.email_addresses) ? leadRow.email_addresses : [];
-    const recipient = typeof leadRow.email === 'string'
-      ? leadRow.email.trim().toLowerCase()
-      : (emails.find((e: any) => typeof e?.email === 'string' && /@/.test(e.email))?.email || '').trim().toLowerCase();
+    const recipient = (emails.find((e: any) => typeof e?.email === 'string' && /@/.test(e.email))?.email || '').trim().toLowerCase();
     if (!/^\\S+@\\S+\\.\\S+$/.test(recipient)) {
       await client.query('ROLLBACK');
       throw new Error('Lead does not have a valid email address');
     }
+
+    await ensureDefaultEmailTemplate(client as unknown as Pool, orgId);
 
     const template = await client.query(
       `SELECT id, name, subject, body, version
