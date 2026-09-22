@@ -26,10 +26,10 @@ function parseAddress(value: string): { host: string; port: number; secure: bool
   return { host, port, secure };
 }
 
-function encodeHeader(value: string): string { return value.replace(/[\\r\\n]/g, ' ').trim(); }
+function encodeHeader(value: string): string { return value.replace(/[\r\n]/g, ' ').trim(); }
 
 function dotStuff(value: string): string {
-  return value.replace(/\\r?\\n/g, '\\r\\n').replace(/^\\./gm, '..');
+  return value.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
 }
 
 export async function sendEmail(message: EmailMessage): Promise<EmailSendResult> {
@@ -44,6 +44,7 @@ export async function sendEmail(message: EmailMessage): Promise<EmailSendResult>
   await client.command('EHLO vortex-one');
   if (username && password) {
     await client.command('AUTH LOGIN');
+    await client.expect(334);
     await client.command(Buffer.from(username).toString('base64'));
     await client.expect(334);
     await client.command(Buffer.from(password).toString('base64'));
@@ -65,8 +66,8 @@ export async function sendEmail(message: EmailMessage): Promise<EmailSendResult>
     message.text,
     '',
     '.',
-  ].join('\\r\\n');
-  await client.raw(`${dotStuff(body)}\\r\\n`);
+  ].join('\r\n');
+  await client.raw(`${dotStuff(body)}\r\n`);
   const response = await client.readResponse();
   if (response.code !== 250) throw new Error(`SMTP DATA rejected: ${response.text}`);
   await client.command('QUIT').catch(() => undefined);
@@ -112,6 +113,6 @@ class SmtpClient {
     const response = await this.readResponse();
     if (response.code !== expected) throw new Error(`SMTP error ${response.code}: ${response.text}`);
   }
-  async command(command: string): Promise<void> { this.socket.write(`${command}\\r\\n`); }
+  async command(command: string): Promise<void> { this.socket.write(`${command}\r\n`); }
   async raw(data: string): Promise<void> { this.socket.write(data); }
 }
