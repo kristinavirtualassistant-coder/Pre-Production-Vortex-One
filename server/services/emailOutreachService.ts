@@ -63,12 +63,11 @@ export async function queueEmailOutreach(
     const template = await client.query(
       `SELECT id, name, subject, body, version
        FROM outreach_templates
-       WHERE id = $1 AND organization_id = $2 AND channel = 'email'
-       UNION ALL
-       SELECT id, name, subject, body, version
-       FROM outreach_templates
-       WHERE id = $3 AND organization_id = $2 AND channel = 'email'
-       LIMIT 1`,
+       WHERE id = COALESCE(
+         (SELECT id FROM outreach_templates WHERE id = $1 AND organization_id = $2 AND channel = 'email'),
+         (SELECT id FROM outreach_templates
+          WHERE organization_id = $2 AND id = $3 AND channel = 'email')
+       )`,
       [templateId, orgId, DEFAULT_TEMPLATE_ID],
     );
     if (!template.rowCount) {
