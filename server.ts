@@ -8,6 +8,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
+import { persistLegacyCall, buildCallPersistencePlan } from './server/db/legacySchemaCompatibility';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
@@ -28,6 +29,7 @@ import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
+import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
