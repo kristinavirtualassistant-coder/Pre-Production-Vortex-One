@@ -916,7 +916,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="flex items-center space-x-1.5">
                 <Database className="w-3.5 h-3.5 text-cyan-600" />
                 <span>PostgreSQL 18.4 Schema</span>
-                <InfoTooltip text="Cloud SQL relational storage with structured parcel, owner, lead, and audit ledger tables." />
+                <InfoTooltip text="PostgreSQL relational storage with structured parcel, owner, lead, and audit ledger tables." />
               </span>
               <span className="text-emerald-700 font-semibold flex items-center space-x-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>

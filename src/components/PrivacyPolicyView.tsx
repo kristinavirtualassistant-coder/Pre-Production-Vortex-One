@@ -164,7 +164,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onNavigate
             </ul>
           </section>
 
-          {/* Section 5: Data Security & Cloud SQL Persistence */}
+          {/* Section 5: Data Security & PostgreSQL Persistence */}
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">
               5. Data Security &amp; Cryptographic Provenance
