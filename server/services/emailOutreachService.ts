@@ -59,7 +59,7 @@ export async function queueEmailOutreach(
       throw new Error('Lead does not have a valid email address');
     }
 
-    await ensureDefaultEmailTemplate(client as unknown as Pool, orgId);
+    await ensureDefaultEmailTemplate(pool, orgId);
 
     const template = await client.query(
       `SELECT id, name, subject, body, version
