@@ -223,7 +223,7 @@ export const SystemResourceMonitorModal: React.FC<SystemResourceMonitorModalProp
         <div className="flex items-center justify-between pt-2 border-t border-slate-100">
           <div className="text-xs text-slate-500 flex items-center space-x-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Garbage collection active. All agent threads running within secure Cloud Run container limits.</span>
+            <span>Garbage collection active. All agent threads running within secure runtime limits.</span>
           </div>
           <button
             onClick={onClose}
