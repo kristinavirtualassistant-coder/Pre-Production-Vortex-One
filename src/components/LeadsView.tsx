@@ -53,6 +53,7 @@ import { CrmAnalyticsView } from './CrmAnalyticsView';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
 import { useToast } from '../contexts/ToastContext';
+import { getCachedToken } from '../lib/driveAuth';
 
 interface LeadsViewProps {
   leads: LeadRecord[];
@@ -337,6 +338,30 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       setLeadsList((prev) => prev.map((l) => (l.id === leadId ? updated : l)));
       if (selectedLead?.id === leadId) setSelectedLead(updated);
       addToast(`Lead stage updated to "${nextStage}"`, 'success');
+
+      // Automated Email Outreach Workflow for Qualified Leads
+      if (nextStage === 'qualified') {
+        const token = getCachedToken();
+        if (token) {
+          fetch(`/api/leads/${leadId}/email-outreach`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: token }),
+          }).then(async (outreachRes) => {
+            if (outreachRes.ok) {
+              const outreachData = await outreachRes.json();
+              if (outreachData.lead) {
+                setLeadsList((prev) => prev.map((l) => (l.id === leadId ? outreachData.lead : l)));
+                if (selectedLead?.id === leadId) setSelectedLead(outreachData.lead);
+              }
+              addToast('Automated follow-up email sent successfully', 'info');
+            }
+          }).catch(err => console.error('Automated outreach error:', err));
+        } else {
+          addToast('Automated outreach requires Google connection (Sync menu)', 'info');
+        }
+      }
+
       if (onRefreshLeads) onRefreshLeads();
     } catch (err: any) {
       addToast(err.message || 'Failed to update stage', 'error');
