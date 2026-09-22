@@ -72,17 +72,35 @@ export async function processEmailJob(pool: Pool, organizationId: string, worker
   }
 }
 
-export function startEmailWorker(pool: Pool, organizationId: string): () => void {
+async function listQueuedOrganizations(pool: Pool, configuredOrganizationId?: string): Promise<string[]> {
+  if (configuredOrganizationId) return [configuredOrganizationId];
+
+  const result = await pool.query<{ organization_id: string }>(
+    `SELECT DISTINCT organization_id
+     FROM jobs
+     WHERE status = 'queued'
+       AND available_at <= CURRENT_TIMESTAMP
+       AND job_type = $1
+     ORDER BY organization_id`,
+    [EMAIL_JOB_TYPE],
+  );
+  return result.rows.map((row) => row.organization_id);
+}
+
+export function startEmailWorker(pool: Pool, configuredOrganizationId?: string): () => void {
   let stopped = false;
   const workerId = `email-worker-${process.pid}`;
 
   const tick = async () => {
     if (stopped) return;
     try {
-      await recoverStaleJobs(pool, organizationId, WORKER_STALE_SECONDS);
-      for (let i = 0; i < 10; i += 1) {
-        const processed = await processEmailJob(pool, organizationId, workerId);
-        if (!processed) break;
+      const organizations = await listQueuedOrganizations(pool, configuredOrganizationId);
+      for (const organizationId of organizations) {
+        await recoverStaleJobs(pool, organizationId, WORKER_STALE_SECONDS);
+        for (let i = 0; i < 10; i += 1) {
+          const processed = await processEmailJob(pool, organizationId, workerId);
+          if (!processed) break;
+        }
       }
     } catch (error) {
       console.error('[EmailWorker]', error);

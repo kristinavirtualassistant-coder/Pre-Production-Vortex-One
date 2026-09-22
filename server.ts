@@ -58,8 +58,8 @@ async function startServer() {
 
   if (isProduction) {
     const pool = getPgPool();
-    const configuredOrg = process.env.EMAIL_WORKER_ORGANIZATION_ID?.trim();
-    if (pool && configuredOrg) startEmailWorker(pool, configuredOrg);
+    const configuredOrg = process.env.EMAIL_WORKER_ORGANIZATION_ID?.trim() || undefined;
+    if (pool) startEmailWorker(pool, configuredOrg);
   }
 
   // --- API Routes ---
