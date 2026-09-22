@@ -4,9 +4,9 @@
 
 **Goal:** Make long-running ingestion, enrichment, campaign, webhook, retry, and metrics work durable and observable in production.
 
-**Architecture:** HTTP APIs enqueue durable work; workers process jobs and provider events; PostgreSQL stores job/call/event state; realtime notifications update the UI. Cloud Run/Cloud SQL remain the deployment baseline.
+**Architecture:** HTTP APIs enqueue durable work; workers process jobs and provider events; PostgreSQL stores job/call/event state; realtime notifications update the UI. Hosting is provider-neutral and must not depend on a specific cloud infrastructure vendor.
 
-**Tech Stack:** TypeScript/Node.js, Express, PostgreSQL/Drizzle, Cloud Run, Cloud SQL, RingCentral webhooks, existing application logging/metrics.
+**Tech Stack:** TypeScript/Node.js, Express, PostgreSQL/Drizzle, RingCentral webhooks, existing application logging/metrics.
 
 **Spec:** `docs/superpowers/specs/2026-09-02-vortex-one-integrated-platform-design.md`
 
