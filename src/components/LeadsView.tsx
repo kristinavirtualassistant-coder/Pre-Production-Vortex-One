@@ -53,7 +53,6 @@ import { CrmAnalyticsView } from './CrmAnalyticsView';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
 import { useToast } from '../contexts/ToastContext';
-import { getCachedToken } from '../lib/driveAuth';
 
 interface LeadsViewProps {
   leads: LeadRecord[];
@@ -339,27 +338,29 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       if (selectedLead?.id === leadId) setSelectedLead(updated);
       addToast(`Lead stage updated to "${nextStage}"`, 'success');
 
-      // Automated Email Outreach Workflow for Qualified Leads
+      // Automated Email Outreach Workflow for Qualified Leads.
+      // Authentication is supplied by the application's shared session transport;
+      // no Google Drive/Sheets access token is sent to the email endpoint.
       if (nextStage === 'qualified') {
-        const token = getCachedToken();
-        if (token) {
-          fetch(`/api/leads/${leadId}/email-outreach`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken: token }),
-          }).then(async (outreachRes) => {
-            if (outreachRes.ok) {
-              const outreachData = await outreachRes.json();
-              if (outreachData.lead) {
-                setLeadsList((prev) => prev.map((l) => (l.id === leadId ? outreachData.lead : l)));
-                if (selectedLead?.id === leadId) setSelectedLead(outreachData.lead);
-              }
-              addToast('Automated follow-up email sent successfully', 'info');
-            }
-          }).catch(err => console.error('Automated outreach error:', err));
-        } else {
-          addToast('Automated outreach requires Google connection (Sync menu)', 'info');
-        }
+        fetch(`/api/leads/${leadId}/email-outreach`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }).then(async (outreachRes) => {
+          const outreachData = await outreachRes.json().catch(() => ({}));
+          if (outreachRes.ok) {
+            addToast(
+              outreachData.status === 'already_processed'
+                ? 'Automated follow-up email was already queued or processed'
+                : 'Automated follow-up email queued',
+              'info',
+            );
+          } else {
+            addToast(outreachData.error || 'Automated outreach could not be queued', 'error');
+          }
+        }).catch(err => {
+          console.error('Automated outreach error:', err);
+          addToast('Automated outreach could not be queued', 'error');
+        });
       }
 
       if (onRefreshLeads) onRefreshLeads();

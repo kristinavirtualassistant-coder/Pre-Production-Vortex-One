@@ -472,4 +472,55 @@ export const MIGRATIONS: Migration[] = [
     ALTER TABLE call ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_call_org_idempotency ON call(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
   `, },
+  {
+    version: 13,
+    name: '013_create_email_outreach_schema',
+    sql: `
+      CREATE TABLE IF NOT EXISTS outreach_templates (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        channel VARCHAR(30) NOT NULL CHECK (channel = 'email'),
+        category VARCHAR(80) NOT NULL DEFAULT 'custom',
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        variables JSONB DEFAULT '[]'::jsonb NOT NULL,
+        tags JSONB DEFAULT '[]'::jsonb NOT NULL,
+        is_default BOOLEAN DEFAULT false NOT NULL,
+        version INTEGER DEFAULT 1 NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        created_by VARCHAR(128)
+      );
+      CREATE INDEX IF NOT EXISTS idx_outreach_templates_org_channel
+        ON outreach_templates(organization_id, channel, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS email_outreach (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        template_id VARCHAR(64) REFERENCES outreach_templates(id) ON DELETE SET NULL,
+        idempotency_key VARCHAR(255) NOT NULL,
+        recipient_email VARCHAR(320) NOT NULL,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'queued'
+          CHECK (status IN ('queued','processing','sent','failed')),
+        provider_message_id VARCHAR(255),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        job_id VARCHAR(64) REFERENCES jobs(id) ON DELETE SET NULL,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        sent_at TIMESTAMP WITH TIME ZONE,
+        UNIQUE (organization_id, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_outreach_org_status
+        ON email_outreach(organization_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_email_outreach_org_lead
+        ON email_outreach(organization_id, lead_id, created_at DESC);
+    `,
+  },
 ];

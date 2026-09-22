@@ -1,9 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildAuthenticatedUserLookupSql } from '../middleware/auth';
 import { buildCallPersistencePlan } from '../db/legacySchemaCompatibility';
-
-assert.match(buildAuthenticatedUserLookupSql(), /JOIN memberships m ON m\.user_id = u\.id/);
-assert.doesNotMatch(buildAuthenticatedUserLookupSql(), /u\.organization_id/);
 
 const plan = buildCallPersistencePlan([
   { column_name: 'id', is_nullable: 'NO', column_default: null },

@@ -33,6 +33,8 @@ import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
+import { queueEmailOutreach } from './server/services/emailOutreachService';
+import { startEmailWorker } from './server/services/emailWorker';
 
 async function startServer() {
   const app = express();
@@ -52,6 +54,12 @@ async function startServer() {
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
     if (isProduction) throw err;
+  }
+
+  if (isProduction) {
+    const pool = getPgPool();
+    const configuredOrg = process.env.EMAIL_WORKER_ORGANIZATION_ID?.trim() || undefined;
+    if (pool) startEmailWorker(pool, configuredOrg);
   }
 
   // --- API Routes ---
@@ -2193,6 +2201,40 @@ async function startServer() {
       res.json({ success: true, message: 'Schedule deleted successfully' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to delete schedule' });
+    }
+  });
+
+  // Automated Email Outreach — authenticated, tenant-scoped, durable.
+  app.post('/api/leads/:id/email-outreach', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Email outreach requires PostgreSQL', code: 'EMAIL_DATABASE_UNAVAILABLE' });
+
+      const userId = (req as AuthRequest).dbUser?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const result = await queueEmailOutreach(pool, orgId, req.params.id, userId);
+      if (result.status === 'existing') {
+        return res.status(200).json({
+          success: true,
+          status: 'already_processed',
+          outreachId: result.outreachId,
+          jobId: result.jobId,
+        });
+      }
+
+      return res.status(202).json({
+        success: true,
+        status: 'queued',
+        outreachId: result.outreachId,
+        jobId: result.jobId,
+      });
+    } catch (err: any) {
+      const message = err?.message || 'Failed to queue automated email outreach';
+      const status = /not found/i.test(message) ? 404 : /valid email|template/i.test(message) ? 400 : 500;
+      console.error('Email outreach error:', err);
+      return res.status(status).json({ error: message });
     }
   });
 
