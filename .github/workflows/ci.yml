@@ -2,9 +2,14 @@ name: Vortex One CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'release/*'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  schedule:
+    - cron: '0 2 * * 1-5'
 
 permissions:
   contents: read
