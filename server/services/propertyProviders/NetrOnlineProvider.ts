@@ -59,13 +59,14 @@ export class NetrOnlineProvider implements IPropertyDataProvider {
     const orgId = requireOrganizationId(query.organizationId);
 
     return records.map((item: any, idx: number): NormalizedPropertyResult => {
-      const rawId = item.id || item.recordId || `netr_${idx}_${Date.now()}`;
-      const apn = item.apn || item.parcelNumber || query.apn || `APN-${rawId}`;
-      const ownerName = item.grantee || item.ownerName || item.taxpayerName || 'Property Owner (NETR County Roll)';
+      const rawId = item.id || item.recordId;
+      if (!rawId) throw new Error('NETR record is missing a source record identifier');
+      const apn = item.apn || item.parcelNumber || '';
+      const ownerName = item.grantee || item.ownerName || item.taxpayerName || 'Owner information not available';
 
-      const estVal = Number(item.assessedValue || item.marketValue || 2500000);
-      const assessedVal = Math.round(estVal * 0.75);
-      const equity = Math.round(estVal * 0.6);
+      const estVal = Number(item.assessedValue ?? item.marketValue ?? 0);
+      const assessedVal = Number(item.assessedValue ?? 0);
+      const equity = 0;
 
       const propId = `netr_prop_${rawId}`;
       const ownerId = `netr_owner_${rawId}`;
@@ -86,27 +87,27 @@ export class NetrOnlineProvider implements IPropertyDataProvider {
       const property: Property = {
         id: propId,
         organization_id: orgId,
-        address: item.situsAddress || item.address || query.address || 'Property Address',
-        city: item.city || query.city || 'Costa Mesa',
-        state: item.state || 'CA',
-        zip: item.zip || query.zip || '92627',
-        county: item.county || query.county || 'Orange County',
+        address: item.situsAddress || item.address || '',
+        city: item.city || '',
+        state: item.state || '',
+        zip: item.zip || '',
+        county: item.county || '',
         apn,
-        property_type: (item.propertyUseCode as any) || 'Multi-Family',
-        units_count: Number(item.buildingUnits || item.unitCount || 1),
-        square_feet: Number(item.buildingArea || 3200),
-        year_built: Number(item.yearBuilt || 1988),
+        property_type: (item.propertyUseCode as any) || 'Unknown',
+        units_count: Number(item.buildingUnits ?? item.unitCount ?? 0),
+        square_feet: Number(item.buildingArea ?? 0),
+        year_built: Number(item.yearBuilt ?? 0),
         estimated_value: estVal,
         assessed_tax_value: assessedVal,
         estimated_equity: equity,
-        mortgage_balance: estVal - equity,
+        mortgage_balance: 0,
         owner_id: ownerId,
         owner_name: ownerName,
-        is_absentee_owner: Boolean(item.isAbsentee || false),
+        is_absentee_owner: Boolean(item.isAbsentee === true),
         is_corporate_owned: Boolean(item.isCorporate || ownerName.includes('LLC') || ownerName.includes('INC')),
         last_sale_date: item.recordingDate || item.deedDate,
         last_sale_price: item.documentAmount,
-        tax_delinquent: Boolean(item.taxStatus === 'DELINQUENT'),
+        tax_delinquent: item.taxStatus === 'DELINQUENT',
         provenance: {
           source: this.providerName,
           sourceType: 'public_records',
@@ -122,10 +123,10 @@ export class NetrOnlineProvider implements IPropertyDataProvider {
         organization_id: orgId,
         name: ownerName,
         entity_type: ownerName.includes('LLC') ? 'llc' : ownerName.includes('TRUST') ? 'trust' : 'individual',
-        mailing_address: item.mailingAddress || property.address,
-        mailing_city: item.mailingCity || property.city,
-        mailing_state: item.mailingState || property.state,
-        mailing_zip: item.mailingZip || property.zip,
+        mailing_address: item.mailingAddress || '',
+        mailing_city: item.mailingCity || '',
+        mailing_state: item.mailingState || '',
+        mailing_zip: item.mailingZip || '',
         phone_numbers: [],
         email_addresses: [],
         properties_owned_count: 1,

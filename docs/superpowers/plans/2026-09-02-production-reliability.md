@@ -69,15 +69,15 @@
 - [ ] **Step 3: Expose metrics for campaign attempts, connections, dispositions, queue depth, job failures, and provider errors.**
 - [ ] **Step 4: Ensure logs never contain access tokens or secret values.**
 
-### Task 5: Cloud deployment verification
+### Task 5: Production hosting verification
 
 **Files:**
-- Inspect/modify: Cloud Run deployment configuration, Dockerfile, package scripts, environment examples
+- Inspect/modify: hosting deployment configuration, Dockerfile, package scripts, environment examples
 - Test: production smoke-test scripts
 
 - [ ] **Step 1: Write a smoke test for authenticated API → PostgreSQL → realtime response.**
 - [ ] **Step 2: Verify production configuration has no committed secrets and no default tenant.**
-- [ ] **Step 3: Verify Cloud Run can reach Cloud SQL and worker execution can reach required providers.**
+- [ ] **Step 3: Verify the API host can reach PostgreSQL and worker execution can reach required providers.**
 - [ ] **Step 4: Verify health checks do not expose protected data.**
 - [ ] **Step 5: Run the smoke test against staging before production.**
 

@@ -59,57 +59,31 @@ export class RealtorProvider implements IPropertyDataProvider {
               state: rawState,
               zip: rawZip,
               county: query.county || 'Orange County',
-              list_price: 2750000 + idx * 320000,
-              sqft: 3450 + idx * 380,
-              year_built: 1989 + (idx % 22),
-              units: 4 + (idx % 6),
-              apn: query.apn || `424-${120 + idx}-${40 + idx}`,
-              owner_name: `Realtor Registered Titleholder ${idx + 1}`,
-              is_absentee: idx % 2 === 0,
+              list_price: 0,
+              sqft: 0,
+              year_built: 0,
+              units: 0,
+              apn: '',
+              owner_name: 'Owner information not available',
+              is_absentee: false,
             };
           });
         }
       }
     } catch (openErr: any) {
-      console.warn('[RealtorProvider] Open search request warning, utilizing open search property synthesis:', openErr.message);
+      throw new Error(`Realtor.com open property lookup failed: ${openErr.message}`);
     }
 
-    // 2. If open network suggest was blocked or empty, synthesize verified open search property records
-    if (propsList.length === 0) {
-      const city = query.city || 'Costa Mesa';
-      const state = query.state || 'CA';
-      const zip = query.zip || '92627';
-      const county = query.county || 'Orange County';
-
-      const countToGen = Math.min(limit, 5);
-      for (let i = 0; i < countToGen; i++) {
-        const estVal = 2750000 + i * 380000;
-        propsList.push({
-          property_id: `mpr_open_${Date.now()}_${i}`,
-          address: i === 0 && query.address ? query.address : `${800 + i * 35} Harbor Blvd Suite ${i + 1}`,
-          city,
-          state,
-          zip,
-          county,
-          list_price: estVal,
-          sqft: 3400 + i * 350,
-          year_built: 1991 + (i % 18),
-          units: 4 + i * 2,
-          apn: query.apn || `424-${125 + i}-${45 + i}`,
-          owner_name: `California Commercial Property Trust ${i + 1}`,
-          is_absentee: true,
-        });
-      }
-    }
+    if (propsList.length === 0) return [];
 
     return propsList.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.property_id || `realtor_${idx}_${Date.now()}`;
       const apn = item.apn || query.apn || `APN-RTR-${rawId}`;
-      const ownerName = item.owner_name || 'Property Owner (Realtor.com Open Roll)';
+      const ownerName = item.owner_name || 'Owner information not available';
 
-      const estVal = Number(item.list_price || 2750000);
-      const assessedVal = Math.round(estVal * 0.7);
-      const equity = Math.round(estVal * 0.62);
+      const estVal = Number(item.list_price ?? 0);
+      const assessedVal = 0;
+      const equity = 0;
 
       const propId = `realtor_prop_${rawId}`;
       const ownerId = `realtor_owner_${rawId}`;
@@ -131,27 +105,27 @@ export class RealtorProvider implements IPropertyDataProvider {
       const property: Property = {
         id: propId,
         organization_id: orgId,
-        address: item.address || query.address || 'Property Address',
-        city: item.city || query.city || 'Costa Mesa',
-        state: item.state || query.state || 'CA',
-        zip: item.zip || query.zip || '92627',
-        county: item.county || query.county || 'Orange County',
-        apn,
+        address: item.address || '',
+        city: item.city || '',
+        state: item.state || '',
+        zip: item.zip || '',
+        county: item.county || '',
+        apn: item.apn || '',
         property_type: 'Multi-Family',
-        units_count: Number(item.units || 4),
-        square_feet: Number(item.sqft || 3400),
-        year_built: Number(item.year_built || 1989),
+        units_count: Number(item.units ?? 0),
+        square_feet: Number(item.sqft ?? 0),
+        year_built: Number(item.year_built ?? 0),
         estimated_value: estVal,
         assessed_tax_value: assessedVal,
         estimated_equity: equity,
-        mortgage_balance: estVal - equity,
+        mortgage_balance: 0,
         owner_id: ownerId,
         owner_name: ownerName,
-        is_absentee_owner: Boolean(item.is_absentee !== false),
+        is_absentee_owner: Boolean(item.is_absentee === true),
         is_corporate_owned: Boolean(ownerName.includes('Trust') || ownerName.includes('LLC') || ownerName.includes('INC')),
-        last_sale_date: '2020-11-12',
-        last_sale_price: Math.round(estVal * 0.78),
-        tax_delinquent: false,
+        last_sale_date: item.last_sale_date,
+        last_sale_price: item.last_sale_price != null ? Number(item.last_sale_price) : undefined,
+        tax_delinquent: Boolean(item.tax_delinquent === true),
         provenance: {
           source: this.providerName,
           sourceType: 'public_records',
@@ -167,10 +141,10 @@ export class RealtorProvider implements IPropertyDataProvider {
         organization_id: orgId,
         name: ownerName,
         entity_type: ownerName.includes('LLC') ? 'llc' : ownerName.includes('Trust') ? 'trust' : 'individual',
-        mailing_address: property.address,
-        mailing_city: property.city,
-        mailing_state: property.state,
-        mailing_zip: property.zip,
+        mailing_address: item.mailing_address || '',
+        mailing_city: item.mailing_city || '',
+        mailing_state: item.mailing_state || '',
+        mailing_zip: item.mailing_zip || '',
         phone_numbers: [],
         email_addresses: [],
         properties_owned_count: 1,

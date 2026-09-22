@@ -468,4 +468,8 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(organization_id, status, available_at);
     `,
   },
+  { version: 11, name: '011_add_manual_call_idempotency', sql: `
+    ALTER TABLE call ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_call_org_idempotency ON call(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+  `, },
 ];

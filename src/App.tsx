@@ -124,6 +124,20 @@ export default function App() {
       last_sale_price: row.last_sale_price == null ? undefined : Number(row.last_sale_price), provenance: row.provenance || {}, latitude: row.latitude, longitude: row.longitude,
     }));
   }, [activeTenant?.id, userProfile?.organization_id, getAuthHeaders]);
+  const createLeadFromProperty = useCallback(async (property: Property): Promise<void> => {
+    const tenantId = activeTenant?.id || userProfile?.organization_id;
+    if (!tenantId) throw new Error('No active organization');
+    const res = await fetch(`/api/properties/${encodeURIComponent(property.id)}/create-lead`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders(), 'x-organization-id': tenantId },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Lead creation returned HTTP ${res.status}`);
+    setSelectedLeadId(data.leadId);
+    handleNavigate('leads');
+    addToast(data.created ? `Created CRM lead for ${property.address}` : `CRM lead already exists for ${property.address}`, 'success');
+  }, [activeTenant?.id, userProfile?.organization_id, getAuthHeaders]);
+
   const [currentView, setCurrentView] = useState<string>(() => getViewFromUrl());
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isCreateLeadModalOpen, setIsCreateLeadModalOpen] = useState<boolean>(false);
@@ -468,6 +482,7 @@ export default function App() {
         },
         body: JSON.stringify({
           ...payload,
+          idempotencyKey: payload?.idempotencyKey || crypto.randomUUID(),
           organization_id: orgId,
           organizationId: orgId,
         }),
@@ -658,8 +673,9 @@ export default function App() {
               }}
               onOpenInspector={(prop) => handleOpenInspector('property', prop)}
               onCreateLead={(prop) => {
-                handleNavigate('leads');
-                addToast(`Converting ${prop.address} to Lead`, 'info');
+                void createLeadFromProperty(prop).catch((error: Error) => {
+                  addToast(error.message || 'Failed to create CRM lead', 'error');
+                });
               }}
               onInitiateCall={(name, phone, address) => {
                 handleNavigate('dialer');

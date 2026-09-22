@@ -525,8 +525,8 @@ export class DataImportService {
           (p) => p.organization_id === cleanOrgId && p.apn.toLowerCase() === cleanApn.toLowerCase()
         );
 
-        const assessedTaxValue = rec.assessed_tax_value ?? Math.round(rec.estimated_value * 0.72);
-        const mortgageBalance = rec.mortgage_balance ?? Math.max(0, rec.estimated_value - rec.estimated_equity);
+        const assessedTaxValue = rec.assessed_tax_value ?? 0;
+        const mortgageBalance = rec.mortgage_balance ?? 0;
 
         // Detect absentee status: Owner mailing address differs from property address
         const isAbsentee =
@@ -563,7 +563,7 @@ export class DataImportService {
             property_type: rec.property_type,
             units_count: rec.units_count ?? existing.units_count ?? 1,
             square_feet: rec.square_feet ?? existing.square_feet ?? 0,
-            year_built: rec.year_built ?? existing.year_built ?? 1980,
+            year_built: rec.year_built ?? existing.year_built,
             estimated_value: rec.estimated_value,
             assessed_tax_value: assessedTaxValue,
             estimated_equity: rec.estimated_equity,
@@ -595,7 +595,7 @@ export class DataImportService {
             property_type: rec.property_type,
             units_count: rec.units_count ?? 1,
             square_feet: rec.square_feet ?? 0,
-            year_built: rec.year_built ?? 1985,
+            year_built: rec.year_built,
             estimated_value: rec.estimated_value,
             assessed_tax_value: assessedTaxValue,
             estimated_equity: rec.estimated_equity,
@@ -621,17 +621,6 @@ export class DataImportService {
         // Persist to PostgreSQL if connected
         if (pool) {
           try {
-            await pool.query(
-              `INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
-               VALUES ($1, $2, $3, '{}'::jsonb, NOW(), NOW())
-               ON CONFLICT (id) DO NOTHING`,
-              [
-                cleanOrgId,
-                cleanOrgId === 'org_cmc_realty' ? 'CMC Realty & Property Management' : cleanOrgId.replace(/[-_]/g, ' '),
-                cleanOrgId.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'default-org',
-              ]
-            );
-
             await pool.query(
               `INSERT INTO properties (
                 id, organization_id, owner_id, address, city, state, zip, county, apn,
@@ -689,6 +678,7 @@ export class DataImportService {
               ]
             );
           } catch (pgPropErr: any) {
+            if (process.env.NODE_ENV === 'production') throw pgPropErr;
             console.warn('PostgreSQL property upsert warning:', pgPropErr.message);
           }
         }
@@ -1203,239 +1193,8 @@ export class DataImportService {
   /**
    * Synchronizes and reconciles standard production Orange County multi-family and commercial CRM records
    */
-  public static async syncProductionCrmSource(
-    organizationId: string,
-    options: ReconciliationOptions = {}
-  ): Promise<ReconciliationResult> {
-    const seedProductionRecords: RawPropertyRecord[] = [
-      {
-        apn: '423-112-09',
-        address: '1420 Newport Blvd',
-        city: 'Costa Mesa',
-        state: 'CA',
-        zip: '92627',
-        county: 'Orange County',
-        property_type: 'Multi-Family',
-        units_count: 6,
-        square_feet: 5800,
-        year_built: 1986,
-        estimated_value: 2650000,
-        assessed_tax_value: 1720000,
-        estimated_equity: 1800000,
-        mortgage_balance: 850000,
-        is_absentee_owner: true,
-        is_corporate_owned: true,
-        tax_delinquent: false,
-        last_sale_date: '2016-04-12',
-        last_sale_price: 1850000,
-        source_provenance: 'Orange County Assessor & Title Records',
-        owner: {
-          name: 'Sterling West Holdings LLC',
-          entity_type: 'llc',
-          mailing_address: '9400 Wilshire Blvd, Suite 1200',
-          mailing_city: 'Beverly Hills',
-          mailing_state: 'CA',
-          mailing_zip: '90212',
-          phone_numbers: [
-            { number: '(949) 555-0182', type: 'mobile', confidence: 0.96 },
-            { number: '(310) 555-4921', type: 'landline', confidence: 0.88 },
-          ],
-          email_addresses: [
-            { email: 'mgmt@sterlingwestholdings.com', verified: true, confidence: 0.92 },
-          ],
-          notes: 'Out-of-area managing member. High potential for full-service commercial & multi-family management.',
-        },
-      },
-      {
-        apn: '424-081-14',
-        address: '2840 Harbor Blvd',
-        city: 'Costa Mesa',
-        state: 'CA',
-        zip: '92626',
-        county: 'Orange County',
-        property_type: 'Commercial',
-        units_count: 4,
-        square_feet: 7200,
-        year_built: 1994,
-        estimated_value: 4200000,
-        assessed_tax_value: 3100000,
-        estimated_equity: 2400000,
-        mortgage_balance: 1800000,
-        is_absentee_owner: true,
-        is_corporate_owned: true,
-        tax_delinquent: false,
-        last_sale_date: '2018-09-22',
-        last_sale_price: 3400000,
-        source_provenance: 'CoStar / Orange County GIS Database',
-        owner: {
-          name: 'Sterling West Holdings LLC',
-          entity_type: 'llc',
-          mailing_address: '9400 Wilshire Blvd, Suite 1200',
-          mailing_city: 'Beverly Hills',
-          mailing_state: 'CA',
-          mailing_zip: '90212',
-          phone_numbers: [
-            { number: '(949) 555-0182', type: 'mobile', confidence: 0.96 },
-          ],
-          email_addresses: [
-            { email: 'mgmt@sterlingwestholdings.com', verified: true, confidence: 0.92 },
-          ],
-        },
-      },
-      {
-        apn: '425-331-02',
-        address: '385 17th St',
-        city: 'Costa Mesa',
-        state: 'CA',
-        zip: '92627',
-        county: 'Orange County',
-        property_type: 'Multi-Family',
-        units_count: 3,
-        square_feet: 3100,
-        year_built: 1978,
-        estimated_value: 1980000,
-        assessed_tax_value: 1100000,
-        estimated_equity: 1450000,
-        mortgage_balance: 530000,
-        is_absentee_owner: true,
-        is_corporate_owned: false,
-        tax_delinquent: false,
-        last_sale_date: '2012-07-15',
-        last_sale_price: 1150000,
-        source_provenance: 'First American Title Data Feed',
-        owner: {
-          name: 'Marcus & Eleanor Vance',
-          entity_type: 'individual',
-          mailing_address: '412 Ocean Blvd',
-          mailing_city: 'Corona Del Mar',
-          mailing_state: 'CA',
-          mailing_zip: '92625',
-          phone_numbers: [
-            { number: '(949) 555-7341', type: 'mobile', confidence: 0.94 },
-          ],
-          email_addresses: [
-            { email: 'mvance.properties@gmail.com', verified: true, confidence: 0.95 },
-          ],
-          notes: 'Self-managing triplex & duplexes in Costa Mesa. Tired landlord indicators observed.',
-        },
-      },
-      {
-        apn: '439-012-88',
-        address: '2200 E Coast Hwy',
-        city: 'Corona Del Mar',
-        state: 'CA',
-        zip: '92625',
-        county: 'Orange County',
-        property_type: 'Commercial',
-        units_count: 8,
-        square_feet: 11200,
-        year_built: 2002,
-        estimated_value: 8900000,
-        assessed_tax_value: 6400000,
-        estimated_equity: 6200000,
-        mortgage_balance: 2700000,
-        is_absentee_owner: true,
-        is_corporate_owned: true,
-        tax_delinquent: false,
-        last_sale_date: '2019-11-04',
-        last_sale_price: 7800000,
-        source_provenance: 'Orange County Commercial GIS',
-        owner: {
-          name: 'Pacific Heritage Trust',
-          entity_type: 'trust',
-          mailing_address: '777 South Figueroa St, 32nd Fl',
-          mailing_city: 'Los Angeles',
-          mailing_state: 'CA',
-          mailing_zip: '90017',
-          phone_numbers: [
-            { number: '(714) 555-9203', type: 'landline', confidence: 0.85 },
-          ],
-          email_addresses: [
-            { email: 'trustee@pacificheritagetrust.org', verified: true, confidence: 0.89 },
-          ],
-          notes: 'Estate trust with absentee beneficiary. Low maintenance velocity reported.',
-        },
-      },
-      {
-        apn: '448-901-22',
-        address: '740 W 19th St',
-        city: 'Costa Mesa',
-        state: 'CA',
-        zip: '92627',
-        county: 'Orange County',
-        property_type: 'Multi-Family',
-        units_count: 4,
-        square_feet: 4200,
-        year_built: 1982,
-        estimated_value: 2350000,
-        assessed_tax_value: 1540000,
-        estimated_equity: 1650000,
-        mortgage_balance: 700000,
-        is_absentee_owner: true,
-        is_corporate_owned: false,
-        tax_delinquent: true,
-        last_sale_date: '2014-03-19',
-        last_sale_price: 1420000,
-        source_provenance: 'Orange County Tax Collector & Public Records',
-        owner: {
-          name: 'David K. Tanaka',
-          entity_type: 'individual',
-          mailing_address: '1888 Greenbrae St',
-          mailing_city: 'Honolulu',
-          mailing_state: 'HI',
-          mailing_zip: '96816',
-          phone_numbers: [
-            { number: '(808) 555-2391', type: 'mobile', confidence: 0.91 },
-          ],
-          email_addresses: [
-            { email: 'david.tanaka.investments@outlook.com', verified: false, confidence: 0.78 },
-          ],
-          notes: 'Out-of-state owner (Hawaii). Inherited multi-family 4-plex in Costa Mesa. Delinquent tax notice filed.',
-        },
-      },
-      {
-        apn: '451-209-11',
-        address: '512 Irvine Ave',
-        city: 'Newport Beach',
-        state: 'CA',
-        zip: '92663',
-        county: 'Orange County',
-        property_type: 'Multi-Family',
-        units_count: 5,
-        square_feet: 5100,
-        year_built: 1989,
-        estimated_value: 3450000,
-        assessed_tax_value: 2300000,
-        estimated_equity: 2600000,
-        mortgage_balance: 850000,
-        is_absentee_owner: true,
-        is_corporate_owned: true,
-        tax_delinquent: false,
-        last_sale_date: '2017-08-10',
-        last_sale_price: 2750000,
-        source_provenance: 'Newport Beach Municipal Title Registry',
-        owner: {
-          name: 'Balboa Peninsula Capital Group LLC',
-          entity_type: 'llc',
-          mailing_address: '1200 Avenue of the Stars',
-          mailing_city: 'Century City',
-          mailing_state: 'CA',
-          mailing_zip: '90067',
-          phone_numbers: [
-            { number: '(949) 555-4433', type: 'mobile', confidence: 0.93 },
-          ],
-          email_addresses: [
-            { email: 'acquisitions@balboacapgroup.com', verified: true, confidence: 0.94 },
-          ],
-          notes: 'Multi-family investment entity. Active management search for coastal assets.',
-        },
-      },
-    ];
-
-    return this.reconcileBatch(organizationId, seedProductionRecords, {
-      ...options,
-      sourceSystem: 'Vortex One Production CRM & County Assessor Sync Feed',
-    });
+  public static async syncProductionCrmSource(organizationId: string): Promise<never> {
+    throw new Error('The legacy synthetic CRM feed was removed. Import an authoritative source with /api/import/reconcile.');
   }
 
   /**
@@ -1475,6 +1234,9 @@ export class DataImportService {
   }> {
     const cleanOrgId = requireOrganizationId(organizationId);
     const pool = getPgPool();
+    if (!pool && process.env.NODE_ENV === 'production') {
+      throw new Error('PostgreSQL is required for production integrity validation');
+    }
 
     let properties: Property[] = [];
     let owners: PropertyOwner[] = [];
@@ -1482,9 +1244,9 @@ export class DataImportService {
 
     if (pool) {
       try {
-        const propResult = await pool.query('SELECT * FROM property WHERE organization_id = $1', [cleanOrgId]);
-        const ownerResult = await pool.query('SELECT * FROM property_owner WHERE organization_id = $1', [cleanOrgId]);
-        const leadResult = await pool.query('SELECT * FROM lead WHERE organization_id = $1', [cleanOrgId]);
+        const propResult = await pool.query('SELECT * FROM properties WHERE organization_id = $1', [cleanOrgId]);
+        const ownerResult = await pool.query('SELECT * FROM property_owners WHERE organization_id = $1', [cleanOrgId]);
+        const leadResult = await pool.query('SELECT * FROM leads WHERE organization_id = $1', [cleanOrgId]);
 
         properties = propResult.rows.map((r: any) => ({
           id: r.id,
@@ -1509,7 +1271,7 @@ export class DataImportService {
           is_corporate_owned: r.is_corporate_owned,
           tax_delinquent: r.tax_delinquent,
           provenance: {
-            source: 'PostgreSQL Cloud SQL Instance',
+            source: 'PostgreSQL Database',
             sourceType: 'database',
             retrievedAt: r.updated_at || r.created_at || new Date().toISOString(),
             confidence: 0.99,
@@ -1560,7 +1322,8 @@ export class DataImportService {
           updated_at: r.updated_at,
         }));
       } catch (err) {
-        console.warn('Failed to query Cloud SQL directly for integrity check, falling back to memory store:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+        console.warn('Failed to query PostgreSQL directly for integrity check; local development may use memory fixtures:', err);
         properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === cleanOrgId);
         owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === cleanOrgId);
         leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === cleanOrgId);

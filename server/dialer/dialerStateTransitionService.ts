@@ -15,6 +15,7 @@ export interface StateTransitionInput {
   recordingUrl?: string;
   telephonySessionId?: string;
   ringcentralPartyId?: string;
+  ringcentralRingoutId?: string;
 }
 
 export interface StateTransitionResult {
@@ -95,10 +96,10 @@ export class DialerStateTransitionService {
         `  ON CONFLICT (id) DO NOTHING\n` +
         `  RETURNING call_id\n` +
         `)\n` +
-        `UPDATE call SET status = $7, disposition = COALESCE($8, disposition), duration_seconds = CASE WHEN $9 > 0 THEN $9 ELSE duration_seconds END, recording_url = COALESCE($10, recording_url), ended_at = CASE WHEN $11 THEN COALESCE(ended_at, $6::timestamptz) ELSE ended_at END\n` +
+        `UPDATE call SET status = $7, disposition = COALESCE($8, disposition), duration_seconds = CASE WHEN $9 > 0 THEN $9 ELSE duration_seconds END, recording_url = COALESCE($10, recording_url), telephony_session_id = COALESCE($11, telephony_session_id), ringcentral_party_id = COALESCE($12, ringcentral_party_id), ringcentral_ringout_id = COALESCE($13, ringcentral_ringout_id), ended_at = CASE WHEN $14 THEN COALESCE(ended_at, $6::timestamptz) ELSE ended_at END\n` +
         `WHERE id = $1 AND organization_id = $2 AND EXISTS (SELECT 1 FROM inserted_event)\n` +
         `RETURNING id, status`,
-      values: [input.callId, input.organizationId, input.eventId, input.eventType, JSON.stringify(input.payload), input.occurredAt, dbStatus, input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null, terminal],
+      values: [input.callId, input.organizationId, input.eventId, input.eventType, JSON.stringify(input.payload), input.occurredAt, dbStatus, input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null, input.telephonySessionId || null, input.ringcentralPartyId || null, input.ringcentralRingoutId || null, terminal],
     };
   }
 
@@ -144,10 +145,11 @@ export class DialerStateTransitionService {
              recording_url = COALESCE($4, recording_url),
              telephony_session_id = COALESCE($5, telephony_session_id),
              ringcentral_party_id = COALESCE($6, ringcentral_party_id),
-             answered_at = CASE WHEN $7 IN ('HUMAN','IN_CALL') AND answered_at IS NULL THEN $8 ELSE answered_at END,
-             ended_at = CASE WHEN $9 THEN COALESCE(ended_at, $10) ELSE ended_at END
-         WHERE id = $11 AND organization_id = $12`,
-        [stateToDb[input.nextState], input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null, input.telephonySessionId || null, input.ringcentralPartyId || null, input.nextState, input.occurredAt,
+             ringcentral_ringout_id = COALESCE($7, ringcentral_ringout_id),
+             answered_at = CASE WHEN $8 IN ('HUMAN','IN_CALL') AND answered_at IS NULL THEN $9 ELSE answered_at END,
+             ended_at = CASE WHEN $10 THEN COALESCE(ended_at, $11) ELSE ended_at END
+         WHERE id = $12 AND organization_id = $13`,
+        [stateToDb[input.nextState], input.disposition || null, input.durationSeconds || 0, input.recordingUrl || null, input.telephonySessionId || null, input.ringcentralPartyId || null, input.ringcentralRingoutId || null, input.nextState, input.occurredAt,
           ['COMPLETED', 'VOICEMAIL', 'NO_ANSWER', 'BUSY', 'DISCONNECTED', 'FAILED', 'CANCELLED'].includes(input.nextState), input.occurredAt,
           input.callId, input.organizationId],
       );

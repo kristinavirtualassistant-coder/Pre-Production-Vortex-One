@@ -296,7 +296,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">PostgreSQL / Cloud SQL Engine</span>
+                <span className="text-xs font-bold text-slate-800">PostgreSQL Engine</span>
                 <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
                   {dbStatus?.connected ? 'Connected' : 'Active Local / Memory Mode'}
                 </span>

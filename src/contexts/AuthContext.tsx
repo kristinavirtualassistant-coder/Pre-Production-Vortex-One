@@ -1,49 +1,51 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import {
-  auth,
-  db,
-  googleProvider,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  firebaseSignOut,
-  onIdTokenChanged,
-  updateProfile,
-  testFirestoreConnection,
-  UserProfile,
-  OrganizationTenant,
-  DEMO_USERS,
-  FirebaseUser,
-} from '../lib/firebase';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  role: 'admin' | 'executive' | 'manager' | 'agent' | 'member';
+  organization_id: string;
+  organization_name: string;
+  tenant_ids: string[];
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+export interface OrganizationTenant {
+  id: string;
+  name: string;
+  slug: string;
+  plan?: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface AuthUser {
+  uid: string;
+  email: string;
+  displayName?: string;
+  photoURL?: string;
+}
 
 interface SignUpParams {
   email: string;
   password: string;
   name: string;
-  organizationName?: string;
-  role?: 'admin' | 'executive' | 'manager' | 'agent';
+  organizationName: string;
 }
 
 interface AuthContextType {
-  user: FirebaseUser | null;
+  user: AuthUser | null;
   userProfile: UserProfile | null;
-  activeTenant: OrganizationTenant;
+  activeTenant: OrganizationTenant | null;
   availableTenants: OrganizationTenant[];
   loading: boolean;
   error: string | null;
   isGuest: boolean;
-  continueAsGuest: () => void;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (params: SignUpParams) => Promise<void>;
-  signInAsDemoPersona: (personaId: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchOrganization: (orgId: string, orgName: string) => Promise<void>;
   updateUserProfileData: (updates: Partial<UserProfile>) => Promise<void>;
@@ -52,482 +54,194 @@ interface AuthContextType {
   getAccessToken: () => Promise<string | null>;
 }
 
-const DEFAULT_TENANT: OrganizationTenant = {
-  id: 'org_cmc_realty',
-  name: 'CMC Realty & Property Management',
-  slug: 'cmc-realty',
-  plan: 'Enterprise',
-  settings: {
-    timezone: 'America/Los_Angeles',
-    targetMarket: 'Orange County, CA',
-  },
-};
-
-const SECONDARY_TENANT: OrganizationTenant = {
-  id: 'org_sterling_holdings',
-  name: 'Sterling West Holdings (Isolated Tenant)',
-  slug: 'sterling-west',
-  plan: 'Professional',
-  settings: {
-    timezone: 'America/Los_Angeles',
-    targetMarket: 'Los Angeles & Beverly Hills, CA',
-  },
-};
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const SESSION_KEY = 'vortex_postgresql_session';
+
+type SessionUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: UserProfile['role'];
+  organization_id: string;
+  organization_name?: string;
+  organization_slug?: string;
+  organization_settings?: Record<string, unknown>;
+};
+
+function profileFromUser(user: SessionUser): UserProfile {
+  const now = new Date().toISOString();
+  return {
+    uid: user.id,
+    email: user.email,
+    displayName: user.name,
+    role: user.role,
+    organization_id: user.organization_id,
+    organization_name: user.organization_name || user.organization_id,
+    tenant_ids: [user.organization_id],
+    createdAt: now,
+    lastLoginAt: now,
+  };
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [activeTenant, setActiveTenant] = useState<OrganizationTenant>(DEFAULT_TENANT);
-  const [availableTenants, setAvailableTenants] = useState<OrganizationTenant[]>([
-    DEFAULT_TENANT,
-    SECONDARY_TENANT,
-  ]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [activeTenant, setActiveTenant] = useState<OrganizationTenant | null>(null);
+  const [availableTenants, setAvailableTenants] = useState<OrganizationTenant[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
-  // Sync / Fetch user profile from Firestore or Local Cache
-  const fetchOrCreateUserProfile = useCallback(
-    async (fbUser: FirebaseUser, fallbackRole: 'admin' | 'executive' | 'manager' | 'agent' = 'executive', customOrgName?: string): Promise<UserProfile> => {
-      try {
-        const userRef = doc(db, 'users', fbUser.uid);
-        const userDoc = await getDoc(userRef);
+  const applySession = useCallback((payload: { token: string; user: SessionUser }) => {
+    const profile = profileFromUser(payload.user);
+    const tenant: OrganizationTenant = {
+      id: profile.organization_id,
+      name: profile.organization_name,
+      slug: payload.user.organization_slug || profile.organization_id.replace(/^org_/, ''),
+      settings: payload.user.organization_settings,
+    };
+    setAccessToken(payload.token);
+    setUser({ uid: payload.user.id, email: payload.user.email, displayName: payload.user.name });
+    setUserProfile(profile);
+    setActiveTenant(tenant);
+    setAvailableTenants([tenant]);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+  }, []);
 
-        if (userDoc.exists()) {
-          const data = userDoc.data() as UserProfile;
-          const updatedProfile: UserProfile = {
-            ...data,
-            email: fbUser.email || data.email,
-            displayName: fbUser.displayName || data.displayName || 'Vortex User',
-            photoURL: fbUser.photoURL || data.photoURL,
-            lastLoginAt: new Date().toISOString(),
-          };
-
-          try {
-            await updateDoc(userRef, {
-              lastLoginAt: serverTimestamp(),
-            });
-          } catch (e) {
-            // Ignore background timestamp update error
-          }
-
-          return updatedProfile;
-        } else {
-          // Initialize fresh profile
-          if (!customOrgName?.trim()) {
-            throw new Error('Organization membership is required before creating a Vortex One user profile');
-          }
-          const orgId = `org_${customOrgName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-          const orgName = customOrgName.trim();
-
-          const newProfile: UserProfile = {
-            uid: fbUser.uid,
-            email: fbUser.email || '',
-            displayName: fbUser.displayName || fbUser.email?.split('@')[0] || 'Vortex Executive',
-            photoURL: fbUser.photoURL || undefined,
-            role: fallbackRole,
-            organization_id: orgId,
-            organization_name: orgName,
-            tenant_ids: [orgId],
-            createdAt: new Date().toISOString(),
-            lastLoginAt: new Date().toISOString(),
-          };
-
-          try {
-            await setDoc(userRef, {
-              ...newProfile,
-              createdAt: serverTimestamp(),
-              lastLoginAt: serverTimestamp(),
-            });
-
-            // Also ensure org doc exists
-            const orgRef = doc(db, 'organizations', orgId);
-            await setDoc(
-              orgRef,
-              {
-                id: orgId,
-                name: orgName,
-                created_by: fbUser.uid,
-                plan: 'Enterprise',
-                createdAt: serverTimestamp(),
-              },
-              { merge: true }
-            );
-          } catch (writeErr) {
-            console.warn('[Firestore] Profile write sync warning:', writeErr);
-          }
-
-          return newProfile;
-        }
-      } catch (err: any) {
-        console.error('[Firestore] Unable to resolve authenticated user organization:', err);
-        throw new Error('Unable to resolve organization membership for this account');
-      }
-    },
-    []
-  );
-
-  // Auth state listener
   useEffect(() => {
-    // Probe Firestore connection
-    testFirestoreConnection();
-
-    // Check for persisted demo session first
-    const savedDemoUser = localStorage.getItem('vortex_demo_session');
-    if (savedDemoUser) {
-      try {
-        const parsed = JSON.parse(savedDemoUser);
-        const persona = DEMO_USERS.find((u) => u.id === parsed.id) || parsed;
-        const profile: UserProfile = {
-          uid: persona.id,
-          email: persona.email,
-          displayName: persona.name,
-          photoURL: persona.avatar,
-          role: persona.role,
-          organization_id: persona.organization_id,
-          organization_name: persona.organization_name,
-          tenant_ids: [persona.organization_id, DEFAULT_TENANT.id, SECONDARY_TENANT.id],
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-        };
-        setUserProfile(profile);
-        setActiveTenant({
-          id: profile.organization_id,
-          name: profile.organization_name,
-          slug: profile.organization_id.replace('org_', ''),
-          plan: 'Enterprise',
-        });
-        setLoading(false);
-        return;
-      } catch (e) {
-        localStorage.removeItem('vortex_demo_session');
-      }
-    }
-
-    const unsubscribe = onIdTokenChanged(auth, async (fbUser) => {
-      if (fbUser) {
-        setUser(fbUser);
-        try {
-          setAccessToken(await fbUser.getIdToken());
-        } catch (tokenError) {
-          console.warn('[Auth] Failed to refresh Firebase ID token:', tokenError);
-          setAccessToken(null);
-        }
-        const profile = await fetchOrCreateUserProfile(fbUser);
-        setUserProfile(profile);
-        setActiveTenant({
-          id: profile.organization_id,
-          name: profile.organization_name,
-          slug: profile.organization_id.replace('org_', ''),
-          plan: 'Enterprise',
-        });
-      } else {
-        // Only clear if no demo session active
-        if (!localStorage.getItem('vortex_demo_session')) {
-          setUser(null);
-          setUserProfile(null);
-          setAccessToken(null);
-        }
-      }
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) {
       setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [fetchOrCreateUserProfile]);
-
-  // Sign In with Google
-  const signInWithGoogle = async () => {
-    setError(null);
-    setLoading(true);
+      return;
+    }
     try {
-      localStorage.removeItem('vortex_demo_session');
-      const result = await signInWithPopup(auth, googleProvider);
-      setUser(result.user);
-      
-      setAccessToken(await result.user.getIdToken());
+      const saved = JSON.parse(raw);
+      if (!saved?.token || !saved?.user?.id) throw new Error('Invalid session');
+      applySession(saved);
+    } catch {
+      localStorage.removeItem(SESSION_KEY);
+    } finally {
+      setLoading(false);
+    }
+  }, [applySession]);
 
-      const profile = await fetchOrCreateUserProfile(result.user, 'executive');
-      setUserProfile(profile);
-      setActiveTenant({
-        id: profile.organization_id,
-        name: profile.organization_name,
-        slug: profile.organization_id.replace('org_', ''),
-        plan: 'Enterprise',
+  const signInWithEmail = useCallback(async (email: string, pass: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass }),
       });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Sign-in failed');
+      applySession(data);
     } catch (err: any) {
-      console.error('Google sign-in error:', err);
-      setError(err.message || 'Google sign-in failed. Please try again.');
+      const message = err?.message || 'Sign-in failed';
+      setError(message);
       throw err;
     } finally {
       setLoading(false);
     }
-  };
+  }, [applySession]);
 
-  // Sign In with Email & Password
-  const signInWithEmail = async (email: string, pass: string) => {
-    setError(null);
+  const signUpWithEmail = useCallback(async (params: SignUpParams) => {
     setLoading(true);
+    setError(null);
     try {
-      localStorage.removeItem('vortex_demo_session');
-      const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
-      setUser(result.user);
-      setAccessToken(await result.user.getIdToken());
-      const profile = await fetchOrCreateUserProfile(result.user);
-      setUserProfile(profile);
-      setActiveTenant({
-        id: profile.organization_id,
-        name: profile.organization_name,
-        slug: profile.organization_id.replace('org_', ''),
-        plan: 'Enterprise',
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: params.email,
+          password: params.password,
+          name: params.name,
+          organizationName: params.organizationName,
+        }),
       });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Sign-up failed');
+      await signInWithEmail(params.email, params.password);
     } catch (err: any) {
-      console.error('Email sign-in error:', err);
-      let msg = 'Authentication failed. Please verify your credentials.';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        msg = 'No user account found matching this email and password.';
-      } else if (err.code === 'auth/wrong-password') {
-        msg = 'Incorrect password entered.';
-      } else if (err.code === 'auth/invalid-email') {
-        msg = 'Please provide a valid email address.';
-      }
-      setError(msg);
-      throw new Error(msg);
+      const message = err?.message || 'Sign-up failed';
+      setError(message);
+      throw err;
     } finally {
       setLoading(false);
     }
-  };
+  }, [signInWithEmail]);
 
-  // Sign Up with Email & Password
-  const signUpWithEmail = async (params: SignUpParams) => {
-    setError(null);
-    setLoading(true);
+  const signOut = useCallback(async () => {
     try {
-      localStorage.removeItem('vortex_demo_session');
-      const result = await createUserWithEmailAndPassword(auth, params.email.trim(), params.password);
-      
-      // Update display name on auth user
-      if (params.name) {
-        await updateProfile(result.user, { displayName: params.name });
+      if (accessToken) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
       }
-
-      setUser(result.user);
-      setAccessToken(await result.user.getIdToken());
-      const profile = await fetchOrCreateUserProfile(
-        result.user,
-        params.role || 'executive',
-        params.organizationName
-      );
-      setUserProfile(profile);
-      setActiveTenant({
-        id: profile.organization_id,
-        name: profile.organization_name,
-        slug: profile.organization_id.replace('org_', ''),
-        plan: 'Enterprise',
-      });
-    } catch (err: any) {
-      console.error('Sign up error:', err);
-      let msg = err.message || 'Registration failed. Please try again.';
-      if (err.code === 'auth/email-already-in-use') {
-        msg = 'An account with this email address already exists. Please sign in instead.';
-      } else if (err.code === 'auth/weak-password') {
-        msg = 'Password must be at least 6 characters long.';
-      }
-      setError(msg);
-      throw new Error(msg);
     } finally {
-      setLoading(false);
-    }
-  };
-
-  // Sign In as Demo Persona for Quick Testing / Verification
-  const signInAsDemoPersona = async (personaId: string) => {
-    setError(null);
-    setLoading(true);
-    try {
-      const persona逗 = DEMO_USERS.find((u) => u.id === personaId) || DEMO_USERS[0];
-      const persona = persona逗;
-      
-      // Try to sign in with matching test credentials, or set verified demo profile
-      localStorage.setItem('vortex_demo_session', JSON.stringify(persona));
-
-      const profile: UserProfile = {
-        uid: persona.id,
-        email: persona.email,
-        displayName: persona.name,
-        photoURL: persona.avatar,
-        role: persona.role,
-        organization_id: persona.organization_id,
-        organization_name: persona.organization_name,
-        tenant_ids: [persona.organization_id, DEFAULT_TENANT.id, SECONDARY_TENANT.id],
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-
-      setUserProfile(profile);
-      setActiveTenant({
-        id: profile.organization_id,
-        name: profile.organization_name,
-        slug: profile.organization_id.replace('org_', ''),
-        plan: 'Enterprise',
-      });
-
-      // Try background Firestore sync for audit trail
-      try {
-        const userRef拼 = doc(db, 'users', profile.uid);
-        await setDoc(userRef拼, profile, { merge: true });
-      } catch (e) {
-        // Ignore background offline error
-      }
-    } catch (err: any) {
-      console.error('Demo sign-in error:', err);
-      setError('Failed to initialize demo persona session.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Continue as Guest (Optional Sign-In)
-  const continueAsGuest = useCallback(() => {
-    setError(null);
-    const guestUser = {
-      id: `guest_${Date.now()}`,
-      email: 'guest@cmcrealty.com',
-      name: 'Guest Explorer',
-      role: 'executive' as const,
-      organization_id: DEFAULT_TENANT.id,
-      organization_name: DEFAULT_TENANT.name,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    };
-    localStorage.setItem('vortex_demo_session', JSON.stringify(guestUser));
-    const profile: UserProfile = {
-      uid: guestUser.id,
-      email: guestUser.email,
-      displayName: guestUser.name,
-      photoURL: guestUser.avatar,
-      role: guestUser.role,
-      organization_id: guestUser.organization_id,
-      organization_name: guestUser.organization_name,
-      tenant_ids: [guestUser.organization_id, DEFAULT_TENANT.id, SECONDARY_TENANT.id],
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-    };
-    setUserProfile(profile);
-    setActiveTenant(DEFAULT_TENANT);
-  }, []);
-
-  const isGuest = Boolean(!user && (userProfile?.uid?.startsWith('guest_') || !userProfile));
-
-  // Sign Out
-  const signOut = async () => {
-    setError(null);
-    try {
-      localStorage.removeItem('vortex_demo_session');
-      await firebaseSignOut(auth);
+      localStorage.removeItem(SESSION_KEY);
+      setAccessToken(null);
       setUser(null);
       setUserProfile(null);
-      setAccessToken(null);
-    } catch (err: any) {
-      console.error('Sign-out error:', err);
+      setActiveTenant(null);
+      setAvailableTenants([]);
     }
-  };
+  }, [accessToken]);
 
-  // Switch Organization / Tenant
-  const switchOrganization = async (orgId: string, orgName: string) => {
-    if (!userProfile) return;
-    const updated: UserProfile = {
-      ...userProfile,
-      organization_id: orgId,
-      organization_name: orgName,
-    };
-    setUserProfile(updated);
-    setActiveTenant({
-      id: orgId,
-      name: orgName,
-      slug: orgId.replace('org_', ''),
-      plan: 'Enterprise',
-    });
-
-    if (user?.uid) {
-      try {
-        const userRef = doc(db, 'users', user.uid);
-        await updateDoc(userRef, {
-          organization_id: orgId,
-          organization_name: orgName,
-        });
-      } catch (e) {
-        console.warn('Tenant switch Firestore sync error:', e);
-      }
+  const switchOrganization = useCallback(async (orgId: string, orgName: string) => {
+    if (!userProfile || orgId !== userProfile.organization_id) {
+      throw new Error('Organization switching is limited to authenticated PostgreSQL memberships');
     }
-  };
+    setActiveTenant({ id: orgId, name: orgName, slug: orgId.replace(/^org_/, '') });
+  }, [userProfile]);
 
-  // Update Profile
-  const updateUserProfileData = async (updates: Partial<UserProfile>) => {
-    if (!userProfile) return;
-    const updated = { ...userProfile, ...updates };
-    setUserProfile(updated);
+  const updateUserProfileData = useCallback(async (updates: Partial<UserProfile>) => {
+    setUserProfile((current) => current ? { ...current, ...updates } : current);
+    setUser((current) => current ? { ...current, displayName: updates.displayName ?? current.displayName } : current);
+  }, []);
 
-    if (user?.uid) {
-      try {
-        const userRef = doc(db, 'users', user.uid);
-        await updateDoc(userRef, updates);
-      } catch (e) {
-        console.warn('Profile update Firestore sync error:', e);
-      }
-    }
-  };
-
-  const clearError = () => setError(null);
-
-  // Return standard auth headers for multi-tenant backend API requests
-  const getAuthHeaders = (): Record<string, string> => {
+  const clearError = useCallback(() => setError(null), []);
+  const getAuthHeaders = useCallback(() => {
+    if (!accessToken || !userProfile) return {};
     return {
-      'x-organization-id': activeTenant.id,
-      'x-organization-name': activeTenant.name,
-      'x-user-id': userProfile?.uid || 'anonymous',
-      'x-user-email': userProfile?.email || '',
-      'x-user-role': userProfile?.role || 'executive',
-      'Authorization': accessToken ? `Bearer ${accessToken}` : '',
+      Authorization: `Bearer ${accessToken}`,
+      'x-organization-id': userProfile.organization_id,
+      'x-user-id': userProfile.uid,
+      'x-user-email': userProfile.email,
     };
+  }, [accessToken, userProfile]);
+  const getAccessToken = useCallback(async () => accessToken, [accessToken]);
+
+  const signInWithGoogle = useCallback(async () => {
+    throw new Error('Google sign-in is not available. Use PostgreSQL email/password authentication.');
+  }, []);
+
+  const value: AuthContextType = {
+    user,
+    userProfile,
+    activeTenant,
+    availableTenants,
+    loading,
+    error,
+    isGuest: false,
+    signInWithGoogle,
+    signInWithEmail,
+    signUpWithEmail,
+    signOut,
+    switchOrganization,
+    updateUserProfileData,
+    clearError,
+    getAuthHeaders,
+    getAccessToken,
   };
 
-  const getAccessToken = async (): Promise<string | null> => {
-    return accessToken;
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        userProfile,
-        activeTenant,
-        availableTenants,
-        loading,
-        error,
-        isGuest,
-        continueAsGuest,
-        signInWithGoogle,
-        signInWithEmail,
-        signUpWithEmail,
-        signInAsDemoPersona,
-        signOut,
-        switchOrganization,
-        updateUserProfileData,
-        clearError,
-        getAuthHeaders,
-        getAccessToken,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

@@ -5,11 +5,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { getFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
-// Firebase Admin is initialized idempotently by the shared middleware module.
-const firestore = getFirestore();
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { persistLegacyCall, buildCallPersistencePlan } from './server/db/legacySchemaCompatibility';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
@@ -21,23 +18,26 @@ import { CampaignManager } from './server/dialer/campaignManager';
 import { SuppressionService } from './server/dialer/suppressionService';
 import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
+import { ManualDialService, ManualDialNotFoundError, ManualDialSuppressedError } from './server/dialer/manualDialService';
 import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
 import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
-import { leadScoringService } from './server/leadScoringService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
 import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
+import { upsertCanonicalLead } from './server/services/crmService';
+import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT || 8080);
+  const isProduction = process.env.NODE_ENV === 'production';
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -46,15 +46,12 @@ async function startServer() {
   try {
     const dbStatus = await initializeDatabase();
     console.log(`Vortex One database initialized (${dbStatus.type}). Migrations count: ${dbStatus.appliedMigrationsCount}`);
+    if (isProduction && (!dbStatus.connected || dbStatus.type !== 'postgresql')) {
+      throw new Error('Production startup requires an available PostgreSQL database; refusing in-memory mode');
+    }
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
-  }
-
-  // Start Automated Lead Scoring Background Engine (Recalculates every 30s based on calls, email opens, and property searches)
-  try {
-    leadScoringService.start();
-  } catch (scoreErr: any) {
-    console.error('[LeadScoringService] Startup error:', scoreErr.message);
+    if (isProduction) throw err;
   }
 
   // --- API Routes ---
@@ -66,7 +63,16 @@ async function startServer() {
       platform: 'Vortex One Multi-Agent Intelligence',
       version: '1.0.0',
       timestamp: new Date().toISOString(),
-      db: getDatabaseStatus(),
+    });
+  });
+
+  app.get('/api/ready', (req, res) => {
+    const db = getDatabaseStatus();
+    const ready = db.connected && db.type === 'postgresql';
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ready' : 'not_ready',
+      database: ready ? 'postgresql' : 'unavailable',
+      timestamp: new Date().toISOString(),
     });
   });
 
@@ -205,234 +211,96 @@ async function startServer() {
     res.json(updated);
   });
 
-  // Tasks & Workflow APIs
-  app.get('/api/tasks', (req, res) => {
+  // Tasks & Workflow APIs — PostgreSQL authoritative, tenant scoped, fail closed.
+  app.get('/api/tasks', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.tasks || []).filter(
-      (t) => (t as any).organization_id === orgId
-    );
-    res.json(filtered);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative task state' });
+    try { res.json(await listTasks(pool, orgId)); }
+    catch (err: any) { console.error('Task list error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  app.post('/api/tasks', (req, res) => {
+  app.post('/api/tasks', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const { objective, priority, due_date } = req.body;
-    if (!objective || !priority) {
-      return res.status(400).json({ error: 'Objective and priority are required' });
-    }
-
-    const newTask: Task = {
-      task_id: `task_${Date.now()}`,
-      parent_task_id: null,
-      assigned_agent: 'agent_1',
-      objective,
-      input: {},
-      dependencies: [],
-      priority,
-      status: 'queued',
-      created_at: new Date().toISOString(),
-      due_date,
-      confidence: 1.0,
-      organization_id: orgId,
-    } as any;
-
-    inMemoryStore.tasks.unshift(newTask);
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_task_create_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: 'create_task',
-      input: { taskId: newTask.task_id, objective: newTask.objective, priority },
-      status: 'success',
-      latency_ms: 10,
-      organization_id: orgId,
-    });
-
-    res.status(201).json(newTask);
+    const { objective, priority, due_date, assigned_agent, parent_task_id, task_id, input, dependencies } = req.body;
+    if (!objective || !priority) return res.status(400).json({ error: 'Objective and priority are required' });
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative task state' });
+    try {
+      const task = await createTask(pool, orgId, { objective, priority, due_date, assigned_agent, parent_task_id, task_id, taskInput: input, dependencies });
+      res.status(201).json(task);
+    } catch (err: any) { console.error('Task create error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  // Workflows CRUD & Custom Execution Engine
-  app.get('/api/workflows', (req, res) => {
-    if (!inMemoryStore.workflows || inMemoryStore.workflows.length === 0) {
-      seedInitialData();
-    }
-    // Ensure all workflows have strictly unique workflow_ids
-    const seenIds = new Set<string>();
-    const deduplicatedWorkflows: Workflow[] = [];
-    for (const wf of inMemoryStore.workflows || []) {
-      if (wf && wf.workflow_id && !seenIds.has(wf.workflow_id)) {
-        seenIds.add(wf.workflow_id);
-        deduplicatedWorkflows.push(wf);
-      }
-    }
-    inMemoryStore.workflows = deduplicatedWorkflows;
-    res.setHeader('Content-Type', 'application/json');
-    res.json(inMemoryStore.workflows);
+  app.get('/api/workflows', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try { res.json(await listWorkflows(pool, orgId)); }
+    catch (err: any) { console.error('Workflow list error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.get('/api/workflows/:id', (req, res) => {
-    if (!inMemoryStore.workflows || inMemoryStore.workflows.length === 0) {
-      seedInitialData();
-    }
-    const wf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === req.params.id);
-    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
-    res.setHeader('Content-Type', 'application/json');
-    res.json(wf);
+  app.get('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const workflow = await getWorkflow(pool, orgId, req.params.id);
+      if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
+      res.json(workflow);
+    } catch (err: any) { console.error('Workflow get error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows', (req, res) => {
-    const { name, description, category, steps } = req.body;
-    if (!name || !Array.isArray(steps)) {
-      return res.status(400).json({ error: 'Workflow name and steps array are required' });
-    }
-
-    if (!inMemoryStore.workflows) inMemoryStore.workflows = [];
-
-    // If an existing workflow ID was supplied and already exists, update it (upsert)
-    const requestedId = req.body.workflow_id;
-    const existingIndex = requestedId
-      ? inMemoryStore.workflows.findIndex((w) => w.workflow_id === requestedId)
-      : -1;
-
-    const targetWorkflowId = existingIndex !== -1
-      ? requestedId
-      : (requestedId && !inMemoryStore.workflows.some(w => w.workflow_id === requestedId)
-          ? requestedId
-          : `wf_custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
-
-    const newWorkflow: Workflow = {
-      workflow_id: targetWorkflowId,
-      name,
-      description: description || 'Custom defined sub-agent operation chain.',
-      category: category || 'custom',
-      steps: steps.map((s: any, idx: number) => ({
-        step_id: s.step_id || `step_${idx + 1}_${Date.now()}`,
-        name: s.name || `Step ${idx + 1}`,
-        type: s.type || 'SEQUENTIAL',
-        assigned_agent: s.assigned_agent || 'sub_agent_1',
-        objective: s.objective || 'Execute sub-agent operation',
-        dependencies: Array.isArray(s.dependencies) ? s.dependencies : [],
-        requiresApproval: Boolean(s.requiresApproval),
-        condition: s.condition || undefined,
-        retryCount: s.retryCount || 0,
-      })),
-      created_at: existingIndex !== -1 ? inMemoryStore.workflows[existingIndex].created_at : new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existingIndex !== -1) {
-      inMemoryStore.workflows[existingIndex] = newWorkflow;
-    } else {
-      inMemoryStore.workflows.unshift(newWorkflow);
-    }
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_wf_create_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: existingIndex !== -1 ? 'update_workflow' : 'create_workflow',
-      input: { workflow_id: newWorkflow.workflow_id, name: newWorkflow.name, stepCount: newWorkflow.steps.length },
-      status: 'success',
-      latency_ms: 12,
-      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
-    });
-
-    res.status(existingIndex !== -1 ? 200 : 201).json(newWorkflow);
+  app.post('/api/workflows', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if (!req.body.name || !Array.isArray(req.body.steps)) return res.status(400).json({ error: 'Workflow name and steps array are required' });
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try { const result = await upsertWorkflow(pool, orgId, req.body); res.status(result.created ? 201 : 200).json(result.workflow); }
+    catch (err: any) { console.error('Workflow upsert error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.put('/api/workflows/:id', (req, res) => {
-    const index = (inMemoryStore.workflows || []).findIndex((w) => w.workflow_id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Workflow not found' });
-
-    const existing = inMemoryStore.workflows[index];
-    const updated: Workflow = {
-      ...existing,
-      ...req.body,
-      workflow_id: existing.workflow_id,
-      updated_at: new Date().toISOString(),
-    };
-    inMemoryStore.workflows[index] = updated;
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_wf_update_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: 'update_workflow',
-      input: { workflow_id: updated.workflow_id, stepCount: updated.steps.length },
-      status: 'success',
-      latency_ms: 10,
-      organization_id: requireOrganizationId((req as AuthRequest).dbUser?.organization_id),
-    });
-
-    res.json(updated);
+  app.put('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const workflow = await updateWorkflow(pool, orgId, req.params.id, req.body);
+      if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
+      res.json(workflow);
+    } catch (err: any) { console.error('Workflow update error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.delete('/api/workflows/:id', (req, res) => {
-    const index = (inMemoryStore.workflows || []).findIndex((w) => w.workflow_id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: 'Workflow not found' });
-
-    const deleted = inMemoryStore.workflows.splice(index, 1)[0];
-    res.json({ success: true, deleted_id: deleted.workflow_id });
+  app.delete('/api/workflows/:id', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
+    try {
+      const deleted = await deleteWorkflow(pool, orgId, req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Workflow not found' });
+      res.json({ success: true, deleted_id: req.params.id });
+    } catch (err: any) { console.error('Workflow delete error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  // --- Workflow Runs Subscription & Polling APIs ---
-  app.get('/api/runs', (req, res) => {
-    let runs = [...(inMemoryStore.runs || [])];
-    const { workflow_id, status, limit } = req.query;
-
-    if (workflow_id && typeof workflow_id === 'string') {
-      runs = runs.filter((r) => r.workflow_id === workflow_id);
-    }
-    if (status && typeof status === 'string') {
-      runs = runs.filter((r) => r.status === status);
-    }
-
-    runs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    if (limit) {
-      const parsedLimit = parseInt(limit as string, 10);
-      if (!isNaN(parsedLimit) && parsedLimit > 0) {
-        runs = runs.slice(0, parsedLimit);
-      }
-    }
-
-    res.json(runs);
+  // Workflow run read/mutation APIs were intentionally retired until durable PostgreSQL workflow-run persistence is available.
+  app.get('/api/runs', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/latest', (req, res) => {
-    const runs = inMemoryStore.runs || [];
-    if (runs.length === 0) {
-      return res.json(null);
-    }
-    const sorted = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    res.json(sorted[0]);
+  app.get('/api/runs/latest', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/active', (req, res) => {
-    const runs = inMemoryStore.runs || [];
-    const active = runs.find((r) => r.status === 'running' || r.status === 'paused_approval');
-    if (active) {
-      return res.json(active);
-    }
-    const latest = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
-    res.json(latest);
+  app.get('/api/runs/active', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.get('/api/runs/:id', (req, res) => {
-    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
-    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
-    res.json(run);
+  app.get('/api/runs/:id', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
   });
 
-  app.post('/api/runs/:id/abort', (req, res) => {
-    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
-    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
-
-    run.status = 'failed';
-    run.final_summary = 'Run aborted by user request.';
-    run.completed_at = new Date().toISOString();
-    res.json(run);
+  app.post('/api/runs/:id/abort', (_req, res) => {
+    res.status(410).json({ error: 'Workflow run mutation API was removed; durable workflow-run persistence is required.' });
   });
 
   // Execute Custom Workflow Chain Step-by-Step
@@ -440,7 +308,9 @@ async function startServer() {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
+      const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
         : matchedWf?.steps || [];
@@ -476,9 +346,6 @@ async function startServer() {
           };
         }
       });
-
-      if (!inMemoryStore.runs) inMemoryStore.runs = [];
-      inMemoryStore.runs.unshift(workflowRun);
 
       const runStartTime = Date.now();
 
@@ -519,6 +386,10 @@ async function startServer() {
         };
 
         executedTasks.push(task);
+        await createTask(pool, orgId, {
+          task_id: task.task_id, parent_task_id: task.parent_task_id, assigned_agent: task.assigned_agent,
+          objective: task.objective, priority: task.priority, taskInput: task.input, dependencies: task.dependencies,
+        });
         workflowRun.tasks = [...executedTasks];
 
         // Execute sub-agent for this step
@@ -568,27 +439,33 @@ async function startServer() {
               issues: subAgentRes.warnings || [],
               created_at: new Date().toISOString(),
             };
-            inMemoryStore.approvals.unshift(approvalReq);
+            await createApproval(pool, orgId, approvalReq);
 
             if (workflowRun.node_states) {
               workflowRun.node_states[stepKey].status = 'approval_required';
             }
           }
 
-          // Log audit entry for step
-          inMemoryStore.auditLogs.unshift({
-            id: `audit_step_${Date.now()}_${i}`,
-            timestamp: new Date().toISOString(),
-            agent: step.assigned_agent,
-            task_id: taskId,
-            action: `workflow_step_${step.type.toLowerCase()}`,
-            input: { stepName: step.name, objective: step.objective },
-            output: { summary: Object.keys(subAgentRes.result || {}).join(', ') },
-            status: 'success',
-            latency_ms: task.executionTimeMs,
-            confidence: subAgentRes.confidence,
-            organization_id: orgId,
-          });
+          // Persist audit entry in PostgreSQL
+          await pool.query(
+            `INSERT INTO audit_logs
+              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
+            [
+              `audit_step_${Date.now()}_${i}`,
+              orgId,
+              step.assigned_agent,
+              taskId,
+              `workflow_step_${step.type.toLowerCase()}`,
+              JSON.stringify({ stepName: step.name, objective: step.objective }),
+              JSON.stringify({ summary: Object.keys(subAgentRes.result || {}).join(', ') }),
+              'success',
+              task.executionTimeMs,
+              subAgentRes.confidence,
+              'workflow_stream',
+              new Date().toISOString(),
+            ],
+          );
         } catch (stepErr: any) {
           task.status = 'failed';
           task.error = stepErr.message || 'Step execution encountered an error';
@@ -605,26 +482,36 @@ async function startServer() {
           }
           workflowRun.status = 'failed';
 
-          inMemoryStore.auditLogs.unshift({
-            id: `audit_step_fail_${Date.now()}_${i}`,
-            timestamp: new Date().toISOString(),
-            agent: step.assigned_agent,
-            task_id: taskId,
-            action: 'workflow_step_failed',
-            input: { stepName: step.name },
-            output: { error: task.error },
-            status: 'error',
-            latency_ms: task.executionTimeMs,
-            organization_id: orgId,
-          });
+          // Persist failure audit entry in PostgreSQL
+          await pool.query(
+            `INSERT INTO audit_logs
+              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
+            [
+              `audit_step_fail_${Date.now()}_${i}`,
+              orgId,
+              step.assigned_agent,
+              taskId,
+              'workflow_step_failed',
+              JSON.stringify({ stepName: step.name }),
+              JSON.stringify({ error: task.error }),
+              'error',
+              task.executionTimeMs,
+              null,
+              'workflow_stream',
+              new Date().toISOString(),
+            ],
+          );
 
           // Break loop on failure unless step allows continuation
           break;
         }
       }
 
-      // Record tasks into system tasks
-      inMemoryStore.tasks.unshift(...executedTasks);
+      // Persist completed/failed workflow tasks to PostgreSQL.
+      for (const executedTask of executedTasks) {
+        await updateTaskResult(pool, orgId, executedTask);
+      }
 
       workflowRun.status = executedTasks.every((t) => t.status === 'completed') ? 'completed' : 'failed';
       workflowRun.completed_at = new Date().toISOString();
@@ -664,7 +551,9 @@ async function startServer() {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const matchedWf = (inMemoryStore.workflows || []).find((w) => w.workflow_id === workflow_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
+      const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
       const stepsToRun: WorkflowStep[] = Array.isArray(steps) && steps.length > 0
         ? steps
         : matchedWf?.steps || [];
@@ -701,9 +590,6 @@ async function startServer() {
           };
         }
       });
-
-      if (!inMemoryStore.runs) inMemoryStore.runs = [];
-      inMemoryStore.runs.unshift(workflowRun);
 
       const runStartTime = Date.now();
 
@@ -766,6 +652,10 @@ async function startServer() {
         };
 
         executedTasks.push(task);
+        await createTask(pool, orgId, {
+          task_id: task.task_id, parent_task_id: task.parent_task_id, assigned_agent: task.assigned_agent,
+          objective: task.objective, priority: task.priority, taskInput: task.input, dependencies: task.dependencies,
+        });
         workflowRun.tasks = [...executedTasks];
 
         try {
@@ -816,7 +706,7 @@ async function startServer() {
               issues: subAgentRes.warnings || [],
               created_at: new Date().toISOString(),
             };
-            inMemoryStore.approvals.unshift(approvalReq);
+            await createApproval(pool, orgId, approvalReq);
 
             if (workflowRun.node_states) {
               workflowRun.node_states[stepKey].status = 'approval_required';
@@ -907,7 +797,9 @@ async function startServer() {
         }
       }
 
-      inMemoryStore.tasks.unshift(...executedTasks);
+      for (const executedTask of executedTasks) {
+        await updateTaskResult(pool, orgId, executedTask);
+      }
 
       workflowRun.status = executedTasks.every((t) => t.status === 'completed') ? 'completed' : 'failed';
       workflowRun.completed_at = new Date().toISOString();
@@ -960,10 +852,12 @@ async function startServer() {
 
   // Smart Forwarding API
   app.get('/api/settings/smart-forwarding', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     res.json(inMemoryStore.smartForwarding);
   });
 
   app.post('/api/settings/smart-forwarding', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     const { enabled, rules } = req.body;
     if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
     if (Array.isArray(rules)) inMemoryStore.smartForwarding.rules = rules;
@@ -972,6 +866,7 @@ async function startServer() {
 
   // Audit Logging API
   app.get('/api/audit/logs', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy audit-log API was removed; use /api/audit.' });
     try {
       res.json(inMemoryStore.auditLogs);
     } catch (err: any) {
@@ -981,6 +876,7 @@ async function startServer() {
   });
 
   app.post('/api/audit/log', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy audit-log writer was removed; audit events are persisted server-side.' });
     try {
       const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
       inMemoryStore.auditLogs.unshift({
@@ -1142,6 +1038,37 @@ async function startServer() {
     }
   });
 
+  app.post('/api/properties/:id/create-lead', async (req, res) => {
+    try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Creating a CRM lead requires PostgreSQL', code: 'CRM_DATABASE_UNAVAILABLE' });
+
+      const propertyResult = await pool.query(
+        `SELECT p.id, p.owner_id, p.address, o.name AS owner_name
+         FROM properties p
+         LEFT JOIN property_owners o ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE p.id = $1 AND p.organization_id = $2
+         LIMIT 1`,
+        [req.params.id, organizationId],
+      );
+      if (!propertyResult.rowCount) return res.status(404).json({ error: 'Property not found' });
+      const property = propertyResult.rows[0];
+      if (!property.owner_id) return res.status(409).json({ error: 'Property has no canonical owner', code: 'PROPERTY_OWNER_REQUIRED' });
+
+      const result = await upsertCanonicalLead(pool, {
+        organizationId,
+        ownerId: property.owner_id,
+        propertyId: property.id,
+        ownerName: property.owner_name || '',
+        propertyAddress: property.address || '',
+      });
+      res.status(result.created ? 201 : 200).json({ success: true, ...result, propertyId: property.id, ownerId: property.owner_id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to create canonical CRM lead' });
+    }
+  });
+
   // Live provider search is deliberately separate from the database-backed search API.
   app.get('/api/property-search/live', async (req, res) => {
     try {
@@ -1291,10 +1218,22 @@ async function startServer() {
     });
   });
 
-  app.get('/api/properties', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.properties || []).filter((p) => !orgId || p.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/properties', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production properties require PostgreSQL', code: 'PROPERTY_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT p.*, o.name AS owner_name, o.entity_type AS owner_entity_type, o.mailing_state AS owner_mailing_state
+         FROM properties p
+         LEFT JOIN property_owners o ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE p.organization_id = $1 ORDER BY p.created_at DESC LIMIT 500`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production properties are temporarily unavailable', code: 'PROPERTY_DATABASE_ERROR' });
+    }
   });
 
   // Bulk Apply / Remove Tags on Selected Properties
@@ -1530,10 +1469,23 @@ async function startServer() {
     }
   });
 
-  app.get('/api/owners', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.propertyOwners || []).filter((o) => !orgId || o.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/owners', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) {
+        if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL is required' });
+        return res.json((inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === orgId));
+      }
+      const result = await pool.query(
+        `SELECT * FROM property_owners WHERE organization_id = $1 ORDER BY updated_at DESC, name ASC`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      console.error('Owner query error:', err);
+      return res.status(500).json({ error: err.message || 'Failed to load owners' });
+    }
   });
 
   // ==========================================
@@ -2085,6 +2037,7 @@ async function startServer() {
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const schedules = (inMemoryStore.propertyRefreshSchedules || []).filter(
       (s) => !orgId || s.organization_id === orgId
@@ -2093,6 +2046,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
@@ -2156,6 +2110,7 @@ async function startServer() {
   });
 
   app.put('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2184,6 +2139,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules/:id/toggle', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2208,6 +2164,7 @@ async function startServer() {
   });
 
   app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2220,6 +2177,7 @@ async function startServer() {
   });
 
   app.delete('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2239,10 +2197,23 @@ async function startServer() {
   });
 
   // Leads & CRM APIs
-  app.get('/api/leads', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.leads || []).filter((l) => !orgId || l.organization_id === orgId);
-    res.json(filtered);
+  app.get('/api/leads', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production leads require PostgreSQL', code: 'LEAD_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT l.*, o.name AS owner_name, p.address AS property_address, p.city, p.state, p.zip, p.apn
+         FROM leads l
+         LEFT JOIN property_owners o ON o.id = l.owner_id AND o.organization_id = l.organization_id
+         LEFT JOIN properties p ON p.id = l.primary_property_id AND p.organization_id = l.organization_id
+         WHERE l.organization_id = $1 ORDER BY l.created_at DESC LIMIT 500`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production leads are temporarily unavailable', code: 'LEAD_DATABASE_ERROR' });
+    }
   });
 
   // Update Individual Lead
@@ -2251,6 +2222,13 @@ async function startServer() {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updates = req.body;
+      if (isProduction) {
+        const pool = getPgPool();
+        if (!pool) return res.status(503).json({ error: 'Lead updates require PostgreSQL' });
+        const r = await pool.query('UPDATE leads SET stage=COALESCE($1,stage), lead_score=COALESCE($2,lead_score), classification=COALESCE($3,classification), assigned_agent=COALESCE($4,assigned_agent), dnc_compliant=COALESCE($5,dnc_compliant), next_recommended_action=COALESCE($6,next_recommended_action), updated_at=NOW(), last_activity_date=NOW() WHERE id=$7 AND organization_id=$8 RETURNING *', [updates.stage ?? null, updates.lead_score ?? null, updates.classification ?? null, updates.assigned_agent ?? null, updates.dnc_compliant ?? null, updates.next_recommended_action ?? null, id, orgId]);
+        if (!r.rowCount) return res.status(404).json({ error: 'Lead not found' });
+        return res.json(r.rows[0]);
+      }
 
       const index = inMemoryStore.leads.findIndex((l) => l.id === id && (!orgId || l.organization_id === orgId));
       if (index === -1) {
@@ -2341,6 +2319,13 @@ async function startServer() {
 
       const now = new Date().toISOString();
       let updatedCount = 0;
+      if (isProduction) {
+        const pool=getPgPool();
+        if(!pool) return res.status(503).json({error:'Lead updates require PostgreSQL'});
+        const u=updates||{};
+        const r=await pool.query('UPDATE leads SET stage=COALESCE($1,stage), lead_score=COALESCE($2,lead_score), classification=COALESCE($3,classification), assigned_agent=COALESCE($4,assigned_agent), dnc_compliant=COALESCE($5,dnc_compliant), next_recommended_action=COALESCE($6,next_recommended_action), updated_at=NOW(), last_activity_date=NOW() WHERE organization_id=$7 AND id=ANY($8::text[])',[u.stage??null,u.lead_score??null,u.classification??null,u.assigned_agent??null,u.dnc_compliant??null,u.next_recommended_action??null,orgId,leadIds]);
+        return res.json({success:true,updatedCount:r.rowCount||0});
+      }
 
       for (const id of leadIds) {
         const index = inMemoryStore.leads.findIndex((l) => l.id === id && (!orgId || l.organization_id === orgId));
@@ -2412,209 +2397,38 @@ async function startServer() {
     }
   });
 
-  // Re-Score Leads with Sub-Agent 2 Explainable Scoring Model
+  // PostgreSQL-authoritative explainable lead scoring.
   app.post('/api/leads/rescore', async (req, res) => {
     try {
-      const { leadIds, customWeights, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const targetIds: string[] = Array.isArray(leadIds) && leadIds.length > 0
-        ? leadIds
-        : inMemoryStore.leads.filter((l) => l.organization_id === orgId).map((l) => l.id);
-
-      const rescored: any[] = [];
-      const now = new Date().toISOString();
-
-      for (const id of targetIds) {
-        const index = inMemoryStore.leads.findIndex((l) => l.id === id);
-        if (index !== -1) {
-          const lead = inMemoryStore.leads[index];
-          const property = inMemoryStore.properties.find((p) => p.id === lead.primary_property_id || p.id === lead.property_id);
-          const owner = inMemoryStore.propertyOwners.find((o) => o.id === lead.owner_id);
-
-          // Calculate explainable weights
-          const factors: any[] = [];
-          let score = 0;
-
-          // 1. Absentee Landlord Factor
-          const isAbsentee = property?.is_absentee_owner ?? true;
-          const absenteeWeight = customWeights?.absentee ?? 25;
-          if (isAbsentee) {
-            score += absenteeWeight;
-            factors.push({
-              factor: 'Absentee Landlord',
-              score_contribution: absenteeWeight,
-              impact: absenteeWeight,
-              reasoning: 'Owner mailing address differs from subject parcel; high operational management friction.',
-            });
-          }
-
-          // 2. High Equity Factor
-          const equity = property?.estimated_equity || lead.estimated_equity || 850000;
-          const value = property?.estimated_value || lead.estimated_value || 1200000;
-          const equityRatio = value > 0 ? equity / value : 0.7;
-          const equityWeight = customWeights?.equity ?? 30;
-          if (equityRatio >= 0.5) {
-            const contribution = Math.round(equityWeight * Math.min(equityRatio, 1));
-            score += contribution;
-            factors.push({
-              factor: 'Substantial Equity (>50%)',
-              score_contribution: contribution,
-              impact: contribution,
-              reasoning: `Property has estimated $${(equity / 1000).toFixed(0)}k (${Math.round(equityRatio * 100)}%) equity, maximizing acquisition flexibility.`,
-            });
-          }
-
-          // 3. Multi-Unit / Commercial Scale
-          const units = property?.units_count || lead.units_count || 1;
-          const unitsWeight = customWeights?.units ?? 20;
-          if (units > 1) {
-            const contribution = Math.min(unitsWeight, 10 + units * 2);
-            score += contribution;
-            factors.push({
-              factor: `${units}-Unit Multi-Family Scale`,
-              score_contribution: contribution,
-              impact: contribution,
-              reasoning: `Multi-unit asset presents higher cashflow leverage and recurring management fee yield.`,
-            });
-          } else {
-            score += 10;
-            factors.push({
-              factor: 'Single Family Asset',
-              score_contribution: 10,
-              impact: 10,
-              reasoning: 'Standard single-family portfolio asset with active retail liquidity.',
-            });
-          }
-
-          // 4. Tax / Distress Indicator
-          const isDelinquent = property?.tax_delinquent ?? false;
-          if (isDelinquent) {
-            score += 20;
-            factors.push({
-              factor: 'Tax Delinquency Indicator',
-              score_contribution: 20,
-              impact: 20,
-              reasoning: 'Subject parcel flagged on County Assessor delinquent tax roll.',
-            });
-          } else {
-            score += 15;
-            factors.push({
-              factor: 'Clean Tax Roll & Title',
-              score_contribution: 15,
-              impact: 15,
-              reasoning: 'Zero delinquent tax liens registered with Orange County Tax Collector.',
-            });
-          }
-
-          // Clamp 0-100
-          const finalScore = Math.min(100, Math.max(10, score));
-          const classification = finalScore >= 80 ? 'high_priority' : finalScore >= 60 ? 'medium_priority' : 'nurture';
-
-          lead.lead_score = finalScore;
-          lead.classification = classification;
-          lead.priority_tier = classification;
-          lead.factors = factors;
-          lead.updated_at = now;
-
-          const currentLog = lead.activity_log || [];
-          currentLog.unshift({
-            id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-            timestamp: now,
-            action: `Sub-Agent 2 Re-scored lead to ${finalScore}/100 (${classification})`,
-            agent: 'sub_agent_2',
-          });
-          lead.activity_log = currentLog;
-
-          inMemoryStore.leads[index] = lead;
-          rescored.push(lead);
-        }
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Lead scoring requires PostgreSQL', code: 'LEAD_DATABASE_UNAVAILABLE' });
+      const ids = Array.isArray(req.body.leadIds) && req.body.leadIds.length ? req.body.leadIds : null;
+      const w = req.body.customWeights || {};
+      const aw = Number(w.absentee ?? 25), ew = Number(w.equity ?? 30), uw = Number(w.units ?? 20);
+      const q = await pool.query(`SELECT l.*, o.name AS owner_name, p.address AS property_address, p.is_absentee_owner, p.units_count, p.estimated_value, p.estimated_equity, p.tax_delinquent FROM leads l LEFT JOIN property_owners o ON o.id=l.owner_id AND o.organization_id=l.organization_id LEFT JOIN properties p ON p.id=l.primary_property_id AND p.organization_id=l.organization_id WHERE l.organization_id=$1 AND ($2::text[] IS NULL OR l.id=ANY($2::text[])) ORDER BY l.created_at DESC`, [orgId, ids]);
+      const leads:any[] = [];
+      for (const r of q.rows) {
+        const factors:any[]=[]; let score=0;
+        if (r.is_absentee_owner === true) { score+=aw; factors.push({factor:'Absentee Landlord',impact:aw,description:'Property record is marked absentee.'}); }
+        const value=Number(r.estimated_value)||0, equity=Number(r.estimated_equity)||0;
+        if (value>0 && equity/value>=0.5) { const c=Math.round(ew*Math.min(equity/value,1)); score+=c; factors.push({factor:'Substantial Equity (>=50%)',impact:c,description:'Stored property equity is at least 50% of stored value.'}); }
+        const units=Number(r.units_count)||0;
+        if (units>1) { const c=Math.min(uw,10+units*2); score+=c; factors.push({factor:`${units}-Unit Multi-Family Scale`,impact:c,description:'Stored property record indicates multiple units.'}); }
+        else if (units===1) { score+=10; factors.push({factor:'Single Family Asset',impact:10,description:'Stored property record indicates one unit.'}); }
+        if (r.tax_delinquent === true) { score+=20; factors.push({factor:'Tax Delinquency Indicator',impact:20,description:'Stored property record flags tax delinquency.'}); }
+        const finalScore=Math.min(100,Math.max(10,Math.round(score)));
+        const classification=finalScore>=80?'high_priority':finalScore>=60?'medium_priority':'nurture';
+        const u=await pool.query('UPDATE leads SET lead_score=$1, classification=$2, factors=$3, last_activity_date=NOW(), updated_at=NOW() WHERE id=$4 AND organization_id=$5 RETURNING *',[finalScore,classification,JSON.stringify(factors),r.id,orgId]);
+        if(u.rows[0]) leads.push({...u.rows[0],owner_name:r.owner_name||'',property_address:r.property_address||''});
       }
-
-      res.json({
-        success: true,
-        rescoredCount: rescored.length,
-        leads: rescored,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to re-score leads' });
-    }
-  });
-
-  // Automated Lead Scoring Service API Routes
-  app.get('/api/leads/scoring-service/status', (req, res) => {
-    try {
-      const status = leadScoringService.getStatus();
-      res.json(status);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to fetch scoring service status' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/toggle', (req, res) => {
-    try {
-      const isRunning = leadScoringService.toggle();
-      res.json({
-        success: true,
-        isRunning,
-        message: isRunning ? 'Automated Lead Scoring background service activated' : 'Automated Lead Scoring background service paused',
-        status: leadScoringService.getStatus(),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to toggle scoring service' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/trigger', (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const result = leadScoringService.recalculateAll(orgId);
-      res.json({
-        success: true,
-        updatedCount: result.updatedCount,
-        leads: result.leads,
-        status: leadScoringService.getStatus(),
-        message: `Dynamic engagement scores recalculated across ${result.updatedCount} leads based on recent call duration, email opens, and property searches.`,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to recalculate lead scores' });
-    }
-  });
-
-  app.post('/api/leads/scoring-service/simulate-event', (req, res) => {
-    try {
-      const { leadId, eventType, payload } = req.body;
-      if (!leadId || !eventType) {
-        return res.status(400).json({ error: 'leadId and eventType are required' });
-      }
-
-      const result = leadScoringService.simulateEngagementEvent(leadId, eventType, payload);
-      if (!result.success) {
-        return res.status(404).json({ error: result.message });
-      }
-
-      res.json({
-        success: true,
-        lead: result.lead,
-        delta: result.delta,
-        message: result.message,
-        status: leadScoringService.getStatus(),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to simulate engagement event' });
-    }
-  });
-
-  app.get('/api/leads/scoring-service/history', (req, res) => {
-    try {
-      const status = leadScoringService.getStatus();
-      res.json(status.latestScoreAdjustments || []);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to fetch scoring history' });
-    }
+      res.json({success:true,rescoredCount:leads.length,leads});
+    } catch(err:any) { console.error('PostgreSQL lead scoring error:',err); res.status(503).json({error:err.message||'Lead scoring unavailable'}); }
   });
 
   // Create Lead Manually
   app.post('/api/leads/create', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead creation route removed; create leads from canonical properties.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const {
@@ -2692,6 +2506,7 @@ async function startServer() {
 
   // Delete Individual Lead
   app.delete('/api/leads/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2711,6 +2526,7 @@ async function startServer() {
 
   // Batch Delete Leads
   app.post('/api/leads/batch-delete', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { leadIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2740,11 +2556,10 @@ async function startServer() {
       const { records, options } = req.body;
       let result;
 
-      if (records && Array.isArray(records) && records.length > 0) {
-        result = await DataImportService.reconcileBatch(orgId, records, options || {});
-      } else {
-        result = await DataImportService.syncProductionCrmSource(orgId, options || {});
+      if (!records || !Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ error: 'records is required; the legacy synthetic production feed has been removed.' });
       }
+      result = await DataImportService.reconcileBatch(orgId, records, options || {});
 
       res.status(200).json(result);
     } catch (err: any) {
@@ -2753,44 +2568,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/import/sync-production', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const result = await DataImportService.syncProductionCrmSource(orgId, {
-        autoScoreLeads: req.body.autoScoreLeads ?? true,
-        enforceDncVerification: req.body.enforceDncVerification ?? true,
-        assignedAgent: req.body.assignedAgent || 'sub_agent_2',
-      });
-      res.status(200).json(result);
-    } catch (err: any) {
-      console.error('Production CRM sync error:', err);
-      res.status(500).json({ error: err.message || 'Production sync failed' });
-    }
+  app.post('/api/import/sync-production', (_req, res) => {
+    res.status(410).json({ error: 'The legacy synthetic CRM feed was removed. Use the authoritative import endpoint.' });
   });
 
-  app.get('/api/import/summary', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const properties = (inMemoryStore.properties || []).filter((p) => p.organization_id === orgId);
-    const owners = (inMemoryStore.propertyOwners || []).filter((o) => o.organization_id === orgId);
-    const leads = (inMemoryStore.leads || []).filter((l) => l.organization_id === orgId);
-    const importAudits = (inMemoryStore.auditLogs || []).filter(
-      (a) => a.organization_id === orgId && a.action === 'reconcile_crm_import'
-    );
-
-    const totalEquity = properties.reduce((sum, p) => sum + (p.estimated_equity || 0), 0);
-    const totalValue = properties.reduce((sum, p) => sum + (p.estimated_value || 0), 0);
-    const dncCompliantLeads = leads.filter((l) => l.dnc_compliant).length;
-
-    res.json({
-      organization_id: orgId,
-      total_properties: properties.length,
-      total_owners: owners.length,
-      total_leads: leads.length,
-      dnc_compliant_leads: dncCompliantLeads,
-      total_portfolio_value: totalValue,
-      total_portfolio_equity: totalEquity,
-      recent_reconciliations: importAudits.slice(0, 10),
-    });
+  app.get('/api/import/summary', async (req, res) => {
+    try {
+      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
+      if(!pool) return res.status(503).json({error:'Import summary requires PostgreSQL'});
+      const r=await pool.query(`SELECT (SELECT COUNT(*) FROM properties WHERE organization_id=$1) AS total_properties, (SELECT COUNT(*) FROM property_owners WHERE organization_id=$1) AS total_owners, (SELECT COUNT(*) FROM leads WHERE organization_id=$1) AS total_leads, (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND dnc_compliant=true) AS dnc_compliant_leads, (SELECT COALESCE(SUM(estimated_value),0) FROM properties WHERE organization_id=$1) AS total_portfolio_value, (SELECT COALESCE(SUM(estimated_equity),0) FROM properties WHERE organization_id=$1) AS total_portfolio_equity`,[orgId]);
+      res.json({organization_id:orgId,...r.rows[0]});
+    } catch(err:any){res.status(503).json({error:'Import summary unavailable'});}
   });
 
   app.get('/api/import/validate-integrity', async (req, res) => {
@@ -2879,23 +2667,19 @@ async function startServer() {
 
   // Dialer & Campaign Lifecycle APIs
   app.get('/api/campaigns', async (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at
-           FROM campaign WHERE organization_id = $1 ORDER BY created_at DESC`,
-          [orgId]
-        );
-        if (result.rows.length > 0) {
-          return res.json(result.rows);
-        }
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch campaigns fallback:', err.message);
-      }
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Production campaigns require PostgreSQL', code: 'CAMPAIGN_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        `SELECT id, organization_id, name, description, status, target_market, telephony_provider, total_contacts, dialed_count, connected_count, converted_count, concurrency_limit, retry_limit, calling_hours_start, calling_hours_end, timezone, created_at, updated_at
+         FROM campaign WHERE organization_id = $1 ORDER BY created_at DESC`,
+        [orgId],
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production campaigns are temporarily unavailable', code: 'CAMPAIGN_DATABASE_ERROR' });
     }
-    res.json(inMemoryStore.campaigns);
   });
 
   app.post('/api/campaigns', async (req, res) => {
@@ -3095,245 +2879,85 @@ async function startServer() {
   app.get('/api/calls', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at
-           FROM call WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 50`,
-          [orgId]
-        );
-        if (result.rows.length > 0) {
-          return res.json(result.rows);
-        }
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch calls fallback:', err.message);
-      }
+    if (!pool) return res.status(503).json({ error: 'Production call records require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+    try {
+      const result = await pool.query(
+        `SELECT id, organization_id, session_id, campaign_id, lead_id, telephony_call_id, ringcentral_ringout_id, telephony_session_id, ringcentral_party_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, notes, created_at, answered_at, ended_at
+         FROM call WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        [orgId]
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production call records are temporarily unavailable', code: 'CALL_DATABASE_ERROR' });
     }
-    res.json(inMemoryStore.calls);
   });
 
   app.get('/api/calls/:id/events', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
-    if (pool) {
-      try {
-        const result = await pool.query(
-          `SELECT id, organization_id, call_id, event_type, payload, occurred_at
-           FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
-          [req.params.id, orgId]
-        );
-        return res.json(result.rows);
-      } catch (err: any) {
-        console.warn('PostgreSQL fetch call events fallback:', err.message);
-      }
+    if (!pool) return res.status(503).json({ error: 'Production call events require PostgreSQL', code: 'CALL_EVENT_DATABASE_UNAVAILABLE' });
+    try {
+      const result = await pool.query(
+        `SELECT id, organization_id, call_id, event_type, payload, occurred_at
+         FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
+        [req.params.id, orgId]
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      return res.status(503).json({ error: 'Production call events are temporarily unavailable', code: 'CALL_EVENT_DATABASE_ERROR' });
     }
-    res.json([
-      { id: 'evt_1', call_id: req.params.id, event_type: 'telephony.initiated', occurred_at: new Date().toISOString() },
-      { id: 'evt_2', call_id: req.params.id, event_type: 'telephony.connected', occurred_at: new Date().toISOString() },
-      { id: 'evt_3', call_id: req.params.id, event_type: 'telephony.completed', occurred_at: new Date().toISOString() },
-    ]);
   });
 
+  // Direct outbound dial: provider is authoritative; no fabricated completed calls.
   app.post('/api/calls/dial', async (req, res) => {
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'Manual dialing requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+
+    const {
+      contact_name,
+      phone_number,
+      property_address,
+      call_strategy_brief,
+      campaign_id,
+      lead_id,
+      contact_id,
+      idempotencyKey,
+      idempotency_key,
+      telephony_provider,
+    } = req.body || {};
+
+    if (telephony_provider && telephony_provider !== 'ringcentral') {
+      return res.status(400).json({ error: 'Only RingCentral is supported for manual dialing' });
+    }
+    if (!phone_number) return res.status(400).json({ error: 'phone_number is required', code: 'INVALID_PHONE' });
+    if (!idempotencyKey && !idempotency_key) return res.status(400).json({ error: 'idempotencyKey is required for manual dialing', code: 'IDEMPOTENCY_KEY_REQUIRED' });
+
     try {
-      const {
-        contact_name,
-        phone_number,
-        property_address,
-        call_strategy_brief,
-        campaign_id,
-        telephony_provider
-      } = req.body;
-
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const validation = validateDialRequest(req.body);
-      if (validation.ok === false) {
-        return res.status(400).json({ error: validation.error });
-      }
-      const cleanNumber = validation.phoneNumber;
-
-      // 1. Safe TCPA & DNC Pre-Dial Check (with defensive fallback)
-      try {
-        if (SuppressionService && typeof SuppressionService.isSuppressed === 'function') {
-          const suppression = await SuppressionService.isSuppressed(orgId, cleanNumber);
-          if (suppression && suppression.isSuppressed) {
-            inMemoryStore.auditLogs.unshift({
-              id: `audit_dnc_dial_${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              agent: 'sub_agent_7',
-              action: 'outbound_dial_blocked_by_dnc',
-              input: { phone_number: cleanNumber, contact_name },
-              output: { reason: suppression.reason || 'DNC Registry Match', blocked: true },
-              status: 'warning',
-              latency_ms: 8,
-              organization_id: orgId,
-            });
-
-            return res.status(403).json({
-              error: 'TCPA Compliance Block: Phone number is on the Do-Not-Call / Suppression Registry.',
-              isSuppressed: true,
-              reason: suppression.reason || 'DNC Registry Match',
-            });
-          }
-        }
-      } catch (suppressErr: any) {
-        console.error('[Dialer] Suppression check failed closed:', suppressErr.message);
-        return res.status(503).json({
-          error: 'Outbound dial blocked because suppression status could not be verified.',
-          code: 'SUPPRESSION_CHECK_UNAVAILABLE',
-        });
-      }
-
-      // 2. Verify the existing database can record the call BEFORE dialing.
-      // This is fail-closed: a real outbound call must never be started when
-      // its persistence path is known to be incompatible with the database.
-      const pool = getPgPool();
-      let legacyCallsTable = false;
-      if (!pool) {
-        return res.status(503).json({ error: 'Outbound dial blocked because PostgreSQL persistence is unavailable.' });
-      }
-      try {
-        const tableResult = await pool.query(
-          `SELECT to_regclass('public.call') AS modern_table, to_regclass('public.calls') AS legacy_table`,
-        );
-        legacyCallsTable = !tableResult.rows[0]?.modern_table && Boolean(tableResult.rows[0]?.legacy_table);
-        if (!tableResult.rows[0]?.modern_table && !legacyCallsTable) {
-          return res.status(503).json({ error: 'Outbound dial blocked because no supported call persistence table is available.' });
-        }
-        if (legacyCallsTable) {
-          const columnsResult = await pool.query(
-            `SELECT column_name, is_nullable, column_default
-               FROM information_schema.columns
-              WHERE table_schema = 'public' AND table_name = 'calls'
-              ORDER BY ordinal_position`,
-          );
-          const plan = buildCallPersistencePlan(columnsResult.rows);
-          if (!plan.ready) {
-            return res.status(503).json({
-              error: 'Outbound dial blocked because the legacy calls table cannot safely persist the call.',
-              missingRequiredColumns: plan.missingRequiredColumns,
-            });
-          }
-        }
-      } catch (persistenceCheckErr: any) {
-        console.error('[Dialer DB Preflight] failed closed:', persistenceCheckErr.message);
-        return res.status(503).json({ error: 'Outbound dial blocked because call persistence could not be verified.' });
-      }
-
-      // 3. Safe Telephony Adapter Dispatch via RingCentral
-      const provider = 'ringcentral';
-      let telephonyCallId = '';
-
-      try {
-        const adapter = getTelephonyAdapter('ringcentral');
-        if (!adapter || typeof adapter.initiateCall !== 'function') {
-          return res.status(503).json({ error: 'RingCentral telephony adapter is unavailable', provider });
-        }
-
-        const telResult = await adapter.initiateCall({
-          organizationId: orgId,
-          campaignId: campaign_id || 'camp_401',
-          toNumber: cleanNumber,
-          contactName: contact_name || 'Property Owner',
-          callStrategyBrief: call_strategy_brief || 'Initial real estate acquisition & management inquiry',
-        });
-
-        if (!telResult?.success || !telResult.telephonyCallId) {
-          console.error('[Dialer] RingCentral initiation failed:', telResult?.error || 'missing telephony call ID');
-          return res.status(502).json({
-            error: telResult?.error || 'RingCentral call initiation failed',
-            provider,
-            telephonyCallId: telResult?.telephonyCallId || null,
-          });
-        }
-
-        telephonyCallId = telResult.telephonyCallId;
-      } catch (adapterErr: any) {
-        console.error('[Dialer] RingCentral dispatch failed:', adapterErr.message);
-        return res.status(502).json({
-          error: adapterErr.message || 'RingCentral call initiation failed',
-          provider,
-        });
-      }
-
-      // 3. Create initial Call Record
-      const callId = `call_${Date.now()}`;
-      const now = new Date().toISOString();
-
-      const callRecord: CallRecord = {
-        id: callId,
-        organization_id: orgId,
-        campaign_id: campaign_id || 'camp_401',
-        telephony_call_id: telephonyCallId,
-        contact_name: contact_name || 'Property Owner',
-        phone_number: cleanNumber,
-        property_address: property_address || '1420 Newport Blvd, Costa Mesa, CA',
-        status: 'initiated',
-        direction: 'outbound',
-        duration_seconds: 0,
-        disposition: undefined,
-        call_strategy_brief: call_strategy_brief || 'Management introduction and maintenance review',
-        recording_url: undefined,
-        notes: 'Outbound call initiated via RingCentral Telephony.',
-        created_at: now,
-      };
-
-      // 4. Persistence Store Sync. Persistence is mandatory once a provider
-      // call has been initiated; never report success if the durable record
-      // cannot be written.
-      try {
-        if (legacyCallsTable) {
-          await persistLegacyCall(pool, {
-            id: callId,
-            telephonyCallId,
-            status: callRecord.status,
-            durationSeconds: callRecord.duration_seconds,
-            disposition: callRecord.disposition,
-            notes: callRecord.notes,
-            createdAt: now,
-          });
-        } else {
-          await pool.query(
-            `INSERT INTO call (id, organization_id, campaign_id, telephony_call_id, contact_name, phone_number, direction, status, disposition, duration_seconds, call_strategy_brief, recording_url, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
-            [
-              callId, orgId, callRecord.campaign_id, telephonyCallId, callRecord.contact_name,
-              callRecord.phone_number, callRecord.direction, callRecord.status, callRecord.disposition,
-              callRecord.duration_seconds, callRecord.call_strategy_brief, callRecord.recording_url, now,
-            ]
-          );
-        }
-      } catch (pgErr: any) {
-        console.error('[Dialer DB Sync] durable call persistence failed after provider initiation:', pgErr.message);
-        return res.status(502).json({
-          error: 'Call was initiated by RingCentral but could not be durably recorded.',
-          provider,
-          telephonyCallId,
-          code: 'CALL_PERSISTENCE_FAILED',
-        });
-      }
-
-      if (!inMemoryStore.calls) inMemoryStore.calls = [];
-      inMemoryStore.calls.unshift(callRecord);
-
-      // 5. Update Dialer Metrics in memory
-      inMemoryStore.auditLogs.unshift({
-        id: `audit_dial_${Date.now()}`,
-        timestamp: now,
-        agent: 'sub_agent_6',
-        action: 'outbound_call_initiated',
-        input: { contact_name, phone_number: cleanNumber, provider },
-        output: { callId, telephonyCallId },
-        status: 'success',
-        latency_ms: 120,
-        organization_id: orgId,
+      const result = await ManualDialService.dial(pool, getTelephonyAdapter('ringcentral'), {
+        organizationId: orgId,
+        idempotencyKey: String(idempotencyKey || idempotency_key),
+        contactName: String(contact_name || 'Property Owner'),
+        phoneNumber: String(phone_number),
+        propertyAddress: property_address ? String(property_address) : undefined,
+        callStrategyBrief: call_strategy_brief ? String(call_strategy_brief) : undefined,
+        campaignId: campaign_id ? String(campaign_id) : undefined,
+        leadId: lead_id ? String(lead_id) : undefined,
+        contactId: contact_id ? String(contact_id) : undefined,
       });
-
-      return res.status(200).json(callRecord);
+      return res.status(result.status === 'duplicate_ignored' ? 200 : result.status === 'failed' ? 502 : 200).json(result);
     } catch (err: any) {
-      console.error('Fatal Dialer execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to dispatch outbound call' });
+      if (err instanceof ManualDialSuppressedError || err?.code === 'CALL_SUPPRESSED') {
+        return res.status(409).json({ error: err.message, code: 'CALL_SUPPRESSED', isSuppressed: true });
+      }
+      if (err instanceof ManualDialNotFoundError || err?.code === 'CALL_REFERENCE_NOT_FOUND') {
+        return res.status(404).json({ error: err.message, code: 'CALL_REFERENCE_NOT_FOUND' });
+      }
+      if (err?.message?.includes('10-digit US phone')) {
+        return res.status(400).json({ error: err.message, code: 'INVALID_PHONE' });
+      }
+      console.error('[Dialer] Manual dial failed:', err);
+      return res.status(503).json({ error: 'Manual dialing is temporarily unavailable', code: 'CALL_DIAL_UNAVAILABLE' });
     }
   });
 
@@ -3405,47 +3029,37 @@ async function startServer() {
     }
   });
 
-  // Human Approval Center APIs
-  app.get('/api/approvals', (req, res) => {
+  // Human Approval Center APIs — PostgreSQL authoritative, tenant scoped, fail closed.
+  app.get('/api/approvals', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.approvals || []).filter(
-      (a) => (a as any).organization_id === orgId
-    );
-    res.json(filtered);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
+    try { res.json(await listApprovals(pool, orgId)); }
+    catch (err: any) { console.error('Approval list error:', err); res.status(503).json({ error: 'Approval state unavailable' }); }
   });
 
-  app.post('/api/approvals/:id/decide', (req, res) => {
+  app.post('/api/approvals/:id/decide', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const { decision, decided_by, modifications } = req.body;
-    const approval = inMemoryStore.approvals.find((a) => a.approval_id === req.params.id);
-    if (!approval) return res.status(404).json({ error: 'Approval request not found' });
-
-    approval.status = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'modified';
-    approval.decided_at = new Date().toISOString();
-    approval.decided_by = decided_by || 'Operations Lead';
-    if (modifications) approval.modifications = modifications;
-
-    inMemoryStore.auditLogs.unshift({
-      id: `audit_appr_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      agent: 'agent_1',
-      action: `human_approval_${approval.status}`,
-      input: { approval_id: approval.approval_id, decision },
-      status: approval.status === 'rejected' ? 'warning' : 'success',
-      latency_ms: 50,
-      organization_id: orgId,
-    });
-
-    res.json(approval);
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
+    try {
+      const approval = await decideApproval(pool, orgId, req.params.id, req.body.decision, req.body.decided_by, req.body.modifications);
+      if (!approval) return res.status(404).json({ error: 'Approval request not found' });
+      res.json(approval);
+    } catch (err: any) {
+      if (err.message === 'Invalid approval decision') return res.status(400).json({ error: err.message });
+      console.error('Approval decision error:', err); res.status(503).json({ error: 'Approval state unavailable' });
+    }
   });
 
-  // Observability & Audit Logs
-  app.get('/api/audit', (req, res) => {
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const filtered = (inMemoryStore.auditLogs || []).filter(
-      (a) => a.organization_id === orgId
-    );
-    res.json(filtered);
+  // PostgreSQL-authoritative audit log reader.
+  app.get('/api/audit', async (req, res) => {
+    try {
+      const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
+      if(!pool) return res.status(503).json({error:'Audit logs require PostgreSQL'});
+      const result=await pool.query('SELECT * FROM audit_logs WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500',[orgId]);
+      res.json(result.rows);
+    } catch(err:any){res.status(503).json({error:'Audit logs are temporarily unavailable'});}
   });
 
   // Text-To-Speech API (gemini-3.1-flash-tts-preview)
@@ -3461,138 +3075,71 @@ async function startServer() {
     }
   });
 
-  // --- Dialer Metrics API (Single, Safe Implementation) ---
-  app.get('/api/dialer/metrics', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-
-      // Fallback mock metrics if Firestore is unconfigured
-      const defaultMetrics = [
-        { id: 'met_1', organization_id: orgId, date: new Date().toISOString().split('T')[0], call_volume: 142, success_rate: 68.4, avg_talk_time: 84, abandonment_rate: 4.2 },
-        { id: 'met_2', organization_id: orgId, date: new Date(Date.now() - 86400000).toISOString().split('T')[0], call_volume: 118, success_rate: 64.2, avg_talk_time: 79, abandonment_rate: 3.8 },
-      ];
-
-      try {
-        const snapshot = await firestore.collection('dialer_metrics')
-          .where('organization_id', '==', orgId)
-          .orderBy('date', 'desc')
-          .limit(7)
-          .get();
-        if (!snapshot.empty) {
-          return res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        }
-      } catch (fsErr) {
-        // Fallback gracefully
-      }
-
-      res.json(defaultMetrics);
-    } catch (err: any) {
-      res.json([]);
-    }
-  });
-
-  // --- Voicemail Drop Library API ---
-  app.get('/api/dialer/voicemails', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const defaultVoicemails = [
-        { id: 'vm_1', organization_id: orgId, label: 'Standard Multi-Family Introduction', url: 'https://actions.google.com/sounds/v1/speech/greeting.ogg', created_at: new Date().toISOString() },
-        { id: 'vm_2', organization_id: orgId, label: 'Off-Market Valuation Follow-Up', url: 'https://actions.google.com/sounds/v1/speech/followup.ogg', created_at: new Date().toISOString() }
-      ];
-
-      try {
-        const snapshot = await firestore.collection('voicemails')
-          .where('organization_id', '==', orgId)
-          .get();
-        if (!snapshot.empty) {
-          return res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        }
-      } catch (fsErr) {}
-
-      res.json(defaultVoicemails);
-    } catch (err: any) {
-      res.json([]);
-    }
-  });
-
-  app.post('/api/dialer/voicemails', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const { label, url } = req.body;
-      const newVoicemail = {
-        organization_id: orgId,
-        label: label || 'Custom Voicemail Audio',
-        url: url || 'https://actions.google.com/sounds/v1/speech/greeting.ogg',
-        created_at: new Date().toISOString(),
-      };
-      try {
-        const docRef = await firestore.collection('voicemails').add(newVoicemail);
-        return res.status(201).json({ id: docRef.id, ...newVoicemail });
-      } catch (fsErr) {
-        return res.status(201).json({ id: `vm_${Date.now()}`, ...newVoicemail });
-      }
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete('/api/dialer/voicemails/:id', async (req, res) => {
-    try {
-      const { id } = req.params;
-      try {
-        await firestore.collection('voicemails').doc(id).delete();
-      } catch (fsErr) {}
-      res.json({ success: true, deletedId: id });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
+  // --- Dialer Metrics API (PostgreSQL authoritative) ---
+app.get('/api/dialer/metrics', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Dialer metrics require PostgreSQL'}); const result=await pool.query(`SELECT CURRENT_DATE::text AS date, COUNT(*)::int AS call_volume, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_calls, COALESCE(AVG(duration_seconds) FILTER (WHERE status = 'completed'),0)::float AS avg_talk_time FROM call WHERE organization_id=$1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'`,[orgId]); const row=result.rows[0]||{}; const volume=Number(row.call_volume)||0; const completed=Number(row.completed_calls)||0; return res.json([{organization_id:orgId,date:row.date,call_volume:volume,success_rate:volume?Number(((completed/volume)*100).toFixed(1)):0,avg_talk_time:Number(row.avg_talk_time)||0,abandonment_rate:volume?Number((((volume-completed)/volume)*100).toFixed(1)):0}]); }
+  catch(err:any){return res.status(503).json({error:err.message||'Dialer metrics unavailable'});}
+});
+// --- Voicemail Drop Library API (PostgreSQL authoritative) ---
+app.get('/api/dialer/voicemails', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`SELECT id,organization_id,label,url,created_at FROM voicemail_library WHERE organization_id=$1 ORDER BY created_at DESC`,[orgId]); return res.json(result.rows); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
+app.post('/api/dialer/voicemails', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const label=String(req.body?.label||'').trim(); const url=String(req.body?.url||'').trim(); if(!label||!url)return res.status(400).json({error:'label and url are required'}); const id=`vm_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; const result=await pool.query(`INSERT INTO voicemail_library (id,organization_id,label,url) VALUES ($1,$2,$3,$4) RETURNING id,organization_id,label,url,created_at`,[id,orgId,label,url]); return res.status(201).json(result.rows[0]); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
+app.delete('/api/dialer/voicemails/:id', async (req, res) => {
+  try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`DELETE FROM voicemail_library WHERE id=$1 AND organization_id=$2 RETURNING id`,[req.params.id,orgId]); if(!result.rowCount)return res.status(404).json({error:'Voicemail not found'}); return res.json({success:true,deletedId:result.rows[0].id}); }
+  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+});
   app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'Voicemail drop requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+
+    const client = await pool.connect();
     try {
       const { id } = req.params;
-      const { voicemailId, voicemailLabel, voicemailUrl, callerId, organizationId, durationSeconds } = req.body;
+      const { voicemailId, voicemailLabel, voicemailUrl, callerId, durationSeconds } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const label = voicemailLabel || 'Pre-recorded Professional Voicemail';
-      const pool = getPgPool();
-
       const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
 
-      try {
-        await pool.query(
-          `UPDATE call
-           SET disposition = 'voicemail',
-               status = 'completed',
-               notes = COALESCE(notes || E'\n' || $1, $1),
-               updated_at = NOW()
-           WHERE id = $2`,
-          [dropNote, id]
-        );
-      } catch (dbErr) {
-        console.warn('Postgres call update skipped:', dbErr);
+      await client.query('BEGIN');
+      const callUpdate = await client.query(
+        `UPDATE call
+         SET disposition = 'voicemail',
+             status = 'completed',
+             notes = COALESCE(notes || E'\n' || $1, $1),
+             updated_at = NOW()
+         WHERE id = $2 AND organization_id = $3
+         RETURNING id`,
+        [dropNote, id, orgId]
+      );
+      if (!callUpdate.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Call not found' });
       }
 
-      // Log to audit log
-      try {
-        await pool.query(
-          `INSERT INTO audit_log (action, user_id, organization_id, metadata, timestamp)
-           VALUES ($1, $2, $3, $4, NOW())`,
-          [
-            'voicemail_dropped',
-            'agent_active',
-            orgId,
-            JSON.stringify({
-              callId: id,
-              voicemailId,
-              voicemailLabel: label,
-              voicemailUrl,
-              callerId,
-              durationSeconds: durationSeconds || 0,
-            }),
-          ]
-        );
-      } catch (auditErr) {}
+      await client.query(
+        `INSERT INTO audit_log (action, user_id, organization_id, metadata, timestamp)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [
+          'voicemail_dropped',
+          (req as AuthRequest).dbUser?.id || 'agent_active',
+          orgId,
+          JSON.stringify({
+            callId: id,
+            voicemailId,
+            voicemailLabel: label,
+            voicemailUrl,
+            callerId,
+            durationSeconds: durationSeconds || 0,
+          }),
+        ]
+      );
 
+      await client.query('COMMIT');
       res.json({
         success: true,
         callId: id,
@@ -3601,19 +3148,25 @@ async function startServer() {
         timestamp: new Date().toISOString(),
       });
     } catch (err: any) {
+      await client.query('ROLLBACK');
       res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
     }
   });
 
   app.patch('/api/calls/:id', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const { notes } = req.body;
       const pool = getPgPool();
-      await pool.query(
-        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
-        [notes, id]
+      if (!pool) return res.status(503).json({ error: 'Call updates require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3 RETURNING id',
+        [notes, id, organizationId]
       );
+      if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3622,13 +3175,16 @@ async function startServer() {
 
   app.post('/api/calls/:id/notes', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const { notes } = req.body;
       const pool = getPgPool();
-      await pool.query(
-        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2',
-        [notes, id]
+      if (!pool) return res.status(503).json({ error: 'Call notes require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const result = await pool.query(
+        'UPDATE call SET notes = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3 RETURNING id',
+        [notes, id, organizationId]
       );
+      if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3657,7 +3213,7 @@ async function startServer() {
       if (!pool) return res.status(503).json({ error: 'CRM disposition requires PostgreSQL', code: 'CRM_DATABASE_UNAVAILABLE' });
       const { disposition, followUpAt, note } = req.body;
       if (!disposition) return res.status(400).json({ error: 'disposition is required' });
-      await applyCallDisposition(pool, {
+      const result = await applyCallDisposition(pool, {
         organizationId,
         callId: req.params.id,
         disposition,
@@ -3665,17 +3221,30 @@ async function startServer() {
         note,
         createdBy: (req as AuthRequest).dbUser?.id,
       });
-      res.json({ success: true });
+      res.json({
+        success: true,
+        status: result.status,
+        callId: result.callId,
+        disposition: result.disposition,
+        followUpTaskId: result.followUpTaskId,
+      });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const message = err?.message || 'Failed to apply call disposition';
+      if (message === 'Call not found') return res.status(404).json({ error: message });
+      if (message.startsWith('Invalid call disposition:') || message.startsWith('followUpAt ')) {
+        return res.status(400).json({ error: message });
+      }
+      res.status(500).json({ error: message });
     }
   });
 
   app.post('/api/calls/:id/suggest-task', async (req, res) => {
     try {
+      const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
       const pool = getPgPool();
-      const callResult = await pool.query('SELECT notes FROM call WHERE id = $1', [id]);
+      if (!pool) return res.status(503).json({ error: 'Task suggestions require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
+      const callResult = await pool.query('SELECT notes FROM call WHERE id = $1 AND organization_id = $2', [id, organizationId]);
       if (callResult.rows.length === 0) {
         return res.status(404).json({ error: 'Call not found' });
       }
@@ -3992,7 +3561,8 @@ ${transcript}`;
 
   // 1. List Templates with optional filters
   app.get('/api/outreach-templates', (req, res) => {
-    if (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0) {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
+    if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production' && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
       seedInitialData();
     }
 
@@ -4043,6 +3613,7 @@ ${transcript}`;
 
   // 2. Get single template
   app.get('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Outreach template not found' });
     res.json(tpl);
@@ -4050,6 +3621,7 @@ ${transcript}`;
 
   // 3. Create template
   app.post('/api/outreach-templates', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { name, description, channel, category, subject, body, tags, is_default } = req.body;
@@ -4116,6 +3688,7 @@ ${transcript}`;
 
   // 4. Update template
   app.put('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4172,6 +3745,7 @@ ${transcript}`;
 
   // 5. Delete template
   app.delete('/api/outreach-templates/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4204,6 +3778,7 @@ ${transcript}`;
 
   // 6. Duplicate template
   app.post('/api/outreach-templates/:id/duplicate', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
@@ -4238,6 +3813,7 @@ ${transcript}`;
 
   // 7. Render Template with dynamic property / owner / custom variables
   app.post('/api/outreach-templates/render', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const {
         templateId,
@@ -4341,6 +3917,7 @@ ${transcript}`;
 
   // 8. Record usage & performance for a template
   app.post('/api/outreach-templates/:id/use', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;

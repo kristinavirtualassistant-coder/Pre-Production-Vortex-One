@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
+import { fetchWithTimeout } from './providerHelpers';
 
 export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'san_diego_county_gis';
@@ -146,13 +146,13 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
       const landVal = Number(attr.LAND_VAL || attr.LAND || attr.LandValue) || 0;
       const impVal = Number(attr.IMP_VAL || attr.IMPR || attr.ImprovementValue) || 0;
       const totalAssessed = landVal + impVal > 0 ? landVal + impVal : 1750000;
-      const estimatedVal = Math.round(totalAssessed * 1.32);
-      const estimatedEq = Math.round(estimatedVal * 0.68);
-      const mortgage = estimatedVal - estimatedEq;
+      const estimatedVal = totalAssessed;
+      const estimatedEq = 0;
+      const mortgage = 0;
 
-      const sqft = Number(attr.BLDG_SQFT || attr.SQFT || attr.SquareFeet) || (attr.ACRES ? Math.round(Number(attr.ACRES) * 43560 * 0.25) : 3400);
-      const units = Number(attr.UNITS || attr.TOTAL_UNITS) || (attr.USE_CODE?.startsWith('02') || attr.USE_CODE?.startsWith('03') ? 4 : 1);
-      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT || attr.YearBuilt) || 1990;
+      const sqft = Number(attr.BLDG_SQFT || attr.SQFT || attr.SquareFeet) || 0;
+      const units = Number(attr.UNITS || attr.TOTAL_UNITS) || 0;
+      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT || attr.YearBuilt) || undefined;
 
       let propType: Property['property_type'] = 'Single Family';
       if (units > 1 || attr.USE_DESCR?.toLowerCase().includes('multi') || attr.USE_CODE?.startsWith('02') || attr.USE_CODE?.startsWith('03')) {
@@ -178,9 +178,8 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
         legalTermsNotes:
           'Official SanGIS & SANDAG open GIS dataset. Authorized for public lookup, underwriting calculations, and enterprise CRM workflow.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-      const contacts = generateUniqueContacts(apn, '619', ownerInfo.name);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
       const property: Property = {
         id: propId,
@@ -345,9 +344,8 @@ export class SanDiegoCountyGISProvider implements IPropertyDataProvider {
           'California Government Code § 6254.21 statutory privacy protection active.',
         legalTermsNotes: 'Official San Diego County cadastral GIS dataset.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-      const contacts = generateUniqueContacts(apn, '619', ownerInfo.name);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
       const property: Property = {
         id: propId,

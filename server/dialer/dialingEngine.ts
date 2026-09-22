@@ -7,6 +7,7 @@ export interface DialingEngineOptions {
   sessionId?: string;
   concurrency?: number;
   callStrategyBrief?: string;
+  provider?: import('./types').TelephonyProvider;
 }
 
 export interface DialingEngineResult {
@@ -31,7 +32,7 @@ async function runDialerWorker(options: DialingEngineOptions): Promise<DialingEn
       campaignId: options.campaignId,
       sessionId: options.sessionId,
       customBrief: options.callStrategyBrief,
-      provider: 'ringcentral',
+      provider: options.provider || 'ringcentral',
     });
 
     workerResults.push(result);

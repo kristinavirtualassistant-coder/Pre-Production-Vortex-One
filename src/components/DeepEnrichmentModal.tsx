@@ -101,73 +101,21 @@ export const DeepEnrichmentModal: React.FC<DeepEnrichmentModalProps> = ({
       }
 
       if (enrichedData.length === 0) {
-        // Fallback generator for rich demonstration
-        enrichedData = targetLeads.map((l, idx) => ({
-          leadId: l.id,
-          ownerName: l.owner_name,
-          propertyAddress: l.property_address,
-          linkedinProfile: {
-            title: 'Managing Principal / Real Estate Investor',
-            company: `${l.owner_name.split(' ')[0]} Holdings LLC`,
-            url: `https://linkedin.com/in/exec-${idx + 1048}`,
-            connections: '500+ verified connections',
-          },
-          corporateRecord: {
-            entityName: `${l.owner_name.toUpperCase()} FAMILY TRUST & LLC`,
-            filingNumber: `CA-SOS-2023-${8429 + idx}`,
-            status: 'Active & In Good Standing',
-            agent: 'C T Corporation System (Delphi)',
-          },
-          socialMedia: {
-            twitterHandle: `@${l.owner_name.toLowerCase().replace(/[^a-z0-9]/g, '')}_invest`,
-            webPresenceScore: 94,
-            newsMentions: 3 + idx,
-          },
-          verifiedContact: {
-            phone: l.phone_number || `(415) 555-${String(2000 + idx).slice(-4)}`,
-            email: `exec@${l.owner_name.toLowerCase().replace(/[^a-z0-9]/g, '')}holdings.com`,
-            dncStatus: l.dnc_compliant ? 'Compliant (Scrubbed)' : 'Verified Safe',
-          },
-        }));
+        setResults([]);
+        setIsEnriching(false);
+        addToast('No verified enrichment data was returned. No synthetic contacts or profiles were created.', 'info');
+        return;
       }
-
       setResults(enrichedData);
       setIsEnriching(false);
       addToast(`Successfully completed Deep Enrichment for ${enrichedData.length} entities!`, 'success');
       if (onEnrichComplete) onEnrichComplete();
     } catch (err: any) {
       console.error('Deep enrichment error:', err);
-      // Fallback on error
-      const fallbackData: EnrichedLeadResult[] = targetLeads.map((l, idx) => ({
-        leadId: l.id,
-        ownerName: l.owner_name,
-        propertyAddress: l.property_address,
-        linkedinProfile: {
-          title: 'Principal Investor',
-          company: 'Private Portfolio LLC',
-          url: 'https://linkedin.com/in/investor-profile',
-          connections: '500+ connections',
-        },
-        corporateRecord: {
-          entityName: `${l.owner_name.toUpperCase()} HOLDINGS`,
-          filingNumber: 'CA-SOS-2022-9912',
-          status: 'Active',
-          agent: 'Corporate Trust Services',
-        },
-        socialMedia: {
-          twitterHandle: '@re_investor_ca',
-          webPresenceScore: 88,
-          newsMentions: 2,
-        },
-        verifiedContact: {
-          phone: l.phone_number || '(415) 555-0199',
-          email: `contact@${l.owner_name.toLowerCase().replace(/[^a-z]/g, '')}.com`,
-          dncStatus: 'DNC Scrubbed',
-        },
-      }));
-      setResults(fallbackData);
+      setResults([]);
       setIsEnriching(false);
-      addToast(`Completed Deep Enrichment for ${fallbackData.length} records.`, 'success');
+      addToast('Verified enrichment source unavailable. No synthetic enrichment data was created.', 'error');
+      return;
     }
   };
 

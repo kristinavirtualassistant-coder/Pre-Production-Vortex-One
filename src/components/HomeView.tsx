@@ -66,7 +66,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       a: 'Every high-impact action—such as initiating high-volume dialer campaigns, submitting formal purchase offers, or publishing MLS data—is routed to the Governance & Approvals Console where licensed operators must review, modify, or approve the action.',
     },
     {
-      q: 'How is our data secured in Cloud SQL PostgreSQL?',
+      q: 'How is our data secured in PostgreSQL?',
       a: 'All property records, owner intelligence, skip-trace results, and audit trails are stored in an enterprise-grade PostgreSQL relational database with row-level security, encrypted connections, and immutable SHA-256 provenance hashes.',
     },
   ];

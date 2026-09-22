@@ -533,14 +533,14 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({ dbStatus, onRefresh 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-slate-500">Instance Specification</span>
-          <div className="text-sm font-bold text-slate-900 font-mono">vortex-one-instance</div>
-          <div className="text-xs text-slate-500">PostgreSQL 18.4 (Cloud SQL)</div>
+          <div className="text-sm font-bold text-slate-900 font-mono">{dbStatus?.instance || 'Unavailable'}</div>
+          <div className="text-xs text-slate-500">PostgreSQL runtime instance</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-slate-500">Connection Engine</span>
-          <div className="text-sm font-bold text-cyan-700 font-mono">IAM Connector (ADC)</div>
-          <div className="text-xs text-slate-500">Database: vortex-one-database</div>
+          <div className="text-sm font-bold text-cyan-700 font-mono">{dbStatus?.type || 'Unknown'}</div>
+          <div className="text-xs text-slate-500">Database: {dbStatus?.database || 'Unavailable'}</div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1 shadow-xs">

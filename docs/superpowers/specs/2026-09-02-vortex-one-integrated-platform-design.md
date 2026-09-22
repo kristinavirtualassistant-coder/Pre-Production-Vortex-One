@@ -13,7 +13,7 @@ Property Search → Enrich → DNC → Score → CRM → Campaign → Dialer →
 PostgreSQL/PostGIS is the production source of truth. Frontend state, synthetic contacts, provider fallbacks, and in-memory stores must not create production records or silently substitute for unavailable database data.
 
 ## Identity and tenancy
-Every authenticated request resolves a canonical organization from Firebase identity plus database membership. Client tenant identifiers may be accepted only when they match the authenticated organization. There is no runtime default organization.
+Every authenticated request resolves a canonical organization from the application's PostgreSQL identity and membership records. Client tenant identifiers may be accepted only when they match the authenticated organization. There is no runtime default organization.
 
 ## Property intelligence
 Search is performed against normalized PostgreSQL/PostGIS data. Providers ingest or refresh verified source data through a common adapter contract. California is operational in V1; provider interfaces remain state/county agnostic for nationwide expansion.
@@ -64,7 +64,7 @@ Webhook processing is idempotent. Replayed provider events cannot duplicate acti
 Monitor API, database, workers, telephony, provider ingestion, searches, enrichments, leads, calls, connections, dispositions, campaign metrics, failures, and security/audit events.
 
 ## Deployment
-Target Cloud Run application/API with Cloud SQL PostgreSQL/PostGIS and dedicated worker execution as needed. Development, staging, and production configuration are separated; secrets are not committed.
+Target a provider-neutral Node.js application/API with PostgreSQL/PostGIS and dedicated worker execution as needed. Development, staging, and production configuration are separated; secrets are not committed.
 
 ## Security gates
 No runtime `org_cmc_realty` fallback. Cross-tenant access returns 403. Provider callbacks use provider-level verification and replay protection. Every database query involving tenant-owned data is scoped to the authenticated organization.

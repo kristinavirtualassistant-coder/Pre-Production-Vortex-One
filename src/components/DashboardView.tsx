@@ -181,7 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     trendAndActivity: { title: 'D3 Trend Chart & Recent Activity', desc: '30-day property discovery vs skip trace chart and real-time agent activity sidebar.' },
     taskScheduler: { title: 'Background Task Scheduler', desc: '24-hour automated refresh controls for selected property records.' },
     presets: { title: 'Fast Multi-Agent Dispatch Presets', desc: 'Pre-configured AI agent orchestration workflows.' },
-    fleetAndTasks: { title: 'Agent Fleet Monitor & Recent Tasks', desc: 'Hierarchical Sub-Agent 0-9 status and Cloud SQL audit stream.' },
+    fleetAndTasks: { title: 'Agent Fleet Monitor & Recent Tasks', desc: 'Hierarchical Sub-Agent 0-9 status and PostgreSQL audit stream.' },
   };
 
   const presetWorkflows = [

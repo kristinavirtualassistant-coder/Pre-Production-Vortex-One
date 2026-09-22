@@ -60,64 +60,34 @@ export class ZillowProvider implements IPropertyDataProvider {
               state: stateZip[0] || query.state || 'CA',
               zipcode: stateZip[1] || query.zip || '92627',
               county: query.county || 'Orange County',
-              latitude: r.metaData?.lat || (query.city?.toLowerCase().includes('los angeles') ? 34.0522 : 33.6411),
-              longitude: r.metaData?.lng || (query.city?.toLowerCase().includes('los angeles') ? -118.2437 : -117.9187),
+              latitude: r.metaData?.lat,
+              longitude: r.metaData?.lng,
               propertyType: 'Multi-Family',
               livingArea: 3850 + idx * 420,
-              yearBuilt: 1988 + (idx % 25),
-              numOfUnits: 4 + (idx % 8),
-              zestimate: 2450000 + idx * 350000,
-              taxAssessedValue: Math.round((2450000 + idx * 350000) * 0.72),
-              apn: query.apn || `424-${100 + idx}-${20 + idx}`,
-              isAbsentee: idx % 2 === 0,
+              yearBuilt: 0,
+              numOfUnits: 0,
+              zestimate: 0,
+              taxAssessedValue: 0,
+              apn: '',
+              isAbsentee: false,
             };
           });
         }
       }
     } catch (openErr: any) {
-      console.warn('[ZillowProvider] Open suggest request warning, utilizing open search property synthesis:', openErr.message);
+      throw new Error(`Zillow open property lookup failed: ${openErr.message}`);
     }
 
-    // 2. If open suggest returned empty (e.g. rate limit/CORS), build structured open search property results
-    if (propsList.length === 0) {
-      const city = query.city || 'Costa Mesa';
-      const state = query.state || 'CA';
-      const zip = query.zip || '92627';
-      const county = query.county || 'Orange County';
-      const baseAddress = query.address || (query.apn ? `Parcel APN ${query.apn}` : `${city} Commercial Corridor`);
-
-      const countToGen = Math.min(limit, 5);
-      for (let i = 0; i < countToGen; i++) {
-        const estVal = 2650000 + i * 420000;
-        propsList.push({
-          zpid: `zpid_open_${Date.now()}_${i}`,
-          address: i === 0 && query.address ? query.address : `${1200 + i * 44} Commercial Way`,
-          city,
-          state,
-          zipcode: zip,
-          county,
-          propertyType: 'Multi-Family',
-          livingArea: 3600 + i * 400,
-          yearBuilt: 1990 + (i % 20),
-          numOfUnits: 4 + i * 2,
-          zestimate: estVal,
-          taxAssessedValue: Math.round(estVal * 0.72),
-          apn: query.apn || `424-${110 + i}-${30 + i}`,
-          isAbsentee: true,
-          latitude: 33.6411 + i * 0.005,
-          longitude: -117.9187 + i * 0.005,
-        });
-      }
-    }
+    if (propsList.length === 0) return []; 
 
     return propsList.map((item: any, idx: number): NormalizedPropertyResult => {
       const rawId = item.zpid || `zillow_${idx}_${Date.now()}`;
       const apn = item.apn || query.apn || `APN-ZIL-${rawId}`;
-      const ownerName = item.ownerName || 'Property Owner (Zillow Open Roll)';
+      const ownerName = item.ownerName || 'Owner information not available';
 
-      const estVal = Number(item.zestimate || item.price || 2800000);
-      const assessedVal = Number(item.taxAssessedValue || Math.round(estVal * 0.72));
-      const equity = Math.round(estVal * 0.6);
+      const estVal = Number(item.zestimate ?? item.price ?? 0);
+      const assessedVal = Number(item.taxAssessedValue ?? 0);
+      const equity = 0;
 
       const propId = `zillow_prop_${rawId}`;
       const ownerId = `zillow_owner_${rawId}`;
@@ -139,27 +109,27 @@ export class ZillowProvider implements IPropertyDataProvider {
       const property: Property = {
         id: propId,
         organization_id: orgId,
-        address: item.address || query.address || 'Property Address',
-        city: item.city || query.city || 'Costa Mesa',
-        state: item.state || query.state || 'CA',
-        zip: item.zipcode || query.zip || '92627',
-        county: item.county || query.county || 'Orange County',
-        apn,
-        property_type: (item.propertyType as any) || 'Multi-Family',
-        units_count: Number(item.numOfUnits || item.units || 4),
-        square_feet: Number(item.livingArea || 3600),
-        year_built: Number(item.yearBuilt || 1991),
+        address: item.address || '',
+        city: item.city || '',
+        state: item.state || '',
+        zip: item.zipcode || '',
+        county: item.county || '',
+        apn: item.apn || '',
+        property_type: (item.propertyType as any) || 'Unknown',
+        units_count: Number(item.numOfUnits ?? item.units ?? 0),
+        square_feet: Number(item.livingArea ?? 0),
+        year_built: Number(item.yearBuilt ?? 0),
         estimated_value: estVal,
         assessed_tax_value: assessedVal,
         estimated_equity: equity,
-        mortgage_balance: estVal - equity,
+        mortgage_balance: 0,
         owner_id: ownerId,
         owner_name: ownerName,
-        is_absentee_owner: Boolean(item.isAbsentee !== false),
+        is_absentee_owner: Boolean(item.isAbsentee === true),
         is_corporate_owned: Boolean(item.isCorporate || false),
-        last_sale_date: item.lastSoldDate || '2021-06-15',
-        last_sale_price: Math.round(estVal * 0.8),
-        tax_delinquent: false,
+        last_sale_date: item.lastSoldDate,
+        last_sale_price: item.lastSalePrice != null ? Number(item.lastSalePrice) : undefined,
+        tax_delinquent: Boolean(item.taxDelinquent === true),
         provenance: {
           source: this.providerName,
           sourceType: 'public_records',
@@ -175,10 +145,10 @@ export class ZillowProvider implements IPropertyDataProvider {
         organization_id: orgId,
         name: ownerName,
         entity_type: 'individual',
-        mailing_address: property.address,
-        mailing_city: property.city,
-        mailing_state: property.state,
-        mailing_zip: property.zip,
+        mailing_address: item.mailingAddress || '',
+        mailing_city: item.mailingCity || '',
+        mailing_state: item.mailingState || '',
+        mailing_zip: item.mailingZip || '',
         phone_numbers: [],
         email_addresses: [],
         properties_owned_count: 1,

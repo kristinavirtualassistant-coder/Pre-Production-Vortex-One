@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
+import { fetchWithTimeout } from './providerHelpers';
 
 export class RiversideCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'riverside_county_gis';
@@ -130,14 +130,14 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
 
       const landVal = Number(attr.LAND || attr.LAND_VALUE) || 0;
       const impVal = Number(attr.STRUCTURES || attr.IMP_VALUE) || 0;
-      const totalAssessed = Number(attr.ASSESSMENT) || (landVal + impVal > 0 ? landVal + impVal : 1150000);
-      const estimatedVal = Math.round(totalAssessed * 1.30);
-      const estimatedEq = Math.round(estimatedVal * 0.65);
-      const mortgage = estimatedVal - estimatedEq;
+      const totalAssessed = Number(attr.ASSESSMENT) || 0;
+      const estimatedVal = totalAssessed;
+      const estimatedEq = 0;
+      const mortgage = 0;
 
-      const sqft = Number(attr.SQFT) || (attr.ACRES ? Math.round(Number(attr.ACRES) * 43560 * 0.20) : 3200);
-      const units = Number(attr.UNITS) || (attr.USE_TYPE?.toLowerCase().includes('multi') ? 4 : 1);
-      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT) || 1994;
+      const sqft = Number(attr.SQFT) || 0;
+      const units = Number(attr.UNITS) || 0;
+      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT) || undefined;
 
       let propType: Property['property_type'] = 'Single Family';
       if (units > 1 || attr.USE_TYPE?.toLowerCase().includes('multi')) {
@@ -163,10 +163,8 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
         legalTermsNotes:
           'Official Riverside County Open Data. Authorized for analytical underwriting and prospecting.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '951', ownerInfo.name);
-        console.log('[RiversideCountyGISProvider.ts] Mapped owner & contacts:', ownerInfo.name, contacts.phones[0].number);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
         const property: Property = {
         id: propId,
@@ -299,10 +297,8 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
         ownerIntelligenceNotes: 'California Government Code § 6254.21 statutory privacy protection active.',
         legalTermsNotes: 'Official Riverside County cadastral GIS dataset.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '951', ownerInfo.name);
-        console.log('[RiversideCountyGISProvider.ts] Mapped owner & contacts:', ownerInfo.name, contacts.phones[0].number);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
         const property: Property = {
         id: propId,

@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "vortex-one",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -11,7 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:ringcentral:jwt": "node scripts/ringcentral-jwt-smoke.mjs",
-    "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts"
+    "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts",
+    "dev:local": "./scripts/local-dev.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -30,12 +31,9 @@
     "autoprefixer": "^10.4.21",
     "d3": "^7.9.0",
     "dotenv": "^17.2.3",
-    "drizzle-kit": "0.31.9",
     "drizzle-orm": "^0.45.2",
     "esbuild": "^0.25.0",
     "express": "^4.21.2",
-    "firebase": "^12.18.0",
-    "firebase-admin": "^14.3.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
@@ -52,6 +50,10 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
-    "@types/papaparse": "^5.5.2"
+    "@types/papaparse": "^5.5.2",
+    "drizzle-kit": "0.31.9"
+  },
+  "overrides": {
+    "qs": "^6.15.4"
   }
 }

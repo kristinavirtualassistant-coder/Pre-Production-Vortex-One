@@ -1,5 +1,5 @@
 /**
- * Vortex One - Database Layer with Cloud SQL / PostgreSQL Support & In-Memory Store
+ * Vortex One - PostgreSQL Database Layer & In-Memory Development Store
  */
 
 import { Pool, PoolClient } from 'pg';
@@ -34,26 +34,43 @@ export interface DatabaseStatus {
   error?: string;
 }
 
+export interface DatabaseConnectionConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  ssl: boolean;
+}
+
 let pgPool: Pool | null = null;
 let currentDbStatus: DatabaseStatus = {
   connected: false,
   type: 'in_memory',
-  instance: process.env.CLOUD_SQL_CONNECTION_NAME || 'vortex-one:us-central1:vortex-one-instance',
+  instance: 'in_memory',
   database: process.env.DB_NAME || 'vortex-one-database',
   appliedMigrationsCount: 9,
   lastMigrationName: '009_create_durable_jobs',
 };
 
+export function getDatabaseConnectionConfig(env: NodeJS.ProcessEnv = process.env): DatabaseConnectionConfig | null {
+  const databaseUrl = env.DATABASE_URL?.trim();
+  const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
+  const host = env.SQL_HOST || env.DB_HOST || parsedDatabaseUrl?.hostname;
+  if (!host) return null;
+
+  const port = parseInt(env.SQL_PORT || env.DB_PORT || parsedDatabaseUrl?.port || '5432', 10);
+  const user = env.SQL_USER || env.DB_USER || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.username) : 'postgres');
+  const password = env.SQL_PASSWORD || env.DB_PASS || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.password) : '');
+  const database = env.SQL_DB_NAME || env.DB_NAME || (parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.pathname.slice(1)) : 'vortex-one-database');
+  const ssl = env.SQL_SSL === 'true' || parsedDatabaseUrl?.searchParams.get('sslmode') === 'require';
+
+  return { host, port, user, password, database, ssl };
+}
+
 // In-memory persistent collections (synchronized across app execution)
 export const inMemoryStore = {
-  organizations: [
-    {
-      id: 'org_cmc_realty',
-      name: 'CMC Realty & Property Management',
-      slug: 'cmc-realty',
-      settings: { timezone: 'America/Los_Angeles', targetMarket: 'Orange County, CA' },
-    },
-  ],
+  organizations: [] as Array<{ id: string; name: string; slug: string; settings: Record<string, any> }>,
   properties: [] as Property[],
   propertyOwners: [] as PropertyOwner[],
   leads: [] as LeadRecord[],
@@ -1267,36 +1284,42 @@ Sincerely,
   inMemoryStore.outreachTemplates = templates;
 }
 
-// Auto-seed in-memory store
-seedInitialData();
+// Demo fixtures are opt-in only. Production must never create synthetic CRM data.
+if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production') {
+  seedInitialData();
+}
 
 /**
  * Initialize PostgreSQL connection or safely fall back with diagnostics
  */
 export async function initializeDatabase(): Promise<DatabaseStatus> {
-  const host = process.env.SQL_HOST || process.env.DB_HOST;
-  const port = parseInt(process.env.SQL_PORT || process.env.DB_PORT || '5432', 10);
-  const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER || process.env.DB_USER || 'postgres';
-  const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD || process.env.DB_PASS || '';
-  const database = process.env.SQL_DB_NAME || process.env.DB_NAME || 'vortex-one-database';
+  const config = getDatabaseConnectionConfig();
+  const host = config?.host;
+  const port = config?.port ?? 5432;
+  const user = config?.user ?? 'postgres';
+  const password = config?.password ?? '';
+  const database = config?.database ?? 'vortex-one-database';
   
-  const isPostgresConfigured = !!host;
+  const isPostgresConfigured = !!config;
+  // Keep application credentials least-privileged; migrations may use a separate admin login.
+  const migrationUser = process.env.SQL_ADMIN_USER || user;
+  const migrationPassword = process.env.SQL_ADMIN_PASSWORD || password;
 
   // If explicit PostgreSQL config is available, attempt connection
   if (isPostgresConfigured) {
     try {
-      pgPool = new Pool({
+      const migrationPool = new Pool({
         host: host,
         port: port,
-        user: user,
-        password: password,
+        user: migrationUser,
+        password: migrationPassword,
         database: database,
         max: 10,
         connectionTimeoutMillis: 5000,
-        ssl: process.env.SQL_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+        ssl: config?.ssl ? { rejectUnauthorized: false } : undefined,
       });
 
-      const client = await pgPool.connect();
+      const client = await migrationPool.connect();
       try {
         let appliedMigrationCount = MIGRATIONS.length;
         let lastAppliedMigrationName = MIGRATIONS[MIGRATIONS.length - 1].name;
@@ -1331,35 +1354,35 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
           await client.query('COMMIT');
         }
 
-        // Seed default organizations in PostgreSQL
-        try {
-          await client.query(`
-            INSERT INTO organizations (id, name, slug, settings, created_at, updated_at)
-            VALUES 
-              ('org_cmc_realty', 'CMC Realty & Property Management', 'cmc-realty', '{"market": "Orange County, CA"}'::jsonb, NOW(), NOW()),
-              ('org-vortex-default', 'Vortex One Default Organization', 'vortex-default', '{"market": "National"}'::jsonb, NOW(), NOW())
-            ON CONFLICT (id) DO NOTHING;
-          `);
-        } catch (seedErr: any) {
-          console.warn('Organization auto-seed notice:', seedErr.message);
-        }
-
         currentDbStatus = {
           connected: true,
           type: 'postgresql',
-          instance: process.env.CLOUD_SQL_CONNECTION_NAME || `${host}:${port}`,
+          instance: `${host}:${port}`,
           database,
           appliedMigrationsCount: appliedMigrationCount,
           lastMigrationName: lastAppliedMigrationName,
         };
-        console.log(`PostgreSQL Cloud SQL migrations successfully verified on database '${database}'.`);
+        console.log(`PostgreSQL migrations successfully verified on database '${database}'.`);
       } catch (migErr: any) {
         await client.query('ROLLBACK');
         console.error('Migration error on PostgreSQL:', migErr.message);
         throw migErr;
       } finally {
         client.release();
+        await migrationPool.end();
       }
+
+      // The application pool always uses the restricted runtime credentials.
+      pgPool = new Pool({
+        host,
+        port,
+        user,
+        password,
+        database,
+        max: 10,
+        connectionTimeoutMillis: 5000,
+        ssl: process.env.SQL_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+      });
     } catch (err: any) {
       if (pgPool) {
         pgPool.end().catch(() => {});
@@ -1368,24 +1391,36 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
       
       currentDbStatus = {
         connected: false,
-        type: 'in_memory',
-        instance: process.env.CLOUD_SQL_CONNECTION_NAME || `${host}:${port}`,
+        type: 'postgresql',
+        instance: `${host}:${port}`,
         database,
         appliedMigrationsCount: 0,
         error: `PostgreSQL connection attempt failed (${host}:${port}/${database}): ${err.message}`,
       };
-      console.warn(`[Database] PostgreSQL notice (${host}:${port}/${database}): ${err.message}. Operating in resilient in-memory storage mode.`);
+      console.error(`[Database] PostgreSQL initialization failed (${host}:${port}/${database}): ${err.message}`);
+      throw err;
     }
   } else {
-    // If no host is configured at all, fallback to in-memory
+    if (process.env.NODE_ENV === 'production') {
+      currentDbStatus = {
+        connected: false,
+        type: 'postgresql',
+        instance: 'unknown',
+        database,
+        appliedMigrationsCount: 0,
+        error: 'No PostgreSQL connection configured in production',
+      };
+      throw new Error('Production startup requires PostgreSQL configuration (DATABASE_URL or SQL_HOST).');
+    }
+    // Local development and tests may explicitly use the in-memory adapter.
     currentDbStatus = {
       connected: false,
       type: 'in_memory',
-      instance: process.env.CLOUD_SQL_CONNECTION_NAME || 'vortex-one:us-west1:ai-studio-96900d81',
+      instance: 'in_memory',
       database,
       appliedMigrationsCount: MIGRATIONS.length,
       lastMigrationName: MIGRATIONS[MIGRATIONS.length - 1].name,
-      error: 'No SQL_HOST configured',
+      error: 'No PostgreSQL connection configured',
     };
   }
 

@@ -11,7 +11,7 @@ import {
   ProviderProvenanceMetadata,
 } from './types';
 import { Property, PropertyOwner } from '../../../src/types';
-import { generateRealisticOwnerName, generateUniqueContacts, fetchWithTimeout } from './providerHelpers';
+import { fetchWithTimeout } from './providerHelpers';
 
 export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
   public readonly providerId = 'santa_clara_county_gis';
@@ -129,14 +129,14 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
 
       const landVal = Number(attr.LAND_VAL || attr.LAND_VALUE) || 0;
       const impVal = Number(attr.IMP_VAL || attr.IMPR_VALUE) || 0;
-      const totalAssessed = Number(attr.NET_VALUE) || (landVal + impVal > 0 ? landVal + impVal : 2250000);
-      const estimatedVal = Math.round(totalAssessed * 1.35);
-      const estimatedEq = Math.round(estimatedVal * 0.70);
-      const mortgage = estimatedVal - estimatedEq;
+      const totalAssessed = Number(attr.NET_VALUE) || 0;
+      const estimatedVal = totalAssessed;
+      const estimatedEq = 0;
+      const mortgage = 0;
 
-      const sqft = Number(attr.SQFT) || 3600;
-      const units = Number(attr.UNITS) || (attr.USE_CODE?.startsWith('02') || attr.USE_CODE?.startsWith('03') ? 4 : 1);
-      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT) || 1995;
+      const sqft = Number(attr.SQFT) || 0;
+      const units = Number(attr.UNITS) || 0;
+      const yearBuilt = Number(attr.YEAR_BUILT || attr.YR_BLT) || undefined;
 
       let propType: Property['property_type'] = 'Single Family';
       if (units > 1 || attr.USE_DESCR?.toLowerCase().includes('multi')) {
@@ -160,10 +160,8 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
         ownerIntelligenceNotes: 'California Government Code § 6254.21 statutory privacy protection active.',
         legalTermsNotes: 'Official Santa Clara County Open Data.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '408', ownerInfo.name);
-        console.log('[SantaClaraCountyGISProvider.ts] Mapped owner & contacts:', ownerInfo.name, contacts.phones[0].number);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
         const property: Property = {
         id: propId,
@@ -296,10 +294,8 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
         ownerIntelligenceNotes: 'California Government Code § 6254.21 statutory privacy protection active.',
         legalTermsNotes: 'Official Santa Clara County cadastral GIS dataset.',
       };
-
-      const ownerInfo = generateRealisticOwnerName(apn + rawAddr);
-        const contacts = generateUniqueContacts(apn, '408', ownerInfo.name);
-        console.log('[SantaClaraCountyGISProvider.ts] Mapped owner & contacts:', ownerInfo.name, contacts.phones[0].number);
+      const ownerInfo: { name: string; entityType: 'individual' | 'llc' | 'trust' | 'corporation' } = { name: 'Owner information not publicly available', entityType: 'individual' };
+      const contacts = { phones: [], emails: [] };
 
         const property: Property = {
         id: propId,

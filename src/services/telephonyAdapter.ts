@@ -14,7 +14,13 @@ export interface ParallelCallResult {
   error?: string;
 }
 
-export class TelephonyAdapter {
+/** Narrow application contract for parallel outbound telephony dispatch. */
+export interface ParallelTelephonyProvider {
+  initialize(): Promise<void>;
+  makeParallelCalls(fromPhoneNumber: string, targets: CallPayload[]): Promise<ParallelCallResult[]>;
+}
+
+export class TelephonyAdapter implements ParallelTelephonyProvider {
   private rcsdk: SDK;
   private platform: any;
 

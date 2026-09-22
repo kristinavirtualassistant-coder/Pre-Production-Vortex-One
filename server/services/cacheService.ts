@@ -52,14 +52,14 @@ export class TaskCacheService {
 
   // Default TTLs per task category (in seconds)
   private defaultTTLs: Record<string, number> = {
-    gemini_orchestrate: 24 * 3600,     // 24 hours
-    gemini_text: 24 * 3600,            // 24 hours
-    property_search: 12 * 3600,        // 12 hours
-    skip_trace: 48 * 3600,             // 48 hours
-    deep_enrich: 48 * 3600,            // 48 hours
-    tts_audio: 7 * 24 * 3600,          // 7 days
-    workflow_exec: 6 * 3600,           // 6 hours
-    default: 12 * 3600,                // 12 hours default
+    gemini_orchestrate: 24 * 3600,
+    gemini_text: 24 * 3600,
+    property_search: 12 * 3600,
+    skip_trace: 48 * 3600,
+    deep_enrich: 48 * 3600,
+    tts_audio: 7 * 24 * 3600,
+    workflow_exec: 6 * 3600,
+    default: 12 * 3600,
   };
 
   constructor(persistFileName = 'cache_store.json') {
@@ -67,9 +67,11 @@ export class TaskCacheService {
     this.ensureDataDir();
     this.loadFromDisk();
 
-    // Periodically clean expired entries (every 5 minutes)
+    // Periodically clean expired entries without keeping short-lived CLI/test
+    // processes alive after their work is complete.
     if (typeof setInterval !== 'undefined') {
-      setInterval(() => this.purgeExpired(), 5 * 60 * 1000);
+      const cleanupInterval = setInterval(() => this.purgeExpired(), 5 * 60 * 1000);
+      cleanupInterval.unref?.();
     }
   }
 
@@ -84,9 +86,6 @@ export class TaskCacheService {
     }
   }
 
-  /**
-   * Generates a deterministic key for a category and input payload
-   */
   public generateKey(category: string, inputPayload: any): { key: string; inputDigest: string } {
     let serializedPayload = '';
     if (typeof inputPayload === 'string') {
@@ -105,7 +104,6 @@ export class TaskCacheService {
     const hash = crypto.createHash('sha256').update(`${category}:${serializedPayload}`).digest('hex').slice(0, 32);
     const key = `${category}:${hash}`;
 
-    // Create human-readable digest summary
     let digestStr = '';
     if (typeof inputPayload === 'string') {
       digestStr = inputPayload.slice(0, 80);
@@ -119,9 +117,6 @@ export class TaskCacheService {
     return { key, inputDigest: digestStr || 'Payload' };
   }
 
-  /**
-   * Get cached result for a heavy task
-   */
   public get<T = any>(category: string, inputPayload: any, options: CacheOptions = {}): { data: T; entry: CacheEntry<T> } | null {
     if (options.skipCache || options.forceRefresh) {
       this.misses++;
@@ -136,14 +131,12 @@ export class TaskCacheService {
       return null;
     }
 
-    // Check expiration
     if (entry.expiresAt && new Date(entry.expiresAt).getTime() < Date.now()) {
       this.cacheMap.delete(key);
       this.misses++;
       return null;
     }
 
-    // Cache HIT!
     entry.hitCount++;
     this.hits++;
     this.totalTimeSavedMs += entry.executionTimeSavedMs || 500;
@@ -151,9 +144,6 @@ export class TaskCacheService {
     return { data: entry.data as T, entry };
   }
 
-  /**
-   * Save result of a heavy task into cache
-   */
   public set<T = any>(
     category: string,
     inputPayload: any,
@@ -185,16 +175,12 @@ export class TaskCacheService {
     return entry;
   }
 
-  /**
-   * Execute heavy task with automatic cache check & store
-   */
   public async wrapTask<T>(
     category: string,
     inputPayload: any,
     taskFn: () => Promise<T>,
     options: CacheOptions = {}
   ): Promise<{ result: T; isCached: boolean; executionTimeMs: number; cacheEntry?: CacheEntry<T> }> {
-    // 1. Check cache
     const cached = this.get<T>(category, inputPayload, options);
     if (cached) {
       return {
@@ -205,12 +191,10 @@ export class TaskCacheService {
       };
     }
 
-    // 2. Execute task and measure latency
     const start = Date.now();
     const result = await taskFn();
     const durationMs = Date.now() - start;
 
-    // 3. Save to cache
     const cacheEntry = this.set<T>(category, inputPayload, result, durationMs, options);
 
     return {
@@ -221,18 +205,12 @@ export class TaskCacheService {
     };
   }
 
-  /**
-   * Delete entry by key
-   */
   public delete(key: string): boolean {
     const removed = this.cacheMap.delete(key);
     if (removed) this.saveToDiskDebounced();
     return removed;
   }
 
-  /**
-   * Clear cache (all or by category)
-   */
   public clear(category?: string): number {
     if (!category) {
       const count = this.cacheMap.size;
@@ -253,9 +231,6 @@ export class TaskCacheService {
     return count;
   }
 
-  /**
-   * Purge expired items
-   */
   public purgeExpired(): number {
     const now = Date.now();
     let purged = 0;
@@ -269,9 +244,6 @@ export class TaskCacheService {
     return purged;
   }
 
-  /**
-   * Get stats summary
-   */
   public getStats(): CacheStats {
     this.purgeExpired();
     const totalRequests = this.hits + this.misses;
@@ -302,9 +274,6 @@ export class TaskCacheService {
     };
   }
 
-  /**
-   * Get list of cached entries
-   */
   public getEntries(limit = 100, category?: string): CacheEntry[] {
     this.purgeExpired();
     let list = Array.from(this.cacheMap.values());
@@ -315,11 +284,12 @@ export class TaskCacheService {
     return list.slice(0, limit);
   }
 
-  // --- Persistence methods ---
-  private saveTimeout: any = null;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
   private saveToDiskDebounced() {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.saveTimeout = setTimeout(() => this.saveToDisk(), 1000);
+    this.saveTimeout.unref?.();
   }
 
   private saveToDisk() {

@@ -128,6 +128,7 @@ export interface Workflow {
   steps: WorkflowStep[];
   created_at: string;
   updated_at: string;
+  organization_id?: string;
 }
 
 export interface WorkflowRun {
