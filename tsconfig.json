@@ -9,7 +9,7 @@
       "DOM",
       "DOM.Iterable"
     ],
-    "types": ["vite/client"],
+    "types": ["vite/client", "@cloudflare/workers-types"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "isolatedModules": true,
