@@ -4,6 +4,8 @@
  * PostgreSQL is the sole persistence layer for endpoint and delivery state.
  */
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { getPgPool } from '../db/db';
 
 export type ExternalWebhookEventType = 'property.discovered' | 'lead.enriched';
@@ -106,9 +108,61 @@ function deliveryFromRow(row: any): ExternalWebhookDelivery {
 export function isSupportedWebhookUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:';
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !!url.hostname;
   } catch {
     return false;
+  }
+}
+
+function isUnsafeIPv4(address: string): boolean {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+    a >= 224;
+}
+
+function isUnsafeIPv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized === '::' || normalized === '::1') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') ||
+      normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb') ||
+      normalized.startsWith('::ffff:')) {
+    const mapped = normalized.slice('::ffff:'.length);
+    if (mapped.includes('.') && isUnsafeIPv4(mapped)) return true;
+    return true;
+  }
+  return false;
+}
+
+function isUnsafeAddress(address: string): boolean {
+  const family = isIP(address);
+  return family === 4 ? isUnsafeIPv4(address) : family === 6 ? isUnsafeIPv6(address) : true;
+}
+
+async function assertSafeWebhookTarget(value: string): Promise<void> {
+  if (!isSupportedWebhookUrl(value)) {
+    throw new Error('Webhook URL must use http:// or https://.');
+  }
+
+  const url = new URL(value);
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') ||
+      hostname === 'metadata.google.internal' || hostname === 'metadata.google') {
+    throw new Error('Webhook URL targets a local or metadata host, which is not allowed.');
+  }
+
+  const literalFamily = isIP(hostname);
+  if (literalFamily && isUnsafeAddress(hostname)) {
+    throw new Error('Webhook URL targets a private, loopback, link-local, multicast, or otherwise reserved IP address.');
+  }
+
+  if (!literalFamily) {
+    const addresses = await lookup(hostname, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some((entry) => isUnsafeAddress(entry.address))) {
+      throw new Error('Webhook hostname resolves to a private, loopback, link-local, multicast, or otherwise reserved IP address.');
+    }
   }
 }
 
@@ -163,6 +217,7 @@ export class ExternalWebhookService {
     description?: string;
   }): Promise<ExternalWebhookEndpoint> {
     this.validateEndpointInput(input.url, input.events);
+    await assertSafeWebhookTarget(input.url);
     const now = new Date().toISOString();
     const endpoint: ExternalWebhookEndpoint = {
       id: `wh_${randomUUID()}`,
@@ -197,6 +252,7 @@ export class ExternalWebhookService {
     const nextUrl = patch.url ?? existing.url;
     const nextEvents = patch.events ?? existing.events;
     this.validateEndpointInput(nextUrl, nextEvents);
+    await assertSafeWebhookTarget(nextUrl);
     const nextSecret = patch.rotateSecret ? randomBytes(32).toString('hex') : existing.secret;
     const now = new Date().toISOString();
     const { rows } = await requirePool().query(
@@ -365,10 +421,11 @@ export class ExternalWebhookService {
   }
 
   private async defaultSend(url: string, init: RequestInit): Promise<SendResult> {
+    await assertSafeWebhookTarget(url);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(url, { ...init, signal: controller.signal });
+      const response = await fetch(url, { ...init, signal: controller.signal, redirect: 'manual' });
       return { ok: response.ok, status: response.status, body: await response.text() };
     } finally {
       clearTimeout(timeout);
