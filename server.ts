@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 /**
  * Vortex One - Server Entry Point (Express + Vite)
  */
