@@ -25,7 +25,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
@@ -173,7 +173,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/integrations/:provider', async (req, res) => {
+  app.delete('/api/integrations/:provider', requireRole(['admin', 'executive']), async (req, res) => {
     const pool = getPgPool();
     const auth = req as AuthRequest;
     if (!pool || !auth.dbUser) return res.status(503).json({ error: 'Integration service unavailable' });
@@ -226,7 +226,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/cache/clear', (req, res) => {
+  app.post('/api/cache/clear', requireRole(['admin', 'executive']), (req, res) => {
     try {
       const { category } = req.body || {};
       const count = taskCacheService.clear(category);
@@ -238,7 +238,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/cache/entries/:key', (req, res) => {
+  app.delete('/api/cache/entries/:key', requireRole(['admin', 'executive']), (req, res) => {
     try {
       const key = req.params.key;
       const deleted = taskCacheService.delete(key);
@@ -282,7 +282,7 @@ async function startServer() {
     res.json(agent);
   });
 
-  app.post('/api/agents', (req, res) => {
+  app.post('/api/agents', requireRole(['admin', 'executive']), (req, res) => {
     const body: AgentDefinition = req.body;
     if (!body.id || !body.name || !body.role) {
       return res.status(400).json({ error: 'Missing required agent fields (id, name, role)' });
@@ -301,7 +301,7 @@ async function startServer() {
     res.status(201).json(created);
   });
 
-  app.put('/api/agents/:id', (req, res) => {
+  app.put('/api/agents/:id', requireRole(['admin', 'executive']), (req, res) => {
     const updated = updateAgent(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Agent not found' });
     res.json(updated);
@@ -316,7 +316,7 @@ async function startServer() {
     catch (err: any) { console.error('Task list error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  app.post('/api/tasks', async (req, res) => {
+  app.post('/api/tasks', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const { objective, priority, due_date, assigned_agent, parent_task_id, task_id, input, dependencies } = req.body;
     if (!objective || !priority) return res.status(400).json({ error: 'Objective and priority are required' });
@@ -347,7 +347,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow get error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows', async (req, res) => {
+  app.post('/api/workflows', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if (!req.body.name || !Array.isArray(req.body.steps)) return res.status(400).json({ error: 'Workflow name and steps array are required' });
     const pool = getPgPool();
@@ -356,7 +356,7 @@ async function startServer() {
     catch (err: any) { console.error('Workflow upsert error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.put('/api/workflows/:id', async (req, res) => {
+  app.put('/api/workflows/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
@@ -367,7 +367,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow update error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.delete('/api/workflows/:id', async (req, res) => {
+  app.delete('/api/workflows/:id', requireRole(['admin', 'executive']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
