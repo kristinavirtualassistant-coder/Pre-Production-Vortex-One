@@ -1,0 +1,8 @@
+[Unit]
+Description=Vortex One PostgreSQL backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/opt/vortex-one/deploy/backup/vortex-one-postgres-backup.sh

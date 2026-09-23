@@ -1,0 +1,10 @@
+# Example Cloudflare Tunnel configuration.
+# Keep the real tunnel credentials outside Git.
+
+tunnel: YOUR-TUNNEL-ID
+credentials-file: /etc/cloudflared/YOUR-TUNNEL-ID.json
+
+ingress:
+  - hostname: YOUR-DOMAIN
+    service: http://127.0.0.1:8080
+  - service: http_status:404

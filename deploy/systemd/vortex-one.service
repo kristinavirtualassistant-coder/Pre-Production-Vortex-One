@@ -1,0 +1,20 @@
+[Unit]
+Description=Vortex One application
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vortex
+Group=vortex
+WorkingDirectory=/opt/vortex-one
+EnvironmentFile=/etc/vortex-one/vortex-one.env
+Environment=NODE_ENV=production
+Environment=PORT=8080
+ExecStart=/usr/bin/node /opt/vortex-one/dist/server.cjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,93 +1,39 @@
-# Vortex One Free Hosting Deployment
+# Vortex One Self-Hosted Deployment
 
-This deployment keeps PostgreSQL authoritative and uses one Node service for the complete web application. Cloudflare provides DNS/custom-domain management; the application remains portable and has no GCP dependency.
+The canonical Vortex One deployment is self-hosted: one VPS runs the Node/Express application and PostgreSQL. Cloudflare provides the public domain, DNS, HTTPS edge, and optional Tunnel.
 
-## Target architecture
+## Architecture
 
-- GitHub `main`: source of truth
-- Render Free: Node/Express service serving the Vite frontend and `/api/*` from the same origin
-- Neon Free: PostgreSQL database
-- Cloudflare: DNS, TLS, and custom domain in front of the Render service
-- PostgreSQL: application identity and authentication authority
-- RingCentral: optional telephony provider
+```
+Internet
+  -> Cloudflare
+  -> Cloudflare Tunnel
+  -> Vortex One Node/Express :8080
+  -> PostgreSQL on localhost
+```
 
-Keeping the frontend and API on the same origin is intentional. The frontend currently uses relative `/api/...` requests, so no CORS proxy or browser API URL is required.
+Render and Neon are not required. GCP is not part of the architecture.
 
-## 1. Create PostgreSQL
+## Infrastructure
 
-Create a hosted PostgreSQL database and copy its connection string.
+- GitHub: source control and CI
+- Cloudflare: domain, DNS, HTTPS, optional Tunnel
+- One VPS: Vortex One, PostgreSQL, backups
+- PostgreSQL: authoritative application database
+- Optional providers: RingCentral, SMTP, Google Workspace, Microsoft 365
 
-Set this value in Render as the secret `DATABASE_URL`. Do not commit it to Git.
+See [deployment-self-hosted.md](./deployment-self-hosted.md) for the complete production procedure.
 
-The application accepts `DATABASE_URL` in addition to the existing SQL_* variables.
+## Cost/control model
 
-## 2. Deploy the complete application to Render
+The VPS is the only recurring infrastructure service required for the application and database. The domain and optional external providers remain separate costs.
 
-Connect `kristinavirtualassistant-coder/Pre-Production-Vortex-One` to Render as a Web Service or use the repository `render.yaml` Blueprint.
+PostgreSQL is private and should not be exposed to the public Internet. Vortex One listens on localhost and Cloudflare provides the public edge.
 
-The blueprint configures:
+## Development
 
-- Node.js runtime
-- Free plan
-- `npm ci && npm run build`
-- `npm start`
-- `/api/ready` health checks
-- production mode
-- demo data disabled
-- external webhooks disabled until explicitly configured
-- PostgreSQL and OAuth secrets as deployment-time variables
+Local development continues to use PostgreSQL on the existing local port and the normal Vite/Node workflow. Development infrastructure is separate from production infrastructure.
 
-The Node server serves the compiled `dist` frontend as well as the API, so the deployed application is a single same-origin web app.
+## Production requirements
 
-## 3. Required production variables
-
-Set these in Render's environment/secrets configuration:
-
-- `DATABASE_URL` — Neon PostgreSQL connection string
-- `APP_URL` — final public HTTPS application URL
-- `INTEGRATION_ENCRYPTION_KEY` — base64-encoded 32-byte key
-
-For Google Workspace OAuth, also set:
-
-- `GOOGLE_INTEGRATION_CLIENT_ID`
-- `GOOGLE_INTEGRATION_CLIENT_SECRET`
-
-For Microsoft 365 OAuth, also set:
-
-- `MICROSOFT_INTEGRATION_CLIENT_ID`
-- `MICROSOFT_INTEGRATION_CLIENT_SECRET`
-
-Email outreach additionally requires the SMTP/provider configuration documented by the email service implementation before it can send production mail.
-
-## 4. OAuth callback URLs
-
-Once the final public URL is known, register these exact callbacks with the providers:
-
-- `https://YOUR-DOMAIN/api/integrations/oauth/callback/google-workspace`
-- `https://YOUR-DOMAIN/api/integrations/oauth/callback/microsoft-365`
-
-`APP_URL` must use that same public HTTPS origin.
-
-## 5. Verify the deployment
-
-After deployment, verify:
-
-1. `GET /api/health` returns HTTP 200;
-2. `GET /api/ready` returns HTTP 200 with PostgreSQL ready;
-3. the application loads from the same public origin;
-4. sign-up/login works against PostgreSQL;
-5. migrations are applied;
-6. no demo records were seeded; and
-7. OAuth callbacks return to the same public origin.
-
-Production must not fall back to in-memory state.
-
-## 6. Put the custom domain on Cloudflare
-
-Add the domain to Cloudflare and configure the DNS record for the Render service. Keep Cloudflare proxying enabled if desired after the Render custom-domain verification succeeds.
-
-The final application should be accessed through the Cloudflare-managed HTTPS domain, with Render remaining the application origin.
-
-## 7. Production boundary
-
-Free hosting is suitable for development and controlled pilot use, but it is not equivalent to production-grade availability, backup retention, webhook reliability, or sustained dialer capacity. Live RingCentral calling also incurs provider costs.
+Before go-live, provision a VPS, configure PostgreSQL, install Node.js, configure Cloudflare Tunnel, set production secrets, run migrations, enable the systemd service, and verify `/api/health` and `/api/ready`.
