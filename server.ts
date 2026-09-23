@@ -2104,164 +2104,124 @@ async function startServer() {
   }
 
   // Scheduler API Endpoints
-  app.get('/api/scheduler/schedules', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
-    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    const schedules = (inMemoryStore.propertyRefreshSchedules || []).filter(
-      (s) => !orgId || s.organization_id === orgId
-    );
-    res.json(schedules);
-  });
-
-  app.post('/api/scheduler/schedules', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
+  app.get('/api/scheduler/schedules', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const {
-        name,
-        description,
-        target_property_ids = [],
-        target_selection_mode = 'selected',
-        county_filter,
-        interval_hours = 24,
-        enrichment_options = {
-          refresh_tax_assessor: true,
-          refresh_gis_geometry: true,
-          refresh_market_valuation: true,
-          check_absentee_status: true,
-          verify_tcpa_dnc: true,
-        },
-      } = req.body;
-
-      if (!name) {
-        return res.status(400).json({ error: 'Schedule name is required' });
+      const pool = getPgPool();
+      if (pool) {
+        const result = await pool.query(
+          `SELECT s.*, COALESCE((SELECT json_agg(l ORDER BY l.executed_at DESC) FROM property_refresh_logs l WHERE l.schedule_id = s.id), '[]'::json) AS history
+           FROM property_refresh_schedules s
+           WHERE s.organization_id = $1
+           ORDER BY s.next_run_at ASC`,
+          [orgId],
+        );
+        return res.json(result.rows);
       }
+      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+      return res.json((inMemoryStore.propertyRefreshSchedules || []).filter((s) => s.organization_id === orgId));
+    } catch (err: any) {
+      console.error('List schedules error:', err);
+      return res.status(500).json({ error: err.message || 'Failed to list schedules' });
+    }
+  });
 
+  app.post('/api/scheduler/schedules', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const { name, description, target_property_ids = [], target_selection_mode = 'selected', county_filter, interval_hours = 24,
+        enrichment_options = { refresh_tax_assessor: true, refresh_gis_geometry: true, refresh_market_valuation: true, check_absentee_status: true, verify_tcpa_dnc: true } } = req.body;
+      if (!name) return res.status(400).json({ error: 'Schedule name is required' });
       const now = new Date();
-      const nextRun = new Date(now.getTime() + (Number(interval_hours) || 24) * 3600000);
-
-      const newSchedule = {
-        id: `sched_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        organization_id: orgId,
-        name,
-        description: description || `Automated ${interval_hours}-hour background refresh for selected property records.`,
-        target_property_ids: Array.isArray(target_property_ids) ? target_property_ids : [],
-        target_selection_mode: target_selection_mode || 'selected',
-        county_filter: county_filter || undefined,
-        interval_hours: Number(interval_hours) || 24,
-        cron_expression: Number(interval_hours) === 24 ? '0 0 * * *' : undefined,
-        status: 'active' as const,
-        last_run_at: null,
-        next_run_at: nextRun.toISOString(),
-        last_run_status: undefined,
-        last_run_summary: 'Initialized. Scheduled for automatic 24-hour execution.',
-        last_run_refreshed_count: 0,
-        enrichment_options: {
-          refresh_tax_assessor: enrichment_options.refresh_tax_assessor !== false,
-          refresh_gis_geometry: enrichment_options.refresh_gis_geometry !== false,
-          refresh_market_valuation: enrichment_options.refresh_market_valuation !== false,
-          check_absentee_status: enrichment_options.check_absentee_status !== false,
-          verify_tcpa_dnc: enrichment_options.verify_tcpa_dnc !== false,
-        },
-        created_at: now.toISOString(),
-        updated_at: now.toISOString(),
-        created_by: 'Operations Executive',
-        history: [],
+      const intervalHours = Number(interval_hours) || 24;
+      const nextRun = new Date(now.getTime() + intervalHours * 3600000);
+      const schedule = {
+        id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, organization_id: orgId, name,
+        description: description || `Automated ${intervalHours}-hour background refresh for selected property records.`,
+        target_property_ids: Array.isArray(target_property_ids) ? target_property_ids : [], target_selection_mode,
+        county_filter: county_filter || null, interval_hours: intervalHours,
+        cron_expression: intervalHours === 24 ? '0 0 * * *' : null, status: 'active', last_run_at: null,
+        next_run_at: nextRun.toISOString(), last_run_status: null, last_run_summary: 'Initialized. Scheduled for automatic execution.',
+        last_run_refreshed_count: 0, enrichment_options: { refresh_tax_assessor: enrichment_options.refresh_tax_assessor !== false,
+          refresh_gis_geometry: enrichment_options.refresh_gis_geometry !== false, refresh_market_valuation: enrichment_options.refresh_market_valuation !== false,
+          check_absentee_status: enrichment_options.check_absentee_status !== false, verify_tcpa_dnc: enrichment_options.verify_tcpa_dnc !== false },
+        created_at: now.toISOString(), updated_at: now.toISOString(), created_by: 'Operations Executive', history: [],
       };
-
-      inMemoryStore.propertyRefreshSchedules.unshift(newSchedule);
-      res.status(201).json(newSchedule);
+      const pool = getPgPool();
+      if (pool) {
+        await pool.query(`INSERT INTO property_refresh_schedules (id, organization_id, name, description, target_property_ids, target_selection_mode, county_filter, interval_hours, cron_expression, status, last_run_at, next_run_at, last_run_summary, last_run_refreshed_count, enrichment_options, created_at, updated_at, created_by)
+          VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18)`,
+          [schedule.id, orgId, schedule.name, schedule.description, JSON.stringify(schedule.target_property_ids), schedule.target_selection_mode, schedule.county_filter,
+            schedule.interval_hours, schedule.cron_expression, schedule.status, null, schedule.next_run_at, schedule.last_run_summary, 0, JSON.stringify(schedule.enrichment_options), schedule.created_at, schedule.updated_at, schedule.created_by]);
+        return res.status(201).json(schedule);
+      }
+      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+      inMemoryStore.propertyRefreshSchedules.unshift(schedule as any);
+      return res.status(201).json(schedule);
     } catch (err: any) {
       console.error('Create schedule error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create schedule' });
+      return res.status(500).json({ error: err.message || 'Failed to create schedule' });
     }
   });
 
-  app.put('/api/scheduler/schedules/:id', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
+  app.put('/api/scheduler/schedules/:id', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
-      const index = inMemoryStore.propertyRefreshSchedules.findIndex(
-        (s) => s.id === scheduleId && s.organization_id === orgId
-      );
-
-      if (index === -1) {
-        return res.status(404).json({ error: 'Schedule not found' });
+      const pool = getPgPool();
+      if (pool) {
+        const body = req.body || {};
+        const existing = await pool.query('SELECT * FROM property_refresh_schedules WHERE id = $1 AND organization_id = $2 LIMIT 1', [scheduleId, orgId]);
+        if (!existing.rows[0]) return res.status(404).json({ error: 'Schedule not found' });
+        const current = existing.rows[0];
+        const nextInterval = Number(body.interval_hours ?? current.interval_hours ?? 24) || 24;
+        const nextRun = body.next_run_at || new Date(Date.now() + nextInterval * 3600000).toISOString();
+        const enrichment = body.enrichment_options || current.enrichment_options || {};
+        const result = await pool.query(`UPDATE property_refresh_schedules SET name=$1, description=$2, target_property_ids=$3::jsonb, target_selection_mode=$4, county_filter=$5, interval_hours=$6, cron_expression=$7, enrichment_options=$8::jsonb, next_run_at=$9, updated_at=CURRENT_TIMESTAMP WHERE id=$10 AND organization_id=$11 RETURNING *`,
+          [body.name ?? current.name, body.description ?? current.description, JSON.stringify(Array.isArray(body.target_property_ids) ? body.target_property_ids : current.target_property_ids), body.target_selection_mode ?? current.target_selection_mode,
+            body.county_filter ?? current.county_filter, nextInterval, nextInterval === 24 ? '0 0 * * *' : null, JSON.stringify(enrichment), nextRun, scheduleId, orgId]);
+        return res.json(result.rows[0]);
       }
-
-      const existing = inMemoryStore.propertyRefreshSchedules[index];
-      const updated = {
-        ...existing,
-        ...req.body,
-        id: existing.id,
-        organization_id: existing.organization_id,
-        updated_at: new Date().toISOString(),
-      };
-
-      inMemoryStore.propertyRefreshSchedules[index] = updated;
-      res.json(updated);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to update schedule' });
-    }
+      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+      const index = inMemoryStore.propertyRefreshSchedules.findIndex((s) => s.id === scheduleId && s.organization_id === orgId);
+      if (index < 0) return res.status(404).json({ error: 'Schedule not found' });
+      inMemoryStore.propertyRefreshSchedules[index] = { ...inMemoryStore.propertyRefreshSchedules[index], ...req.body, id: scheduleId, organization_id: orgId, updated_at: new Date().toISOString() };
+      return res.json(inMemoryStore.propertyRefreshSchedules[index]);
+    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to update schedule' }); }
   });
 
-  app.post('/api/scheduler/schedules/:id/toggle', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
+  app.post('/api/scheduler/schedules/:id/toggle', async (req, res) => {
     try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const scheduleId = req.params.id;
-      const index = inMemoryStore.propertyRefreshSchedules.findIndex(
-        (s) => s.id === scheduleId && s.organization_id === orgId
-      );
-
-      if (index === -1) {
-        return res.status(404).json({ error: 'Schedule not found' });
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
+      if (pool) {
+        const result = await pool.query(`UPDATE property_refresh_schedules SET status = CASE WHEN status='active' THEN 'paused' ELSE 'active' END, updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 RETURNING *`, [scheduleId, orgId]);
+        if (!result.rows[0]) return res.status(404).json({ error: 'Schedule not found' }); return res.json(result.rows[0]);
       }
-
-      const existing = inMemoryStore.propertyRefreshSchedules[index];
-      const nextStatus = existing.status === 'active' ? 'paused' : 'active';
-      existing.status = nextStatus;
-      existing.updated_at = new Date().toISOString();
-
-      inMemoryStore.propertyRefreshSchedules[index] = existing;
-      res.json(existing);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to toggle schedule' });
-    }
+      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+      const schedule = inMemoryStore.propertyRefreshSchedules.find((s) => s.id === scheduleId && s.organization_id === orgId); if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+      schedule.status = schedule.status === 'active' ? 'paused' : 'active'; schedule.updated_at = new Date().toISOString(); return res.json(schedule);
+    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to toggle schedule' }); }
   });
 
   app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const scheduleId = req.params.id;
-      const result = await executePropertyRefreshTask(scheduleId, orgId);
-      res.json(result);
-    } catch (err: any) {
-      console.error('Manual schedule run error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' });
-    }
+      if (isProduction) return res.status(202).json({ queued: false, message: 'Manual managed scheduler execution is delegated to the worker runtime.' });
+      return res.status(410).json({ error: 'Development scheduler execution is disabled on this route.' });
+    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' }); }
   });
 
-  app.delete('/api/scheduler/schedules/:id', (req, res) => {
-    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
+  app.delete('/api/scheduler/schedules/:id', async (req, res) => {
     try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const scheduleId = req.params.id;
-      const initialLength = inMemoryStore.propertyRefreshSchedules.length;
-      inMemoryStore.propertyRefreshSchedules = inMemoryStore.propertyRefreshSchedules.filter(
-        (s) => !(s.id === scheduleId && s.organization_id === orgId)
-      );
-
-      if (inMemoryStore.propertyRefreshSchedules.length === initialLength) {
-        return res.status(404).json({ error: 'Schedule not found' });
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
+      if (pool) {
+        const result = await pool.query('DELETE FROM property_refresh_schedules WHERE id=$1 AND organization_id=$2 RETURNING id', [scheduleId, orgId]);
+        if (!result.rows[0]) return res.status(404).json({ error: 'Schedule not found' }); return res.json({ success: true, message: 'Schedule deleted successfully' });
       }
-
-      res.json({ success: true, message: 'Schedule deleted successfully' });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete schedule' });
-    }
+      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+      const before = inMemoryStore.propertyRefreshSchedules.length; inMemoryStore.propertyRefreshSchedules = inMemoryStore.propertyRefreshSchedules.filter((s) => !(s.id === scheduleId && s.organization_id === orgId));
+      if (before === inMemoryStore.propertyRefreshSchedules.length) return res.status(404).json({ error: 'Schedule not found' }); return res.json({ success: true, message: 'Schedule deleted successfully' });
+    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to delete schedule' }); }
   });
 
   // Automated Email Outreach — authenticated, tenant-scoped, durable.
