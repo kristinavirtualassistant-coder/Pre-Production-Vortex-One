@@ -50,3 +50,18 @@ assert.match(approvalBlock, /PostgreSQL is required for authoritative approval s
 assert.match(source, /await getWorkflow\(pool, orgId, workflow_id\)/, 'Workflow execution resolves definition from PostgreSQL');
 assert.match(source, /await createApproval\(pool, orgId, approvalReq\)/, 'Workflow approvals persist to PostgreSQL');
 assert.match(source, /await updateTaskResult\(pool, orgId, executedTask\)/, 'Workflow tasks persist to PostgreSQL');
+
+
+const rbacExpectations: Array<[string, string]> = [
+  ["app.post('/api/tasks'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.put('/api/workflows/:id'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.delete('/api/workflows/:id'", "requireRole(['admin', 'executive'])"],
+];
+for (const [route, middleware] of rbacExpectations) {
+  const routeIndex = source.indexOf(route);
+  assert.ok(routeIndex >= 0, `RBAC route remains present: ${route}`);
+  const routeLineEnd = source.indexOf("\n", routeIndex);
+  const routeDeclaration = source.slice(routeIndex, routeLineEnd > routeIndex ? routeLineEnd : source.length);
+  assert.ok(routeDeclaration.includes(middleware), `RBAC enforced on ${route}`);
+}
