@@ -1027,7 +1027,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/webhooks/:id', async (req, res) => {
+  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
