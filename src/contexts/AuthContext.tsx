@@ -105,11 +105,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUserProfile(profile);
     setActiveTenant(tenant);
     setAvailableTenants([tenant]);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) {
       setLoading(false);
       return;
@@ -119,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!saved?.token || !saved?.user?.id) throw new Error('Invalid session');
       applySession(saved);
     } catch {
-      localStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
     } finally {
       setLoading(false);
     }
