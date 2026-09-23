@@ -1,0 +1,32 @@
+{
+  "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
+  "name": "vortex-one",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [
+    {
+      "class_name": "VortexOneContainer",
+      "image": "../../Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VORTEX_ONE_CONTAINER",
+        "class_name": "VortexOneContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["VortexOneContainer"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

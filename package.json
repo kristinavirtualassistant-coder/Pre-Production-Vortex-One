@@ -16,6 +16,7 @@
     "worker:property-refresh": "tsx server/workers/runPropertyRefreshWorker.ts"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -50,6 +51,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260923.1",
     "@types/papaparse": "^5.5.2"
   },
   "overrides": {
