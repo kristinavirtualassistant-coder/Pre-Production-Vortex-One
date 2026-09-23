@@ -4,6 +4,9 @@ import path from 'node:path';
 
 const projectRoot = process.cwd();
 const appSource = fs.readFileSync(path.join(projectRoot, 'src/App.tsx'), 'utf8');
+const authContextSource = fs.readFileSync(path.join(projectRoot, 'src/contexts/AuthContext.tsx'), 'utf8');
+assert.equal(/localStorage\.(getItem|setItem|removeItem)\(/.test(authContextSource), false, 'AuthContext must not persist bearer sessions in localStorage');
+assert.match(authContextSource, /sessionStorage\.setItem\(SESSION_KEY/);
 assert.equal(/\|\|\s*['"]org_cmc_realty['"]/.test(appSource), false, 'App must not fall back to CMC tenant');
 
 const componentDir = path.join(projectRoot, 'src/components');
