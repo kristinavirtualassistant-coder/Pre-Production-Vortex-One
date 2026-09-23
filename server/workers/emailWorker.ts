@@ -13,7 +13,7 @@ export async function runEmailWorkerOnce(): Promise<number> {
         FROM jobs
         WHERE status = 'queued'
           AND available_at <= CURRENT_TIMESTAMP
-          AND job_type = 'email_outreach'
+          AND job_type = 'email_outreach.send'
         ORDER BY organization_id`)).rows.map((row) => row.organization_id);
   for (const organizationId of organizations) {
     for (let i = 0; i < 10; i += 1) {
