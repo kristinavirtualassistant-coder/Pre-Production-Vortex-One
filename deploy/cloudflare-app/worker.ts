@@ -1,18 +1,20 @@
 import { Container, getContainer } from '@cloudflare/containers';
 import { env } from 'cloudflare:workers';
 
+type ContainerRuntimeEnv = { SQL_HOST: string; SQL_PORT: string; SQL_DB_NAME: string; SQL_USER: string; SQL_PASSWORD: string; SQL_SSL: string; VORTEX_ONE_SKIP_MIGRATIONS: string; };
+
 export class VortexOneContainer extends Container {
   defaultPort = 8080;
   sleepAfter = '10m';
   enableInternet = true;
   envVars = {
-    SQL_HOST: env.SQL_HOST,
-    SQL_PORT: env.SQL_PORT,
-    SQL_DB_NAME: env.SQL_DB_NAME,
-    SQL_USER: env.SQL_USER,
-    SQL_PASSWORD: env.SQL_PASSWORD,
-    SQL_SSL: env.SQL_SSL,
-    VORTEX_ONE_SKIP_MIGRATIONS: env.VORTEX_ONE_SKIP_MIGRATIONS,
+    SQL_HOST: (env as unknown as ContainerRuntimeEnv).SQL_HOST,
+    SQL_PORT: (env as unknown as ContainerRuntimeEnv).SQL_PORT,
+    SQL_DB_NAME: (env as unknown as ContainerRuntimeEnv).SQL_DB_NAME,
+    SQL_USER: (env as unknown as ContainerRuntimeEnv).SQL_USER,
+    SQL_PASSWORD: (env as unknown as ContainerRuntimeEnv).SQL_PASSWORD,
+    SQL_SSL: (env as unknown as ContainerRuntimeEnv).SQL_SSL,
+    VORTEX_ONE_SKIP_MIGRATIONS: (env as unknown as ContainerRuntimeEnv).VORTEX_ONE_SKIP_MIGRATIONS,
   };
 }
 

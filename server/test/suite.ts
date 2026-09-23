@@ -4,7 +4,7 @@
  */
 
 import { MIGRATIONS } from '../db/migrations';
-import { getPgPool, inMemoryStore, seedInitialData } from '../db/db';
+import { getPgPool, inMemoryStore, seedInitialData, initializeDatabase } from '../db/db';
 import { CallStateMachine } from '../dialer/fsm';
 import { SuppressionService, normalizePhoneNumber, formatPhoneNumber } from '../dialer/suppressionService';
 import { getTelephonyAdapter, RingCentralTelephonyAdapter } from '../dialer/telephonyAdapter';
@@ -33,6 +33,7 @@ import {
 import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
+import './rbacRouteBoundary.test';
 import './manualDialService.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
@@ -57,12 +58,36 @@ async function runAllTests() {
   console.log('  Vortex One - Automated Test Suite');
   console.log('========================================\n');
 
-  // Initialize seed data
+  // Initialize the authoritative PostgreSQL database when CI provides one.
+  await initializeDatabase();
+
+  // Initialize seed data for the in-memory compatibility fixtures used by legacy tests.
   seedInitialData();
+
+  // CI uses a clean PostgreSQL database, so create the canonical test organization and
+  // a telephony call fixture before exercising FK-constrained services.
+  const pgPool = getPgPool();
+  if (pgPool) {
+    await pgPool.query(`
+      INSERT INTO organizations (id, name, slug)
+      VALUES
+        ('org_cmc_realty', 'CMC Realty Test Organization', 'cmc-realty-test'),
+        ('org_test', 'Vortex One Integration Test Organization', 'vortex-one-integration-test'),
+        ('org_other_tenant', 'Vortex One Secondary Test Organization', 'vortex-one-secondary-test'),
+        ('org_tenant_b', 'Vortex One Tenant B', 'vortex-one-tenant-b')
+      ON CONFLICT (id) DO NOTHING
+    `);
+    await pgPool.query(`
+      INSERT INTO call (id, organization_id, telephony_call_id, contact_name, phone_number, status)
+      VALUES ('call_fixture_501', 'org_cmc_realty', 'call_501', 'CI Webhook Fixture', '(949) 555-0101', 'initiated')
+      ON CONFLICT (id) DO UPDATE
+        SET telephony_call_id = EXCLUDED.telephony_call_id, status = 'initiated'
+    `);
+  }
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 13, 'Migration count is 13', `Expected 13, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 13, 'Migration list contains 13 defined migrations', `Expected 13, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
@@ -205,6 +230,11 @@ async function runAllTests() {
 
     const startRes = await CampaignManager.startCampaign('org_cmc_realty', newCamp.id, 'agent_lead');
     assert(startRes.session.status === 'active', 'Dialing session started for campaign');
+    // Keep the integration test deterministic regardless of the CI runner clock.
+    await pgPool.query(
+      "UPDATE campaign SET calling_hours_start = '00:00', calling_hours_end = '23:59' WHERE id = $1 AND organization_id = $2",
+      [newCamp.id, 'org_cmc_realty'],
+    );
 
     await CampaignManager.addContacts('org_cmc_realty', newCamp.id, [
       { contactName: 'Arthur Pendelton', phoneNumber: '(949) 555-7788', priority: 2 },
@@ -219,11 +249,13 @@ async function runAllTests() {
     // Auto-check should catch (949) 555-9999 or dial regular contact
     assert(['dialed', 'suppressed'].includes(dialBlocked.status), 'Dialer successfully processed contact with compliance check');
 
-    await CampaignManager.pauseCampaign('org_cmc_realty', newCamp.id);
-    assert(inMemoryStore.campaigns.find(c => c.id === newCamp.id)?.status === 'paused', 'Campaign paused successfully');
+    const paused = await CampaignManager.pauseCampaign('org_cmc_realty', newCamp.id);
+    const pausedRow = await pgPool.query('SELECT status FROM campaign WHERE id = $1 AND organization_id = $2', [newCamp.id, 'org_cmc_realty']);
+    assert(paused === true && pausedRow.rows[0]?.status === 'paused', 'Campaign paused successfully');
 
-    await CampaignManager.stopCampaign('org_cmc_realty', newCamp.id);
-    assert(inMemoryStore.campaigns.find(c => c.id === newCamp.id)?.status === 'completed', 'Campaign stopped/completed successfully');
+    const stopped = await CampaignManager.stopCampaign('org_cmc_realty', newCamp.id);
+    const stoppedRow = await pgPool.query('SELECT status FROM campaign WHERE id = $1 AND organization_id = $2', [newCamp.id, 'org_cmc_realty']);
+    assert(stopped === true && stoppedRow.rows[0]?.status === 'completed', 'Campaign stopped/completed successfully');
 
   }
 
@@ -398,12 +430,13 @@ async function runAllTests() {
 
     // Tenant B isolation test with an explicitly supplied authoritative batch.
     const tenantBResult = await DataImportService.reconcileBatch('org_tenant_b', testBatch);
-    const tenantBProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_tenant_b');
-    const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === TEST_ORG_ID);
-    assert(tenantBProps.length > 0 && tenantAProps.length > 0, 'Both tenant partitions populated independently');
+    const tenantBCount = await pgPool.query('SELECT COUNT(*)::int AS count FROM properties WHERE organization_id = $1', ['org_tenant_b']);
+    const tenantACount = await pgPool.query('SELECT COUNT(*)::int AS count FROM properties WHERE organization_id = $1', ['org_cmc_realty']);
+    assert(tenantBResult.total_records_processed === testBatch.length, 'Tenant B reconciliation processed the authoritative batch');
+    assert(tenantBCount.rows[0]?.count > 0 && tenantACount.rows[0]?.count > 0, 'Both tenant partitions populated independently');
     assert(
-      tenantBProps.every((p) => p.organization_id === 'org_tenant_b'),
-      'Tenant B properties strictly partitioned'
+      tenantBResult.reconciled_owner_ids.length > 0,
+      'Tenant B reconciliation returned tenant-scoped owner records'
     );
   }
 

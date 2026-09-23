@@ -38,7 +38,7 @@ export function buildCampaignEligibilityQuery(
           AND (l.dnc_compliant IS NULL OR l.dnc_compliant = TRUE)
           AND (CURRENT_TIME AT TIME ZONE c.timezone) BETWEEN c.calling_hours_start AND c.calling_hours_end
         ORDER BY COALESCE(l.lead_score, 0) DESC, cc.priority DESC, cc.created_at ASC
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF cc SKIP LOCKED
         LIMIT 1
       )
       UPDATE campaign_contact cc
