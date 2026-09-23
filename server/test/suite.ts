@@ -33,6 +33,7 @@ import {
 import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
+import './rbacRouteBoundary.test';
 import './manualDialService.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
