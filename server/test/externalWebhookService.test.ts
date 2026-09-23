@@ -14,6 +14,7 @@ function testUrlValidation() {
   assert.equal(isSupportedWebhookUrl('http://localhost:8080/hook'), true);
   assert.equal(isSupportedWebhookUrl('ftp://example.com/hook'), false);
   assert.equal(isSupportedWebhookUrl('javascript:alert(1)'), false);
+  assert.equal(isSupportedWebhookUrl('https://example.com/webhook'), true);
 }
 
 function testSignature() {
