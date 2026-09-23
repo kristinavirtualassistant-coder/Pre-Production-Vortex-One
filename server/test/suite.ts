@@ -70,7 +70,11 @@ async function runAllTests() {
   if (pgPool) {
     await pgPool.query(`
       INSERT INTO organizations (id, name, slug)
-      VALUES ('org_cmc_realty', 'CMC Realty Test Organization', 'cmc-realty-test')
+      VALUES
+        ('org_cmc_realty', 'CMC Realty Test Organization', 'cmc-realty-test'),
+        ('org_test', 'Vortex One Integration Test Organization', 'vortex-one-integration-test'),
+        ('org_other_tenant', 'Vortex One Secondary Test Organization', 'vortex-one-secondary-test'),
+        ('org_tenant_b', 'Vortex One Tenant B', 'vortex-one-tenant-b')
       ON CONFLICT (id) DO NOTHING
     `);
     await pgPool.query(`
@@ -240,11 +244,13 @@ async function runAllTests() {
     // Auto-check should catch (949) 555-9999 or dial regular contact
     assert(['dialed', 'suppressed'].includes(dialBlocked.status), 'Dialer successfully processed contact with compliance check');
 
-    await CampaignManager.pauseCampaign('org_cmc_realty', newCamp.id);
-    assert(inMemoryStore.campaigns.find(c => c.id === newCamp.id)?.status === 'paused', 'Campaign paused successfully');
+    const paused = await CampaignManager.pauseCampaign('org_cmc_realty', newCamp.id);
+    const pausedRow = await pgPool.query('SELECT status FROM campaign WHERE id = $1 AND organization_id = $2', [newCamp.id, 'org_cmc_realty']);
+    assert(paused === true && pausedRow.rows[0]?.status === 'paused', 'Campaign paused successfully');
 
-    await CampaignManager.stopCampaign('org_cmc_realty', newCamp.id);
-    assert(inMemoryStore.campaigns.find(c => c.id === newCamp.id)?.status === 'completed', 'Campaign stopped/completed successfully');
+    const stopped = await CampaignManager.stopCampaign('org_cmc_realty', newCamp.id);
+    const stoppedRow = await pgPool.query('SELECT status FROM campaign WHERE id = $1 AND organization_id = $2', [newCamp.id, 'org_cmc_realty']);
+    assert(stopped === true && stoppedRow.rows[0]?.status === 'completed', 'Campaign stopped/completed successfully');
 
   }
 
