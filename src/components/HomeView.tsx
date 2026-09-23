@@ -131,7 +131,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Subtitle */}
           <p className="mt-6 text-base sm:text-lg text-slate-600 max-w-3xl mx-auto leading-relaxed">
-            Vortex One orchestrates a coordinated fleet of 10 specialized autonomous AI agents to search public California County Assessor rolls, calculate verified equity distress, conduct skip-trace research, and draft personalized outreach with human governance.
+            Vortex One connects property intelligence, owner research, lead qualification, CRM, communications, and automation in one operating system. Discover properties, understand owners, qualify opportunities, and move approved leads into action.
           </p>
 
           {/* Hero Action Buttons */}
@@ -212,10 +212,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Automated Pipeline Architecture
             </span>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-950 mt-3 tracking-tight">
-              The 4-Step Acquisition Loop
+              The Vortex One Operating Loop
             </h2>
             <p className="text-sm text-slate-600 mt-2">
-              From public county tax assessor records to qualified owner conversations in seconds.
+              From property discovery to qualified owner conversations, with data provenance and human approval built into the workflow.
             </p>
           </div>
 
@@ -332,10 +332,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 Cognitive Fleet Telemetry
               </span>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-950 mt-3 tracking-tight">
-                The 10-Agent Autonomous Fleet
+                The Intelligence & Automation Layer
               </h2>
               <p className="text-sm text-slate-600 mt-1">
-                Each sub-agent possesses strict operational boundaries and domain-specialized prompts.
+                Specialized intelligence and automation services work together while keeping important actions reviewable.
               </p>
             </div>
             <button
@@ -378,10 +378,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-950 tracking-tight">
-              Enterprise Features Built for Scale
+              Everything Connected in One System
             </h2>
             <p className="text-sm text-slate-600 mt-2">
-              Everything required to scale commercial property acquisition without manual data entry.
+              One platform for property intelligence, owner intelligence, lead qualification, CRM, communications, and workflow automation.
             </p>
           </div>
 
@@ -504,10 +504,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <section className="py-16 bg-gradient-to-tr from-slate-950 via-slate-900 to-cyan-950 text-white">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
-            Ready to Automate Real Estate Acquisition?
+            From Property Data to Action
           </h2>
           <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            Access live California County Assessor rolls, run multi-agent distress models, and dispatch personalized outreach with full governance.
+            Turn property and owner data into organized, qualified opportunities, approved outreach, and measurable follow-up workflows.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
@@ -610,7 +610,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <span>•</span>
               <button onClick={() => onNavigate('terms')} className="hover:text-slate-900 transition cursor-pointer">Terms</button>
               <span>•</span>
-              <span className="text-slate-400 font-mono">California Real Estate DRE #01928471</span>
+              <span className="text-slate-400 font-mono">Property Intelligence Platform</span>
             </div>
           </div>
         </div>
