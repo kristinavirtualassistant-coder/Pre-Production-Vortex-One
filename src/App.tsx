@@ -31,6 +31,7 @@ import { ReportsView } from './components/ReportsView';
 import { CampaignsView } from './components/CampaignsView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { SettingsView } from './components/SettingsView';
+import { IntegrationCenterView } from './components/IntegrationCenterView';
 import { ContextInspector } from './components/ContextInspector';
 import { CommandPalette } from './components/CommandPalette';
 import { EasyHelpModal } from './components/EasyHelpModal';
@@ -73,6 +74,7 @@ const VALID_VIEWS = [
   'analytics',
   'reports',
   'settings',
+  'integrations',
   'studio',
   'agents',
   'workflows',
@@ -815,6 +817,7 @@ export default function App() {
             />
           )}
 
+          {currentView === 'integrations' && <IntegrationCenterView />}
           {currentView === 'settings' && (
             <SettingsView
               dbStatus={dbStatus}

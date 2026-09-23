@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 /**
  * Vortex One - Server Entry Point (Express + Vite)
  */
@@ -35,6 +37,7 @@ import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { queueEmailOutreach } from './server/services/emailOutreachService';
 import { startEmailWorker } from './server/services/emailWorker';
+import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
 
 async function startServer() {
   const app = express();
@@ -95,6 +98,67 @@ async function startServer() {
 
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
+  });
+
+  // --- Integration Center ---
+  app.get('/api/integrations', async (req, res) => {
+    const pool = getPgPool();
+    const organizationId = (req as AuthRequest).dbUser?.organization_id;
+    if (!pool || !organizationId) return res.status(503).json({ error: 'Integration service unavailable' });
+    try {
+      const result = await pool.query(
+        `SELECT provider, account_email, external_account_id, scopes, status, token_expires_at, updated_at
+         FROM integration_connections WHERE organization_id = $1 ORDER BY provider`,
+        [organizationId],
+      );
+      res.json({ connections: result.rows.map((row) => ({ ...row, access_token: undefined, refresh_token: undefined })) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to load integrations' });
+    }
+  });
+
+  app.get('/api/integrations/oauth/start/:provider', async (req, res) => {
+    const pool = getPgPool();
+    const auth = req as AuthRequest;
+    if (!pool || !auth.dbUser) return res.status(503).json({ error: 'Integration service unavailable' });
+    const provider = req.params.provider as OAuthProvider;
+    if (provider !== 'google-workspace' && provider !== 'microsoft-365') return res.status(404).json({ error: 'OAuth provider is not supported' });
+    try {
+      const url = await createOAuthStart(pool, { provider, userId: auth.dbUser.id, organizationId: auth.dbUser.organization_id });
+      res.json({ provider, authorizationUrl: url });
+    } catch (error: any) {
+      res.status(503).json({ error: error.message || 'OAuth provider is not configured' });
+    }
+  });
+
+  app.get('/api/integrations/oauth/callback/:provider', async (req, res) => {
+    const pool = getPgPool();
+    const provider = req.params.provider as OAuthProvider;
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!pool || !code || !state) return res.status(400).send('OAuth callback is missing required parameters.');
+    if (provider !== 'google-workspace' && provider !== 'microsoft-365') return res.status(404).send('OAuth provider is not supported.');
+    try {
+      await completeOAuthCallback(pool, provider, state, code);
+      const returnUrl = `${process.env.APP_URL || 'http://localhost:8080'}/?view=integrations&connected=${encodeURIComponent(provider)}`;
+      res.redirect(returnUrl);
+    } catch (error: any) {
+      console.error(`OAuth callback failed for ${provider}:`, error);
+      const returnUrl = `${process.env.APP_URL || 'http://localhost:8080'}/?view=integrations&integrationError=${encodeURIComponent(error.message || 'OAuth connection failed')}`;
+      res.redirect(returnUrl);
+    }
+  });
+
+  app.delete('/api/integrations/:provider', async (req, res) => {
+    const pool = getPgPool();
+    const auth = req as AuthRequest;
+    if (!pool || !auth.dbUser) return res.status(503).json({ error: 'Integration service unavailable' });
+    try {
+      await pool.query('DELETE FROM integration_connections WHERE organization_id = $1 AND user_id = $2 AND provider = $3', [auth.dbUser.organization_id, auth.dbUser.id, req.params.provider]);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to disconnect integration' });
+    }
   });
 
   app.get('/api/operational/metrics', async (req, res) => {
