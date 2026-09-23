@@ -134,11 +134,7 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
     lastRunRefreshedCount: updated,
   });
 
-    if (job) await completeJob(pool, job.organization_id, job.id, workerId);
-  } catch (error: any) {
-    if (job) await failJob(pool, job.organization_id, job.id, workerId, error?.message || 'Property refresh worker failed');
-    throw error;
-  }
+  if (job) await completeJob(pool, job.organization_id, job.id, workerId);
 
   await pool.query(
     `INSERT INTO audit_logs
