@@ -90,3 +90,5 @@ Complete the authorization matrix and negative-test suite before expanding domai
 ## Status rule
 
 This assessment distinguishes observed repository evidence from recommendations. An unobserved artifact is Unverified, not proof that no implementation exists.
+
+> CI note: M2 RBAC route coverage is enforced on the contractor execution branch; workflow validation must run against the latest branch head before authorization is considered verified.
