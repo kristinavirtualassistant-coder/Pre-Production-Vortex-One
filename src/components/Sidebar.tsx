@@ -178,18 +178,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className={`bg-white border-r border-slate-200 flex flex-col shrink-0 select-none transition-all duration-200 ${
+      className={`bg-slate-50/95 border-r border-slate-200/90 flex flex-col shrink-0 select-none transition-all duration-200 ${
         isCollapsed ? 'w-16' : 'w-60 lg:w-64'
-      } shadow-xs z-20`}
+      } shadow-[4px_0_18px_rgba(15,23,42,0.025)] z-20`}
     >
       {/* Brand Header */}
-      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+      <div className="p-4 border-b border-slate-200/80 bg-white/60 flex items-center justify-between">
         {!isCollapsed ? (
           <div
             onClick={() => onNavigate('dashboard')}
             className="flex items-center space-x-2.5 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center shadow-xs text-white">
+            <div className="w-8 h-8 rounded-xl bg-slate-950 flex items-center justify-center shadow-md text-white ring-1 ring-slate-800">
               <Layers className="w-4 h-4" />
             </div>
             <div>
@@ -207,7 +207,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <div
             onClick={() => onNavigate('dashboard')}
-            className="w-8 h-8 mx-auto rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-white cursor-pointer shadow-xs"
+            className="w-8 h-8 mx-auto rounded-xl bg-slate-950 flex items-center justify-center text-white cursor-pointer shadow-md ring-1 ring-slate-800"
             title="VORTEX ONE"
           >
             <Layers className="w-4 h-4" />
@@ -234,8 +234,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between px-3 py-2'
             } rounded-lg text-xs font-semibold transition cursor-pointer ${
               isCommandCenterActive
-                ? 'bg-cyan-50 text-cyan-900 font-bold border border-cyan-200 shadow-2xs'
-                : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 border border-transparent'
+                ? 'bg-slate-900 text-white font-bold border border-slate-900 shadow-md shadow-slate-900/10'
+                : 'text-slate-600 hover:text-slate-950 hover:bg-white hover:border-slate-200 border border-transparent'
             }`}
           >
             <div className="flex items-center space-x-2.5 truncate">
@@ -273,7 +273,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
           ) : (
-            <div className="h-px bg-slate-100 my-2 mx-1" />
+            <div className="h-px bg-slate-200 my-2 mx-1" />
           )}
 
           {/* Primary Fleet Monitor entry button */}
@@ -284,8 +284,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between px-3 py-2'
             } rounded-lg text-xs font-medium transition cursor-pointer ${
               isAgentViewActive
-                ? 'bg-cyan-50 text-cyan-900 font-bold border border-cyan-200 shadow-2xs'
-                : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 border border-transparent'
+                ? 'bg-slate-900 text-white font-bold border border-slate-900 shadow-md shadow-slate-900/10'
+                : 'text-slate-600 hover:text-slate-950 hover:bg-white hover:border-slate-200 border border-transparent'
             }`}
           >
             <div className="flex items-center space-x-2.5 truncate">
@@ -353,11 +353,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {PRIMARY_NAV_SECTIONS.map((section) => (
           <div key={section.category} className="space-y-1">
             {!isCollapsed ? (
-              <h3 className="text-[10px] font-bold tracking-wider text-slate-400 uppercase px-3 py-1">
+              <h3 className="text-[10px] font-extrabold tracking-[0.14em] text-slate-400 uppercase px-3 py-1">
                 {section.category}
               </h3>
             ) : (
-              <div className="h-px bg-slate-100 my-2 mx-1" />
+              <div className="h-px bg-slate-200 my-2 mx-1" />
             )}
 
             {section.items.map((item) => {
@@ -384,8 +384,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between px-3 py-2'
                   } rounded-lg text-xs font-medium transition cursor-pointer ${
                     isActive
-                      ? 'bg-cyan-50 text-cyan-900 font-bold border border-cyan-200 shadow-2xs'
-                      : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100/80 border border-transparent'
+                      ? 'bg-slate-900 text-white font-bold border border-slate-900 shadow-md shadow-slate-900/10'
+                      : 'text-slate-600 hover:text-slate-950 hover:bg-white hover:border-slate-200 border border-transparent'
                   }`}
                 >
                   <div className="flex items-center space-x-2.5 truncate">
@@ -422,11 +422,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Quick Help & Footer */}
       {!isCollapsed ? (
-        <div className="p-3 border-t border-slate-100 bg-slate-50/70 space-y-2">
+        <div className="p-3 border-t border-slate-200/80 bg-white/70 space-y-2">
           {onOpenHelp && (
             <button
               onClick={onOpenHelp}
-              className="w-full text-left p-2 rounded-lg bg-white border border-slate-200 hover:border-cyan-300 text-slate-700 hover:text-cyan-950 transition cursor-pointer text-xs flex items-center space-x-2 shadow-2xs"
+              className="w-full text-left p-2.5 rounded-xl bg-white border border-slate-200 hover:border-cyan-300 text-slate-700 hover:text-cyan-950 transition cursor-pointer text-xs flex items-center space-x-2 shadow-2xs"
             >
               <HelpCircle className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
               <div className="truncate">
