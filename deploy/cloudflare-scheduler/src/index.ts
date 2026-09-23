@@ -1,3 +1,6 @@
+interface ScheduledController { cron: string; scheduledTime: number; }
+interface ExecutionContext { waitUntil(promise: Promise<unknown>): void; }
+
 interface Env {
   VORTEX_ONE_API_URL: string;
   SCHEDULER_TRIGGER_SECRET: string;

@@ -64,11 +64,18 @@ async function startServer() {
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
+    const db = getDatabaseStatus();
+    const healthy = db.connected && db.type === 'postgresql';
+    res.status(healthy ? 200 : 503).json({
+      status: healthy ? 'ok' : 'degraded',
       platform: 'Vortex One Multi-Agent Intelligence',
       version: '1.0.0',
       timestamp: new Date().toISOString(),
+      db: {
+        type: db.type,
+        connected: db.connected,
+        appliedMigrationsCount: db.appliedMigrationsCount,
+      },
     });
   });
 

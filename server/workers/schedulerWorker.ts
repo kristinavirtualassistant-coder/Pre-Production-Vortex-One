@@ -134,12 +134,6 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
     lastRunRefreshedCount: updated,
   });
 
-    if (job) await completeJob(pool, job.organization_id, job.id, workerId);
-  } catch (error: any) {
-    if (job) await failJob(pool, job.organization_id, job.id, workerId, error?.message || 'Property refresh worker failed');
-    throw error;
-  }
-
   await pool.query(
     `INSERT INTO audit_logs
       (id, organization_id, agent, action, input, output, status, latency_ms, confidence, source, created_at)
@@ -159,5 +153,13 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
     ],
   );
 
+  if (job) await completeJob(pool, job.organization_id, job.id, workerId);
+
   return { claimed: true, scheduleId: schedule.id, organizationId: schedule.organization_id, processed, updated, status };
+  } catch (error: any) {
+    if (job) {
+      await failJob(pool, job.organization_id, job.id, workerId, error?.message || String(error), 60);
+    }
+    throw error;
+  }
 }
