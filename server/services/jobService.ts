@@ -1,6 +1,11 @@
 import type { Pool } from 'pg';
 import { requireOrganizationId } from './organizationContext';
 
+export const JOB_TYPES = {
+  EMAIL_OUTREACH: 'email_outreach.send',
+  SCHEDULED_CAMPAIGN: 'campaign.scheduled_dispatch',
+} as const;
+
 export interface JobRecord { id: string; organization_id: string; job_type: string; payload: Record<string, unknown>; status: string; attempts: number; max_attempts: number; }
 
 export async function enqueueJob(pool: Pool, organizationId: string, jobType: string, payload: Record<string, unknown>, maxAttempts = 3): Promise<string> {

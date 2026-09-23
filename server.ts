@@ -36,7 +36,7 @@ import { searchProperties, type PropertySearchQuery } from './server/services/pr
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { queueEmailOutreach } from './server/services/emailOutreachService';
-import { startEmailWorker } from './server/services/emailWorker';
+// Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
 
 async function startServer() {
@@ -57,12 +57,6 @@ async function startServer() {
   } catch (err: any) {
     console.error('Database initialization warning:', err.message);
     if (isProduction) throw err;
-  }
-
-  if (isProduction) {
-    const pool = getPgPool();
-    const configuredOrg = process.env.EMAIL_WORKER_ORGANIZATION_ID?.trim() || undefined;
-    if (pool) startEmailWorker(pool, configuredOrg);
   }
 
   // --- API Routes ---
@@ -2081,8 +2075,9 @@ async function startServer() {
     };
   };
 
-  // Background timer interval: check every 30 seconds for due schedules & scheduled campaign execution
-  setInterval(() => {
+  // Development-only scheduler. Production uses managed worker invocations.
+  if (!isProduction) {
+    setInterval(() => {
     try {
       const now = new Date().getTime();
       const schedules = inMemoryStore.propertyRefreshSchedules || [];
@@ -2105,7 +2100,8 @@ async function startServer() {
     } catch (schedTickErr) {
       console.error('[Scheduler] Periodic tick check error:', schedTickErr);
     }
-  }, 30000);
+    }, 30000).unref?.();
+  }
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
