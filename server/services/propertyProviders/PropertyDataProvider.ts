@@ -53,6 +53,60 @@ export function buildPropertySearchCachePayload(query: PropertySearchQuery): Rec
 }
 
 export class UnifiedPropertyDataProvider {
+  /**
+   * Refresh one persisted property from its authoritative county/provider source.
+   * This method performs no synthetic valuation adjustment; only provider-returned fields are applied.
+   */
+  public async refreshProperty(property: import('../../../src/types').Property, orgId: string, options: {
+    refresh_tax_assessor?: boolean;
+    refresh_gis_geometry?: boolean;
+    check_absentee_status?: boolean;
+  } = {}): Promise<{ updated: boolean; property: import('../../../src/types').Property; valuationDelta: number; equityDelta: number; providerUsed: string }> {
+    const query: PropertySearchQuery = {
+      apn: property.apn,
+      address: property.address,
+      city: property.city,
+      county: property.county,
+      state: property.state,
+      organizationId: requireOrganizationId(orgId),
+      persist: false,
+      limit: 1,
+    };
+    const response = await this.search(query);
+    const refreshed = response.results[0]?.property;
+    if (!refreshed) {
+      return { updated: false, property, valuationDelta: 0, equityDelta: 0, providerUsed: response.providerUsed };
+    }
+
+    const next = { ...property };
+    if (options.refresh_tax_assessor !== false) {
+      next.assessed_tax_value = refreshed.assessed_tax_value || next.assessed_tax_value;
+      next.tax_delinquent = refreshed.tax_delinquent ?? next.tax_delinquent;
+    }
+    if (options.refresh_gis_geometry !== false && refreshed.latitude != null && refreshed.longitude != null) {
+      next.latitude = refreshed.latitude;
+      next.longitude = refreshed.longitude;
+    }
+    if (options.check_absentee_status !== false) {
+      next.is_absentee_owner = refreshed.is_absentee_owner ?? next.is_absentee_owner;
+    }
+    if (refreshed.estimated_value > 0) {
+      next.estimated_value = refreshed.estimated_value;
+      if (refreshed.estimated_equity >= 0) next.estimated_equity = refreshed.estimated_equity;
+    } else if (next.mortgage_balance != null) {
+      next.estimated_equity = Math.max(0, next.estimated_value - next.mortgage_balance);
+    }
+    next.provenance = refreshed.provenance || next.provenance;
+
+    return {
+      updated: true,
+      property: next,
+      valuationDelta: next.estimated_value - property.estimated_value,
+      equityDelta: next.estimated_equity - property.estimated_equity,
+      providerUsed: response.providerUsed,
+    };
+  }
+
   private orangeCountyProvider: OrangeCountyGISProvider;
   private losAngelesCountyProvider: LosAngelesCountyGISProvider;
   private sanDiegoCountyProvider: SanDiegoCountyGISProvider;
