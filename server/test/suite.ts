@@ -58,7 +58,10 @@ async function runAllTests() {
   console.log('  Vortex One - Automated Test Suite');
   console.log('========================================\n');
 
-  // Initialize seed data
+  // Initialize the authoritative PostgreSQL database when CI provides one.
+  await initializeDatabase();
+
+  // Initialize seed data for the in-memory compatibility fixtures used by legacy tests.
   seedInitialData();
 
   // Test Group 1: Database Migration System Integrity
