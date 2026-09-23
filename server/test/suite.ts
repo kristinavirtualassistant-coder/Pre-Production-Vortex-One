@@ -68,18 +68,20 @@ async function runAllTests() {
   // a telephony call fixture before exercising FK-constrained services.
   const pgPool = getPgPool();
   if (pgPool) {
-    await pgPool.query(\
-      \`INSERT INTO organizations (id, name, slug)\
-       VALUES ('org_cmc_realty', 'CMC Realty Test Organization', 'cmc-realty-test')\
-       ON CONFLICT (id) DO NOTHING\`\
-    );
-    await pgPool.query(\
-      \`INSERT INTO call (id, organization_id, telephony_call_id, contact_name, phone_number, status)\
-       VALUES ('call_fixture_501', 'org_cmc_realty', 'call_501', 'CI Webhook Fixture', '(949) 555-0101', 'initiated')\
-       ON CONFLICT (id) DO UPDATE SET telephony_call_id = EXCLUDED.telephony_call_id, status = 'initiated'\`\
-    );
+    await pgPool.query(`
+      INSERT INTO organizations (id, name, slug)
+      VALUES ('org_cmc_realty', 'CMC Realty Test Organization', 'cmc-realty-test')
+      ON CONFLICT (id) DO NOTHING
+    `);
+    await pgPool.query(`
+      INSERT INTO call (id, organization_id, telephony_call_id, contact_name, phone_number, status)
+      VALUES ('call_fixture_501', 'org_cmc_realty', 'call_501', 'CI Webhook Fixture', '(949) 555-0101', 'initiated')
+      ON CONFLICT (id) DO UPDATE
+        SET telephony_call_id = EXCLUDED.telephony_call_id, status = 'initiated'
+    `);
   }
-\n  // Test Group 1: Database Migration System Integrity
+
+  // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
   assert(MIGRATIONS.length === 13, 'Migration list contains 13 defined migrations', `Expected 13, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
@@ -1012,3 +1014,8 @@ async function runAllTests() {
     process.exit(1);
   }
 }
+
+runAllTests().catch((err) => {
+  console.error('Test runner fatal error:', err);
+  process.exit(1);
+});
