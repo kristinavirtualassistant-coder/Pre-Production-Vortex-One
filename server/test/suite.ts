@@ -230,6 +230,11 @@ async function runAllTests() {
 
     const startRes = await CampaignManager.startCampaign('org_cmc_realty', newCamp.id, 'agent_lead');
     assert(startRes.session.status === 'active', 'Dialing session started for campaign');
+    // Keep the integration test deterministic regardless of the CI runner clock.
+    await pgPool.query(
+      "UPDATE campaign SET calling_hours_start = '00:00', calling_hours_end = '23:59' WHERE id = $1 AND organization_id = $2",
+      [newCamp.id, 'org_cmc_realty'],
+    );
 
     await CampaignManager.addContacts('org_cmc_realty', newCamp.id, [
       { contactName: 'Arthur Pendelton', phoneNumber: '(949) 555-7788', priority: 2 },
@@ -425,12 +430,13 @@ async function runAllTests() {
 
     // Tenant B isolation test with an explicitly supplied authoritative batch.
     const tenantBResult = await DataImportService.reconcileBatch('org_tenant_b', testBatch);
-    const tenantBProps = inMemoryStore.properties.filter((p) => p.organization_id === 'org_tenant_b');
-    const tenantAProps = inMemoryStore.properties.filter((p) => p.organization_id === TEST_ORG_ID);
-    assert(tenantBProps.length > 0 && tenantAProps.length > 0, 'Both tenant partitions populated independently');
+    const tenantBCount = await pgPool.query('SELECT COUNT(*)::int AS count FROM properties WHERE organization_id = $1', ['org_tenant_b']);
+    const tenantACount = await pgPool.query('SELECT COUNT(*)::int AS count FROM properties WHERE organization_id = $1', ['org_cmc_realty']);
+    assert(tenantBResult.total_records_processed === testBatch.length, 'Tenant B reconciliation processed the authoritative batch');
+    assert(tenantBCount.rows[0]?.count > 0 && tenantACount.rows[0]?.count > 0, 'Both tenant partitions populated independently');
     assert(
-      tenantBProps.every((p) => p.organization_id === 'org_tenant_b'),
-      'Tenant B properties strictly partitioned'
+      tenantBResult.reconciled_owner_ids.length > 0,
+      'Tenant B reconciliation returned tenant-scoped owner records'
     );
   }
 
