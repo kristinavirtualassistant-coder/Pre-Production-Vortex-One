@@ -132,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 px-4 lg:px-6 flex items-center justify-between sticky top-0 z-30 shadow-2xs">
+    <header className="h-16 bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-4 lg:px-6 flex items-center justify-between sticky top-0 z-30 shadow-[0_1px_0_rgba(15,23,42,0.03),0_8px_24px_rgba(15,23,42,0.04)]">
       {/* Brand Identity & Tenant Indicator */}
       <div className="flex items-center space-x-3 lg:space-x-4 shrink-0">
         <div
@@ -140,13 +140,13 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={() => onNavigate('home')}
           title="Go to Vortex One Home"
         >
-          <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center shadow-md shadow-cyan-600/15 group-hover:scale-105 transition-transform">
+          <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-xl bg-slate-950 flex items-center justify-center shadow-lg shadow-slate-900/10 ring-1 ring-slate-800 group-hover:-translate-y-0.5 transition-transform">
             <Layers className="w-4 h-4 lg:w-5 lg:h-5 text-white" />
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-base lg:text-lg text-slate-900 tracking-tight">VORTEX ONE</span>
-              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-200">
+              <span className="font-extrabold text-base lg:text-lg text-slate-950 tracking-[-0.02em]">VORTEX ONE</span>
+              <span className="text-[9px] uppercase font-extrabold tracking-[0.12em] px-1.5 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200">
                 Agent OS
               </span>
             </div>
@@ -164,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => setIsTenantMenuOpen(!isTenantMenuOpen)}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100/80 border border-slate-200 text-xs font-semibold text-slate-700 transition cursor-pointer"
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50/80 hover:bg-white border border-slate-200/90 hover:border-slate-300 text-xs font-semibold text-slate-700 transition cursor-pointer shadow-sm"
             title="Switch Active Tenant Organization"
           >
             <Building className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
@@ -226,7 +226,7 @@ export const Header: React.FC<HeaderProps> = ({
             id="header-quick-actions-btn"
             type="button"
             onClick={() => setIsQuickActionsOpen(!isQuickActionsOpen)}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white text-xs font-bold shadow-xs transition cursor-pointer active:scale-95"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold shadow-md shadow-slate-900/10 transition cursor-pointer active:scale-[0.98] ring-1 ring-slate-900"
             title="Trigger Quick Tasks (New Lead, Quick Search, Research Queue)"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -386,7 +386,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700 transition cursor-pointer"
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-white/80 hover:bg-white border border-slate-200 hover:border-slate-300 text-xs font-semibold text-slate-700 transition cursor-pointer shadow-sm"
             title="Tools, Guide & Cache Inspector"
           >
             <Sparkles className="w-3.5 h-3.5 text-cyan-600" />
