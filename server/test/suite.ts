@@ -37,6 +37,7 @@ import './manualDialService.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
+import './schedulerTriggerContract.test';
 
 let passedTests = 0;
 let failedTests = 0;

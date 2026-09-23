@@ -72,6 +72,28 @@ async function startServer() {
     });
   });
 
+  app.post('/internal/scheduler/property-refresh', async (req, res) => {
+    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
+    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
+    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for scheduler execution' });
+      const { runPropertyRefreshWorkerOnce } = await import('./server/workers/schedulerWorker');
+      const results = [];
+      for (let i = 0; i < 10; i += 1) {
+        const result = await runPropertyRefreshWorkerOnce();
+        if (!result.claimed) break;
+        results.push(result);
+      }
+      return res.json({ processedJobs: results.length, results });
+    } catch (err: any) {
+      console.error('[scheduler-trigger] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Scheduler trigger failed' });
+    }
+  });
+
   app.get('/api/ready', (req, res) => {
     const db = getDatabaseStatus();
     const ready = db.connected && db.type === 'postgresql';

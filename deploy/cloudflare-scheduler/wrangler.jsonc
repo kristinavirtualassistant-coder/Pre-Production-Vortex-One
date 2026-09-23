@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
+  "name": "vortex-one-scheduler",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-23",
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
