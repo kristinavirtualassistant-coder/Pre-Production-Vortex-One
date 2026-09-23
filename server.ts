@@ -2253,7 +2253,7 @@ async function startServer() {
     } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to queue scheduled property refresh' }); }
   });
 
-  app.delete('/api/scheduler/schedules/:id', async (req, res) => {
+  app.delete('/api/scheduler/schedules/:id', requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
       if (pool) {
@@ -3848,7 +3848,7 @@ ${transcript}`;
   });
 
   // 5. Delete template
-  app.delete('/api/outreach-templates/:id', (req, res) => {
+  app.delete('/api/outreach-templates/:id', requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
