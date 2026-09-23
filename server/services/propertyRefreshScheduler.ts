@@ -10,8 +10,8 @@ export async function listDuePropertyRefreshSchedules(pool: Pool, limit = 10): P
   const result = await pool.query(`
     SELECT *
     FROM property_refresh_schedules
-    WHERE status = 'active'
-      AND next_run_at <= CURRENT_TIMESTAMP
+    WHERE (status = 'active' AND next_run_at <= CURRENT_TIMESTAMP)
+       OR (status = 'running' AND updated_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes')
     ORDER BY next_run_at ASC
     LIMIT $1`, [limit]);
   return result.rows.map(normalizeSchedule);
@@ -22,7 +22,8 @@ export async function claimDuePropertyRefreshSchedule(pool: Pool, _workerId: str
     WITH candidate AS (
       SELECT id
       FROM property_refresh_schedules
-      WHERE status = 'active' AND next_run_at <= CURRENT_TIMESTAMP
+      WHERE (status = 'active' AND next_run_at <= CURRENT_TIMESTAMP)
+         OR (status = 'running' AND updated_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes')
       ORDER BY next_run_at ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1

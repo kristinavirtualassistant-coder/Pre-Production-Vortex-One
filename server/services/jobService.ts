@@ -4,6 +4,7 @@ import { requireOrganizationId } from './organizationContext';
 export const JOB_TYPES = {
   EMAIL_OUTREACH: 'email_outreach.send',
   SCHEDULED_CAMPAIGN: 'campaign.scheduled_dispatch',
+  PROPERTY_REFRESH: 'property_refresh',
 } as const;
 
 export interface JobRecord { id: string; organization_id: string; job_type: string; payload: Record<string, unknown>; status: string; attempts: number; max_attempts: number; }
@@ -15,15 +16,18 @@ export async function enqueueJob(pool: Pool, organizationId: string, jobType: st
   return id;
 }
 
-export async function claimNextJob(pool: Pool, organizationId: string, workerId: string): Promise<JobRecord | null> {
+export async function claimNextJob(pool: Pool, organizationId: string, workerId: string, allowedJobTypes?: string[]): Promise<JobRecord | null> {
   const orgId = requireOrganizationId(organizationId);
+  const typeFilter = allowedJobTypes?.length ? 'AND job_type = ANY($2::varchar[])' : '';
+  const values = allowedJobTypes?.length ? [orgId, allowedJobTypes, workerId] : [orgId, workerId];
+  const workerParam = allowedJobTypes?.length ? '$3' : '$2';
   const result = await pool.query(`
     WITH candidate AS (
-      SELECT id FROM jobs WHERE organization_id = $1 AND status = 'queued' AND available_at <= CURRENT_TIMESTAMP
+      SELECT id FROM jobs WHERE organization_id = $1 AND status = 'queued' AND available_at <= CURRENT_TIMESTAMP ${typeFilter}
         ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1
     )
-    UPDATE jobs j SET status = 'processing', attempts = attempts + 1, locked_at = CURRENT_TIMESTAMP, locked_by = $2
-    FROM candidate WHERE j.id = candidate.id RETURNING j.*`, [orgId, workerId]);
+    UPDATE jobs j SET status = 'processing', attempts = attempts + 1, locked_at = CURRENT_TIMESTAMP, locked_by = ${workerParam}
+    FROM candidate WHERE j.id = candidate.id RETURNING j.*`, values);
   return result.rows[0] || null;
 }
 

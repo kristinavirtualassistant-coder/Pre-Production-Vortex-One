@@ -36,6 +36,7 @@ import { searchProperties, type PropertySearchQuery } from './server/services/pr
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { queueEmailOutreach } from './server/services/emailOutreachService';
+import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
 
@@ -2206,9 +2207,21 @@ async function startServer() {
   app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      if (isProduction) return res.status(202).json({ queued: false, message: 'Manual managed scheduler execution is delegated to the worker runtime.' });
-      return res.status(410).json({ error: 'Development scheduler execution is disabled on this route.' });
-    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' }); }
+      const scheduleId = req.params.id;
+      const pool = getPgPool();
+      if (!pool) {
+        if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
+        return res.status(410).json({ error: 'Development scheduler execution is disabled on this route.' });
+      }
+      const schedule = await pool.query(
+        `SELECT id, status FROM property_refresh_schedules WHERE id=$1 AND organization_id=$2`,
+        [scheduleId, orgId],
+      );
+      if (!schedule.rows[0]) return res.status(404).json({ error: 'Schedule not found' });
+      if (schedule.rows[0].status === 'paused') return res.status(409).json({ error: 'Schedule is paused' });
+      const jobId = await enqueueJob(pool, orgId, JOB_TYPES.PROPERTY_REFRESH, { scheduleId }, 3);
+      return res.status(202).json({ queued: true, jobId, scheduleId });
+    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to queue scheduled property refresh' }); }
   });
 
   app.delete('/api/scheduler/schedules/:id', async (req, res) => {

@@ -20,6 +20,7 @@ await updateScheduleAfterRun(pool, 'sched_1', 'org_test', {
   lastRunStatus: 'success', lastRunSummary: 'ok', lastRunRefreshedCount: 1,
 });
 assert.match(queries[0].sql, /next_run_at <= CURRENT_TIMESTAMP/);
+assert.match(queries[0].sql, /status = 'running'/);
 assert.match(queries[1].sql, /FOR UPDATE SKIP LOCKED/);
 assert.match(queries[1].sql, /SET status = 'running'/);
 assert.match(queries[2].sql, /WHERE id = \$7 AND organization_id = \$8/);
