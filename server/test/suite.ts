@@ -61,7 +61,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 13, 'Migration count is 13', `Expected 13, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 14, 'Migration count is 14', `Expected 14, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   
   const migrationNames = MIGRATIONS.map(m => m.name);

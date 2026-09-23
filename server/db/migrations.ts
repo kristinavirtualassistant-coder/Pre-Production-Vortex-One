@@ -523,6 +523,7 @@ export const MIGRATIONS: Migration[] = [
         ON email_outreach(organization_id, lead_id, created_at DESC);
     `,
   },
+
   {
     version: 14,
     name: '014_create_integration_connections',
@@ -559,6 +560,54 @@ export const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_integration_oauth_states_expiry
         ON integration_oauth_states(expires_at);
+    `,
+  },
+  {
+    version: 15,
+    name: '015_create_property_refresh_schedules',
+    sql: `
+      CREATE TABLE IF NOT EXISTS property_refresh_schedules (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        target_property_ids JSONB DEFAULT '[]'::jsonb NOT NULL,
+        target_selection_mode VARCHAR(40) DEFAULT 'selected' NOT NULL,
+        county_filter VARCHAR(255),
+        interval_hours NUMERIC(12,2) DEFAULT 24 NOT NULL,
+        cron_expression VARCHAR(255),
+        status VARCHAR(30) DEFAULT 'active' NOT NULL,
+        last_run_at TIMESTAMP WITH TIME ZONE,
+        next_run_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        last_run_status VARCHAR(30),
+        last_run_summary TEXT,
+        last_run_refreshed_count INTEGER DEFAULT 0 NOT NULL,
+        enrichment_options JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        created_by VARCHAR(128)
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_due
+        ON property_refresh_schedules(status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_org
+        ON property_refresh_schedules(organization_id, status, next_run_at);
+
+      CREATE TABLE IF NOT EXISTS property_refresh_logs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        schedule_id VARCHAR(64) NOT NULL REFERENCES property_refresh_schedules(id) ON DELETE CASCADE,
+        executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        duration_ms INTEGER DEFAULT 0 NOT NULL,
+        properties_processed INTEGER DEFAULT 0 NOT NULL,
+        properties_updated INTEGER DEFAULT 0 NOT NULL,
+        status VARCHAR(30) NOT NULL,
+        details TEXT NOT NULL,
+        valuation_delta NUMERIC,
+        equity_delta NUMERIC,
+        errors JSONB
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_logs_schedule
+        ON property_refresh_logs(schedule_id, executed_at DESC);
     `,
   },
 ];
