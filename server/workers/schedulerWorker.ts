@@ -1,6 +1,7 @@
 import { getPgPool } from '../db/db';
 import { UnifiedPropertyDataProvider } from '../services/propertyProviders/PropertyDataProvider';
 import { claimDuePropertyRefreshSchedule, updateScheduleAfterRun } from '../services/propertyRefreshScheduler';
+import { claimNextJob, completeJob, failJob, recoverStaleJobs, JOB_TYPES, type JobRecord } from '../services/jobService';
 
 export interface SchedulerWorkerResult {
   claimed: boolean;
@@ -16,8 +17,35 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
   if (!pool) throw new Error('PostgreSQL is required for scheduler worker execution');
 
   const workerId = `scheduler-${process.pid}`;
-  const schedule = await claimDuePropertyRefreshSchedule(pool, workerId);
-  if (!schedule) return { claimed: false };
+  let job: JobRecord | null = null;
+  const organizations = await pool.query(`SELECT DISTINCT organization_id FROM jobs WHERE job_type = $1 AND (status = 'queued' OR (status='processing' AND locked_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes'))`, [JOB_TYPES.PROPERTY_REFRESH]);
+  for (const row of organizations.rows) {
+    await recoverStaleJobs(pool, row.organization_id, 300);
+    job = await claimNextJob(pool, row.organization_id, workerId, [JOB_TYPES.PROPERTY_REFRESH]);
+    if (job) break;
+  }
+
+  let schedule;
+  if (job) {
+    const scheduleId = typeof job.payload?.scheduleId === 'string' ? job.payload.scheduleId : '';
+    if (!scheduleId) {
+      await failJob(pool, job.organization_id, job.id, workerId, 'Property refresh job missing scheduleId', 60);
+      return { claimed: false };
+    }
+    const due = await pool.query(`SELECT * FROM property_refresh_schedules WHERE id=$1 AND organization_id=$2 AND status <> 'paused'`, [scheduleId, job.organization_id]);
+    if (!due.rows[0]) {
+      await completeJob(pool, job.organization_id, job.id, workerId);
+      return { claimed: false };
+    }
+    schedule = await claimDuePropertyRefreshSchedule(pool, workerId);
+    if (!schedule || schedule.id !== scheduleId) {
+      await failJob(pool, job.organization_id, job.id, workerId, 'Schedule is currently locked or not due', 30);
+      return { claimed: false };
+    }
+  } else {
+    schedule = await claimDuePropertyRefreshSchedule(pool, workerId);
+    if (!schedule) return { claimed: false };
+  }
 
   const startedAt = Date.now();
   const provider = new UnifiedPropertyDataProvider();
@@ -28,7 +56,8 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
   let equityDelta = 0;
   let providerUsed = '';
 
-  const propertyResult = await pool.query(
+  try {
+    const propertyResult = await pool.query(
     `SELECT * FROM properties
      WHERE organization_id = $1
        AND ($2 = 'all'
@@ -104,6 +133,12 @@ export async function runPropertyRefreshWorkerOnce(): Promise<SchedulerWorkerRes
     lastRunSummary: errors.length ? `${summary} ${errors.length} error(s) recorded.` : summary,
     lastRunRefreshedCount: updated,
   });
+
+    if (job) await completeJob(pool, job.organization_id, job.id, workerId);
+  } catch (error: any) {
+    if (job) await failJob(pool, job.organization_id, job.id, workerId, error?.message || 'Property refresh worker failed');
+    throw error;
+  }
 
   await pool.query(
     `INSERT INTO audit_logs
