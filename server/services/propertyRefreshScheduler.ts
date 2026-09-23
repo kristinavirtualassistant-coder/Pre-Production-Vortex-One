@@ -17,6 +17,20 @@ export async function listDuePropertyRefreshSchedules(pool: Pool, limit = 10): P
   return result.rows.map(normalizeSchedule);
 }
 
+export async function claimPropertyRefreshScheduleById(pool: Pool, organizationId: string, scheduleId: string, _workerId: string): Promise<DurablePropertyRefreshSchedule | null> {
+  const orgId = requireOrganizationId(organizationId);
+  const result = await pool.query(
+    `UPDATE property_refresh_schedules
+     SET status = 'running', updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND organization_id = $2
+       AND status = 'active'
+     RETURNING *`,
+    [scheduleId, orgId],
+  );
+  return result.rows[0] ? normalizeSchedule(result.rows[0]) : null;
+}
+
 export async function claimDuePropertyRefreshSchedule(pool: Pool, _workerId: string): Promise<DurablePropertyRefreshSchedule | null> {
   const result = await pool.query(`
     WITH candidate AS (
