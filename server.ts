@@ -251,7 +251,7 @@ async function startServer() {
   });
 
   // Master Orchestration Dispatch
-  app.post('/api/orchestrate', async (req, res) => {
+  app.post('/api/orchestrate, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { prompt, organizationId } = req.body;
       if (!prompt || typeof prompt !== 'string') {
@@ -400,7 +400,7 @@ async function startServer() {
   });
 
   // Execute Custom Workflow Chain Step-by-Step
-  app.post('/api/workflows/execute', async (req, res) => {
+  app.post('/api/workflows/execute, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -632,7 +632,7 @@ async function startServer() {
   });
 
   // Execute Workflow with Real-time Server-Sent Events (SSE) Streaming Progress
-  app.post('/api/workflows/execute/stream', async (req, res) => {
+  app.post('/api/workflows/execute/stream, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     // Set headers for Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -929,7 +929,7 @@ async function startServer() {
     currentLeadId: null as string | null,
   };
 
-  app.post('/api/agent/state', (req, res) => {
+  app.post('/api/agent/state, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     const { status, leadId } = req.body;
     agentState.status = status;
     agentState.currentLeadId = leadId;
@@ -937,7 +937,7 @@ async function startServer() {
   });
 
   // Predictive Dialing Trigger
-  app.post('/api/predictive/trigger', async (req, res) => {
+  app.post('/api/predictive/trigger, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
       if (agentState.status === 'wrapping_up') {
           // Trigger next call logic
           res.json({ status: 'triggered' });
@@ -952,7 +952,7 @@ async function startServer() {
     res.json(inMemoryStore.smartForwarding);
   });
 
-  app.post('/api/settings/smart-forwarding', (req, res) => {
+  app.post('/api/settings/smart-forwarding, requireRole(['admin', 'executive']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     const { enabled, rules } = req.body;
     if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
@@ -971,7 +971,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit/log', (req, res) => {
+  app.post('/api/audit/log, requireRole(['admin', 'executive']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log writer was removed; audit events are persisted server-side.' });
     try {
       const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
@@ -1006,7 +1006,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/webhooks', async (req, res) => {
+  app.post('/api/webhooks, requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
@@ -1016,7 +1016,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/webhooks/:id', async (req, res) => {
+  app.put('/api/webhooks/:id, requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
@@ -1038,7 +1038,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/webhooks/:id/test', async (req, res) => {
+  app.post('/api/webhooks/:id/test, requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
@@ -1134,7 +1134,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/properties/:id/create-lead', async (req, res) => {
+  app.post('/api/properties/:id/create-lead, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -1333,7 +1333,7 @@ async function startServer() {
   });
 
   // Bulk Apply / Remove Tags on Selected Properties
-  app.post('/api/properties/bulk-tags', async (req, res) => {
+  app.post('/api/properties/bulk-tags, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], tags = [], mode = 'add' } = req.body;
@@ -1440,7 +1440,7 @@ async function startServer() {
   });
 
   // Batch Update Properties (Status, Assigned Agent, Property Type, Tax Status, etc.)
-  app.post('/api/properties/batch-update', async (req, res) => {
+  app.post('/api/properties/batch-update, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], updates = {} } = req.body;
@@ -1511,7 +1511,7 @@ async function startServer() {
   });
 
   // Single Property Tag Update (Add / Remove / Set)
-  app.patch('/api/properties/:id/tags', async (req, res) => {
+  app.patch('/api/properties/:id/tags, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const propId = req.params.id;
@@ -1587,7 +1587,7 @@ async function startServer() {
   // ==========================================
   // 5-Step Skip Tracing Intelligence Endpoints
   // ==========================================
-  app.post('/api/skip-trace/execute', async (req, res) => {
+  app.post('/api/skip-trace/execute, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const { propertyId, address, apn, city, county, state, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1609,7 +1609,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/skip-trace/save-contacts', async (req, res) => {
+  app.post('/api/skip-trace/save-contacts, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const ownerId = req.body.ownerId || req.body.owner_id;
       const propertyId = req.body.propertyId || req.body.property_id;
@@ -1748,7 +1748,7 @@ async function startServer() {
   });
 
   // Automated Property Search + Skip Tracing Pipeline Endpoint
-  app.post('/api/skip-trace/automated-pipeline', async (req, res) => {
+  app.post('/api/skip-trace/automated-pipeline, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const {
         county,
@@ -1801,7 +1801,7 @@ async function startServer() {
   });
 
   // Batch Skip Trace Endpoint
-  app.post('/api/skip-trace/batch', async (req, res) => {
+  app.post('/api/skip-trace/batch, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { propertyIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1819,7 +1819,7 @@ async function startServer() {
   });
 
   // Single Owner Instant Auto-Enrich
-  app.post('/api/skip-trace/auto-enrich', async (req, res) => {
+  app.post('/api/skip-trace/auto-enrich, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { ownerId, propertyId, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1853,7 +1853,7 @@ async function startServer() {
   });
 
   // Bulk Leads Deep Enrichment Workflow Endpoint (LinkedIn, CA SOS, Social & Corporate Records)
-  app.post('/api/leads/deep-enrich', async (req, res) => {
+  app.post('/api/leads/deep-enrich, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const { leadIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2156,7 +2156,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/scheduler/schedules', async (req, res) => {
+  app.post('/api/scheduler/schedules, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { name, description, target_property_ids = [], target_selection_mode = 'selected', county_filter, interval_hours = 24,
@@ -2194,7 +2194,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/scheduler/schedules/:id', async (req, res) => {
+  app.put('/api/scheduler/schedules/:id, requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2220,7 +2220,7 @@ async function startServer() {
     } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to update schedule' }); }
   });
 
-  app.post('/api/scheduler/schedules/:id/toggle', async (req, res) => {
+  app.post('/api/scheduler/schedules/:id/toggle, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
       if (pool) {
@@ -2233,7 +2233,7 @@ async function startServer() {
     } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to toggle schedule' }); }
   });
 
-  app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
+  app.post('/api/scheduler/schedules/:id/run, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
@@ -2267,7 +2267,7 @@ async function startServer() {
   });
 
   // Automated Email Outreach — authenticated, tenant-scoped, durable.
-  app.post('/api/leads/:id/email-outreach', async (req, res) => {
+  app.post('/api/leads/:id/email-outreach, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -2321,7 +2321,7 @@ async function startServer() {
   });
 
   // Update Individual Lead
-  app.patch('/api/leads/:id', async (req, res) => {
+  app.patch('/api/leads/:id, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2412,7 +2412,7 @@ async function startServer() {
   });
 
   // Batch Update Leads
-  app.post('/api/leads/batch-update', async (req, res) => {
+  app.post('/api/leads/batch-update, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { leadIds, updates, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2502,7 +2502,7 @@ async function startServer() {
   });
 
   // PostgreSQL-authoritative explainable lead scoring.
-  app.post('/api/leads/rescore', async (req, res) => {
+  app.post('/api/leads/rescore, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -2531,7 +2531,7 @@ async function startServer() {
   });
 
   // Create Lead Manually
-  app.post('/api/leads/create', (req, res) => {
+  app.post('/api/leads/create, requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead creation route removed; create leads from canonical properties.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2609,7 +2609,7 @@ async function startServer() {
   });
 
   // Delete Individual Lead
-  app.delete('/api/leads/:id', (req, res) => {
+  app.delete('/api/leads/:id, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { id } = req.params;
@@ -2629,7 +2629,7 @@ async function startServer() {
   });
 
   // Batch Delete Leads
-  app.post('/api/leads/batch-delete', (req, res) => {
+  app.post('/api/leads/batch-delete, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { leadIds, organizationId } = req.body;
@@ -2650,7 +2650,7 @@ async function startServer() {
   });
 
   // Automated Data Import & CRM Reconciliation APIs
-  app.post('/api/import/reconcile', async (req, res) => {
+  app.post('/api/import/reconcile, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       if (!orgId) {
@@ -2672,7 +2672,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/import/sync-production', (_req, res) => {
+  app.post('/api/import/sync-production, requireRole(['admin', 'executive']), (_req, res) => {
     res.status(410).json({ error: 'The legacy synthetic CRM feed was removed. Use the authoritative import endpoint.' });
   });
 
@@ -2786,7 +2786,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns', async (req, res) => {
+  app.post('/api/campaigns, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const camp = await CampaignManager.createCampaign({
@@ -2812,7 +2812,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/schedule', async (req, res) => {
+  app.post('/api/campaigns/:id/schedule, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduledAt = req.body.scheduled_at || req.body.scheduledAt;
@@ -2829,7 +2829,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/cancel-schedule', async (req, res) => {
+  app.post('/api/campaigns/:id/cancel-schedule, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
@@ -2839,7 +2839,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/start', async (req, res) => {
+  app.post('/api/campaigns/:id/start, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
@@ -2849,7 +2849,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/pause', async (req, res) => {
+  app.post('/api/campaigns/:id/pause, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.pauseCampaign(orgId, req.params.id);
@@ -2859,7 +2859,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/stop', async (req, res) => {
+  app.post('/api/campaigns/:id/stop, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.stopCampaign(orgId, req.params.id);
@@ -2887,7 +2887,7 @@ async function startServer() {
     res.json([]);
   });
 
-  app.post('/api/campaigns/:id/contacts', async (req, res) => {
+  app.post('/api/campaigns/:id/contacts, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const contacts = req.body.contacts || [req.body];
@@ -2898,7 +2898,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/dial-next', async (req, res) => {
+  app.post('/api/campaigns/:id/dial-next, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.dialNextContact({
@@ -2914,7 +2914,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/dial-batch', async (req, res) => {
+  app.post('/api/campaigns/:id/dial-batch, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -2931,7 +2931,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/shuffle', async (req, res) => {
+  app.post('/api/campaigns/:id/shuffle, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
@@ -3013,7 +3013,7 @@ async function startServer() {
   });
 
   // Direct outbound dial: provider is authoritative; no fabricated completed calls.
-  app.post('/api/calls/dial', async (req, res) => {
+  app.post('/api/calls/dial, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Manual dialing requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
@@ -3072,7 +3072,7 @@ async function startServer() {
     res.json(list);
   });
 
-  app.post('/api/suppression', async (req, res) => {
+  app.post('/api/suppression, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { phone_number, reason, source } = req.body;
@@ -3091,7 +3091,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/suppression/:id', async (req, res) => {
+  app.delete('/api/suppression/:id, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const success = await SuppressionService.removeSuppression(orgId, req.params.id);
@@ -3142,7 +3142,7 @@ async function startServer() {
     catch (err: any) { console.error('Approval list error:', err); res.status(503).json({ error: 'Approval state unavailable' }); }
   });
 
-  app.post('/api/approvals/:id/decide', async (req, res) => {
+  app.post('/api/approvals/:id/decide, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
@@ -3189,15 +3189,15 @@ app.get('/api/dialer/voicemails', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`SELECT id,organization_id,label,url,created_at FROM voicemail_library WHERE organization_id=$1 ORDER BY created_at DESC`,[orgId]); return res.json(result.rows); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-app.post('/api/dialer/voicemails', async (req, res) => {
+app.post('/api/dialer/voicemails, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const label=String(req.body?.label||'').trim(); const url=String(req.body?.url||'').trim(); if(!label||!url)return res.status(400).json({error:'label and url are required'}); const id=`vm_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; const result=await pool.query(`INSERT INTO voicemail_library (id,organization_id,label,url) VALUES ($1,$2,$3,$4) RETURNING id,organization_id,label,url,created_at`,[id,orgId,label,url]); return res.status(201).json(result.rows[0]); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-app.delete('/api/dialer/voicemails/:id', async (req, res) => {
+app.delete('/api/dialer/voicemails/:id, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`DELETE FROM voicemail_library WHERE id=$1 AND organization_id=$2 RETURNING id`,[req.params.id,orgId]); if(!result.rowCount)return res.status(404).json({error:'Voicemail not found'}); return res.json({success:true,deletedId:result.rows[0].id}); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-  app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
+  app.post('/api/calls/:id/drop-voicemail, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Voicemail drop requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
 
@@ -3259,7 +3259,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
     }
   });
 
-  app.patch('/api/calls/:id', async (req, res) => {
+  app.patch('/api/calls/:id, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3277,7 +3277,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
     }
   });
 
-  app.post('/api/calls/:id/notes', async (req, res) => {
+  app.post('/api/calls/:id/notes, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3295,7 +3295,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
     }
   });
 
-  app.post('/api/calls/:id/end', async (req, res) => {
+  app.post('/api/calls/:id/end, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3310,7 +3310,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
-  app.post('/api/calls/:id/disposition', async (req, res) => {
+  app.post('/api/calls/:id/disposition, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3342,7 +3342,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
     }
   });
 
-  app.post('/api/calls/:id/suggest-task', async (req, res) => {
+  app.post('/api/calls/:id/suggest-task, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3422,7 +3422,7 @@ ${transcript}`;
   });
 
   // Import Data & Archive to Imported Files Folder
-  app.post('/api/import-data', async (req, res) => {
+  app.post('/api/import-data, requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { records, fileName, rawContent } = req.body;
@@ -3480,7 +3480,7 @@ ${transcript}`;
   // --- Imported Files Folder Management APIs ---
 
   // Ensure / Create Folder for Imported Files
-  app.post('/api/imported-files/create-folder', (req, res) => {
+  app.post('/api/imported-files/create-folder, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const baseDir = path.join(process.cwd(), 'data', 'imported_files');
@@ -3590,7 +3590,7 @@ ${transcript}`;
   });
 
   // Delete a file from the Imported Files folder
-  app.delete('/api/imported-files/:id', (req, res) => {
+  app.delete('/api/imported-files/:id, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -3724,7 +3724,7 @@ ${transcript}`;
   });
 
   // 3. Create template
-  app.post('/api/outreach-templates', (req, res) => {
+  app.post('/api/outreach-templates, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3791,7 +3791,7 @@ ${transcript}`;
   });
 
   // 4. Update template
-  app.put('/api/outreach-templates/:id', (req, res) => {
+  app.put('/api/outreach-templates/:id, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3881,7 +3881,7 @@ ${transcript}`;
   });
 
   // 6. Duplicate template
-  app.post('/api/outreach-templates/:id/duplicate', (req, res) => {
+  app.post('/api/outreach-templates/:id/duplicate, requireRole(['admin', 'executive', 'manager']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3916,7 +3916,7 @@ ${transcript}`;
   });
 
   // 7. Render Template with dynamic property / owner / custom variables
-  app.post('/api/outreach-templates/render', (req, res) => {
+  app.post('/api/outreach-templates/render, requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const {
@@ -4020,7 +4020,7 @@ ${transcript}`;
   });
 
   // 8. Record usage & performance for a template
-  app.post('/api/outreach-templates/:id/use', (req, res) => {
+  app.post('/api/outreach-templates/:id/use, requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -4082,7 +4082,7 @@ ${transcript}`;
   }
 
   // Multi-Dialer Execution Route
-  app.post('/api/dial-batch', async (req, res) => {
+  app.post('/api/dial-batch, requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
 
