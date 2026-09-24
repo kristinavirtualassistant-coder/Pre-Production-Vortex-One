@@ -226,6 +226,7 @@ async function runAllTests() {
       name: 'Costa Mesa Triplex Owners Outreach',
       targetMarket: 'Costa Mesa, CA',
       telephonyProvider: 'ringcentral',
+      timezone: 'UTC',
     });
     assert(newCamp.id.startsWith('camp_'), 'Campaign created with unique ID');
     assert(newCamp.status === 'draft', 'Campaign created in draft status');
