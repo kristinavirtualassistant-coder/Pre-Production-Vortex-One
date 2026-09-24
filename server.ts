@@ -712,7 +712,7 @@ async function startServer() {
           activeWorkflowRun.status = 'failed';
           activeWorkflowRun.completed_at = new Date().toISOString();
           activeWorkflowRun.final_summary = err?.message || 'Workflow execution failed';
-          await updateWorkflowRun(pool!, orgId, activeWorkflowRun);
+          await updateWorkflowRun(getPgPool()!, requireOrganizationId((req as AuthRequest).dbUser?.organization_id), activeWorkflowRun);
         } catch (persistErr) {
           console.error('Failed to persist workflow execution failure:', persistErr);
         }
