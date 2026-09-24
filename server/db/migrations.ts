@@ -524,6 +524,37 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 15,
+    name: '015_create_durable_workflow_runs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        workflow_id VARCHAR(64) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        status VARCHAR(30) NOT NULL CHECK (status IN ('queued','running','completed','failed','paused_approval')),
+        current_step_id VARCHAR(128),
+        current_step_name VARCHAR(255),
+        current_agent_id VARCHAR(128),
+        total_steps INTEGER NOT NULL DEFAULT 0,
+        completed_steps INTEGER NOT NULL DEFAULT 0,
+        initiated_by VARCHAR(255) NOT NULL,
+        tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
+        node_states JSONB NOT NULL DEFAULT '{}'::jsonb,
+        step_outputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+        qa_verification JSONB,
+        final_summary TEXT,
+        execution_time_ms INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_created ON workflow_runs(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_status ON workflow_runs(organization_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_org_workflow ON workflow_runs(organization_id, workflow_id, created_at DESC);
+    `,
+  },
+  {
     version: 14,
     name: '014_create_integration_connections',
     sql: `
