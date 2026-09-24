@@ -5,6 +5,7 @@
 [build.environment]
   NODE_VERSION = "22"
   NODE_ENV = "development"
+  NODE_OPTIONS = "--max_old_space_size=4096"
   NPM_FLAGS = "--include=dev"
 
 [[redirects]]
