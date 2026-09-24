@@ -7,7 +7,7 @@ const WORKER_INTERVAL_MS = 1000;
 const WORKER_STALE_SECONDS = 300;
 
 export async function processEmailJob(pool: Pool, organizationId: string, workerId = 'email-worker'): Promise<boolean> {
-  const job = await claimNextJob(pool, organizationId, workerId);
+  const job = await claimNextJob(pool, organizationId, workerId, [EMAIL_JOB_TYPE]);
   if (!job) return false;
   if (job.job_type !== EMAIL_JOB_TYPE) {
     await failJob(pool, organizationId, job.id, workerId, `Unsupported job type: ${job.job_type}`, 60);
