@@ -562,8 +562,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
 
-];
-
   {
     version: 15,
     name: '015_create_durable_workflow_runs',
@@ -609,3 +607,5 @@ export const MIGRATIONS: Migration[] = [
         ON rate_limit_buckets(updated_at);
     `,
   },
+
+];
