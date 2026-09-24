@@ -13,7 +13,8 @@
     "test:ringcentral:jwt": "node scripts/ringcentral-jwt-smoke.mjs",
     "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts",
     "dev:local": "./scripts/local-dev.sh",
-    "worker:property-refresh": "tsx server/workers/runPropertyRefreshWorker.ts"
+    "worker:property-refresh": "tsx server/workers/runPropertyRefreshWorker.ts",
+    "build:client": "vite build"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
