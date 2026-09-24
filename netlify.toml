@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  NODE_ENV = "development"
   NPM_FLAGS = "--include=dev"
 
 [[redirects]]
