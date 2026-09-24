@@ -524,6 +524,47 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 14,
+    name: '014_create_integration_connections',
+    sql: `
+      CREATE TABLE IF NOT EXISTS integration_connections (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(100) NOT NULL,
+        external_account_id VARCHAR(255),
+        account_email VARCHAR(320),
+        access_token TEXT,
+        refresh_token TEXT,
+        token_expires_at TIMESTAMP WITH TIME ZONE,
+        scopes JSONB DEFAULT '[]'::jsonb NOT NULL,
+        status VARCHAR(30) DEFAULT 'connected' NOT NULL,
+        metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, user_id, provider)
+      );
+      CREATE INDEX IF NOT EXISTS idx_integration_connections_org
+        ON integration_connections(organization_id, status);
+
+      CREATE TABLE IF NOT EXISTS integration_oauth_states (
+        state_hash VARCHAR(64) PRIMARY KEY,
+        provider VARCHAR(100) NOT NULL,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        code_verifier TEXT NOT NULL,
+        redirect_uri VARCHAR(2048) NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_integration_oauth_states_expiry
+        ON integration_oauth_states(expires_at);
+    `,
+  },
+
+];
+
+  {
     version: 15,
     name: '015_create_durable_workflow_runs',
     sql: `
@@ -567,43 +608,4 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_updated
         ON rate_limit_buckets(updated_at);
     `,
-  },  {
-    version: 14,
-    name: '014_create_integration_connections',
-    sql: `
-      CREATE TABLE IF NOT EXISTS integration_connections (
-        id VARCHAR(64) PRIMARY KEY,
-        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        provider VARCHAR(100) NOT NULL,
-        external_account_id VARCHAR(255),
-        account_email VARCHAR(320),
-        access_token TEXT,
-        refresh_token TEXT,
-        token_expires_at TIMESTAMP WITH TIME ZONE,
-        scopes JSONB DEFAULT '[]'::jsonb NOT NULL,
-        status VARCHAR(30) DEFAULT 'connected' NOT NULL,
-        metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        UNIQUE (organization_id, user_id, provider)
-      );
-      CREATE INDEX IF NOT EXISTS idx_integration_connections_org
-        ON integration_connections(organization_id, status);
-
-      CREATE TABLE IF NOT EXISTS integration_oauth_states (
-        state_hash VARCHAR(64) PRIMARY KEY,
-        provider VARCHAR(100) NOT NULL,
-        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        code_verifier TEXT NOT NULL,
-        redirect_uri VARCHAR(2048) NOT NULL,
-        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_integration_oauth_states_expiry
-        ON integration_oauth_states(expires_at);
-    `,
   },
-
-];
