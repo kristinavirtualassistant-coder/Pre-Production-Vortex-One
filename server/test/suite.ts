@@ -234,7 +234,7 @@ async function runAllTests() {
     assert(startRes.session.status === 'active', 'Dialing session started for campaign');
     // Keep the integration test deterministic regardless of the CI runner clock.
     await pgPool.query(
-      "UPDATE campaign SET calling_hours_start = '00:00', calling_hours_end = '23:59' WHERE id = $1 AND organization_id = $2",
+      "UPDATE campaign SET timezone = 'UTC', calling_hours_start = '00:00', calling_hours_end = '23:59:59' WHERE id = $1 AND organization_id = $2",
       [newCamp.id, 'org_cmc_realty'],
     );
 
