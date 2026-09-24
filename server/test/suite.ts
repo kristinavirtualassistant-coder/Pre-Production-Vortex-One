@@ -942,10 +942,10 @@ async function runAllTests() {
 
   // Live government GIS calls are mandatory integration tests.
   // CI sets VORTEX_ONE_LIVE_GIS_TESTS=1 so external provider routing,
-  // live response parsing, provenance, and persistence are exercised on every
-  // integration run. Any provider outage, schema drift, routing regression,
-  // or empty/invalid live response fails the test suite.
-    const unifiedProvider = new UnifiedPropertyDataProvider();
+  // Live government GIS calls are mandatory integration tests.
+  // CI sets VORTEX_ONE_LIVE_GIS_TESTS=1, and any provider outage, schema drift,
+  // routing regression, or empty/invalid live response must fail the suite.
+  const unifiedProvider = new UnifiedPropertyDataProvider();
 
     console.log('  Executing Live Query against Orange County Public Works GIS...');
     const ocSearchResult = await unifiedProvider.search({
