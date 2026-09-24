@@ -567,8 +567,7 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_updated
         ON rate_limit_buckets(updated_at);
     `,
-  },
-  {
+  },  {
     version: 14,
     name: '014_create_integration_connections',
     sql: `
@@ -606,4 +605,5 @@ export const MIGRATIONS: Migration[] = [
         ON integration_oauth_states(expires_at);
     `,
   },
+
 ];
