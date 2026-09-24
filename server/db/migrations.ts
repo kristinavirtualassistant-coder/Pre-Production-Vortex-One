@@ -607,5 +607,13 @@ export const MIGRATIONS: Migration[] = [
         ON rate_limit_buckets(updated_at);
     `,
   },
+  {
+    version: 17,
+    name: '017_enforce_global_user_email_identity',
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_users_global_email_lower
+        ON users (LOWER(email));
+    `,
+  },
 
 ];
