@@ -940,12 +940,11 @@ async function runAllTests() {
   assert(sacProvider.providerId === 'sacramento_county_gis', 'Sacramento County provider ID is sacramento_county_gis');
   assert(sacProvider.isGovernmentSource === true, 'Sacramento County provider flagged as official government source');
 
-  // Live government GIS calls are integration tests, not deterministic CI tests.
-  // CI intentionally exercises deterministic provider fixtures instead.
-  // Run them explicitly with VORTEX_ONE_LIVE_GIS_TESTS=1 when the external
-  // provider should be exercised. CI validates provider routing and parsing
-  // with deterministic fixtures above instead of depending on endpoint uptime.
-  if (process.env.VORTEX_ONE_LIVE_GIS_TESTS === '1') {
+  // Live government GIS calls are mandatory integration tests.
+  // CI sets VORTEX_ONE_LIVE_GIS_TESTS=1 so external provider routing,
+  // live response parsing, provenance, and persistence are exercised on every
+  // integration run. Any provider outage, schema drift, routing regression,
+  // or empty/invalid live response fails the test suite.
     const unifiedProvider = new UnifiedPropertyDataProvider();
 
     console.log('  Executing Live Query against Orange County Public Works GIS...');
@@ -1007,9 +1006,6 @@ async function runAllTests() {
       assert(laTop.property.assessed_tax_value > 0, 'Real assessed tax value returned from LA Assessor roll');
       assert(laTop.provenance.fipsCode === '06037', 'FIPS Code 06037 verified for Los Angeles County');
     }
-  } else {
-    console.log('  Skipping live government GIS integration tests (set VORTEX_ONE_LIVE_GIS_TESTS=1 to run)');
-    passedTests++;
   }
 
   // Test Group 16: Property PDF Report Dossier Generation
