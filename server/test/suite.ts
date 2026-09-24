@@ -238,7 +238,7 @@ async function runAllTests() {
 
     await CampaignManager.addContacts('org_cmc_realty', newCamp.id, [
       { contactName: 'Arthur Pendelton', phoneNumber: '(949) 555-7788', priority: 2 },
-      { contactName: 'DNC Blocked Prospect', phoneNumber: '(949) 555-9999', priority: 3 },
+      { contactName: 'DNC Blocked Prospect', phoneNumber: '(949) 555-9999', priority: 1 },
     ]);
 
     // Run dialer step for contact 1 (DNC blocked prospect)
