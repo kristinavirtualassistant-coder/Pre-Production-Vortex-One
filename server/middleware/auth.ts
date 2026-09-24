@@ -136,6 +136,15 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
   try {
     await client.query('BEGIN');
 
+    const existingEmail = await client.query(
+      'SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1',
+      [email],
+    );
+    if (existingEmail.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+
     const existingOrganization = await client.query(
       'SELECT id FROM organizations WHERE lower(name) = lower($1) LIMIT 1',
       [organizationName],
