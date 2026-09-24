@@ -96,6 +96,23 @@ async function startServer() {
     });
   });
 
+  app.post('/internal/scheduler/email-outreach', async (req, res) => {
+    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
+    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
+    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for email worker execution' });
+      const { runEmailWorkerOnce } = await import('./server/workers/emailWorker');
+      const processed = await runEmailWorkerOnce();
+      return res.json({ processedJobs: processed });
+    } catch (err: any) {
+      console.error('[email-scheduler-trigger] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Email scheduler trigger failed' });
+    }
+  });
+
   app.post('/internal/scheduler/property-refresh', async (req, res) => {
     const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
     const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
@@ -470,10 +487,11 @@ async function startServer() {
         return res.status(400).json({ error: 'No executable steps found in workflow request' });
       }
 
-      const runId = `run_wf_${Date.now()}`;
+      const runId = `run_wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const executedTasks: Task[] = [];
       const stepOutputs: Record<string, any> = {};
       let previousStepResult: any = custom_input || {};
+      let activeWorkflowRun: WorkflowRun | null = null;
 
       // Initialize run record in persistence store
       const workflowRun: WorkflowRun = {
@@ -499,6 +517,7 @@ async function startServer() {
       });
 
       await createWorkflowRun(pool, orgId, workflowRun);
+      activeWorkflowRun = workflowRun;
 
       const runStartTime = Date.now();
 
@@ -688,6 +707,16 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Workflow execution error:', err);
+      if (activeWorkflowRun) {
+        try {
+          activeWorkflowRun.status = 'failed';
+          activeWorkflowRun.completed_at = new Date().toISOString();
+          activeWorkflowRun.final_summary = err?.message || 'Workflow execution failed';
+          await updateWorkflowRun(pool!, orgId, activeWorkflowRun);
+        } catch (persistErr) {
+          console.error('Failed to persist workflow execution failure:', persistErr);
+        }
+      }
       res.status(500).json({ error: err.message || 'Workflow execution failed' });
     }
   });
@@ -705,9 +734,13 @@ async function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    let activeWorkflowRun: WorkflowRun | null = null;
+    let orgIdForPersistence: string | null = null;
+
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      orgIdForPersistence = orgId;
       const pool = getPgPool();
       if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
       const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
@@ -747,6 +780,9 @@ async function startServer() {
           };
         }
       });
+
+      await createWorkflowRun(pool, orgId, workflowRun);
+      activeWorkflowRun = workflowRun;
 
       const runStartTime = Date.now();
 
@@ -983,6 +1019,16 @@ async function startServer() {
       res.end();
     } catch (err: any) {
       console.error('Workflow stream error:', err);
+      if (activeWorkflowRun && orgIdForPersistence) {
+        try {
+          activeWorkflowRun.status = 'failed';
+          activeWorkflowRun.completed_at = new Date().toISOString();
+          activeWorkflowRun.final_summary = err?.message || 'Streaming execution failed';
+          await updateWorkflowRun(pool!, orgIdForPersistence, activeWorkflowRun);
+        } catch (persistErr) {
+          console.error('Failed to persist workflow stream failure:', persistErr);
+        }
+      }
       sendEvent('error', { error: err.message || 'Streaming execution failed' });
       res.end();
     }
