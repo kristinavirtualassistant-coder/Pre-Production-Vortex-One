@@ -555,6 +555,20 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 16,
+    name: '016_create_shared_rate_limit_buckets',
+    sql: `
+      CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+        bucket_key VARCHAR(512) PRIMARY KEY,
+        window_start BIGINT NOT NULL,
+        request_count INTEGER NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_updated
+        ON rate_limit_buckets(updated_at);
+    `,
+  },
+  {
     version: 14,
     name: '014_create_integration_connections',
     sql: `
