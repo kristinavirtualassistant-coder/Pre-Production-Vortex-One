@@ -54,10 +54,12 @@ async function startServer() {
     windowMs: 60_000,
     max: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
     message: 'Too many authentication requests. Please try again in a minute.',
+    keyPrefix: 'auth',
   }));
   app.use('/api', createRateLimiter({
     windowMs: 60_000,
     max: Number(process.env.API_RATE_LIMIT_MAX || 300),
+    keyPrefix: 'api',
   }));
 
   // Keep request bodies bounded in every environment. Individual endpoints should
