@@ -1004,7 +1004,6 @@ async function runAllTests() {
     assert(laTop.property.assessed_tax_value > 0, 'Real assessed tax value returned from LA Assessor roll');
     assert(laTop.provenance.fipsCode === '06037', 'FIPS Code 06037 verified for Los Angeles County');
   }
-  }
 
   // Test Group 16: Property PDF Report Dossier Generation
   console.log('\n[Group 16: Property Analytics PDF Dossier Generation]');
