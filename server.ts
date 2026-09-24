@@ -473,6 +473,7 @@ async function startServer() {
 
   // Execute Custom Workflow Chain Step-by-Step
   app.post('/api/workflows/execute', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    let activeWorkflowRun: WorkflowRun | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -491,8 +492,6 @@ async function startServer() {
       const executedTasks: Task[] = [];
       const stepOutputs: Record<string, any> = {};
       let previousStepResult: any = custom_input || {};
-      let activeWorkflowRun: WorkflowRun | null = null;
-
       // Initialize run record in persistence store
       const workflowRun: WorkflowRun = {
         run_id: runId,
@@ -737,6 +736,8 @@ async function startServer() {
     let activeWorkflowRun: WorkflowRun | null = null;
     let orgIdForPersistence: string | null = null;
 
+    let activeWorkflowRun: WorkflowRun | null = null;
+    let orgIdForPersistence: string | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1024,7 +1025,7 @@ async function startServer() {
           activeWorkflowRun.status = 'failed';
           activeWorkflowRun.completed_at = new Date().toISOString();
           activeWorkflowRun.final_summary = err?.message || 'Streaming execution failed';
-          await updateWorkflowRun(pool!, orgIdForPersistence, activeWorkflowRun);
+          await updateWorkflowRun(getPgPool()!, orgIdForPersistence, activeWorkflowRun);
         } catch (persistErr) {
           console.error('Failed to persist workflow stream failure:', persistErr);
         }
