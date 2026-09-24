@@ -49,14 +49,21 @@ async function startServer() {
 
   app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
 
-  // Bound request sizes before parsing and rate-limit all API traffic before authentication.
+  // Rate-limit before body parsing so abusive requests cannot consume parser memory first.
+  app.use('/api/auth', createRateLimiter({
+    windowMs: 60_000,
+    max: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
+    message: 'Too many authentication requests. Please try again in a minute.',
+  }));
+  app.use('/api', createRateLimiter({
+    windowMs: 60_000,
+    max: Number(process.env.API_RATE_LIMIT_MAX || 300),
+  }));
+
+  // Keep request bodies bounded in every environment. Individual endpoints should
+  // validate their own payload shape and size after parsing.
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '5mb' }));
   app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
-  app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 20, message: 'Too many authentication requests. Please try again in a minute.' }));
-  app.use('/api', createRateLimiter({ windowMs: 60_000, max: 300 }));
-
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // Initialize DB & Migrations on Boot
   try {
