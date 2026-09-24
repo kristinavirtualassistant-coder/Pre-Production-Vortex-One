@@ -11,9 +11,11 @@ export async function runEmailWorkerOnce(): Promise<number> {
     : (await pool.query<{ organization_id: string }>(`
         SELECT DISTINCT organization_id
         FROM jobs
-        WHERE status = 'queued'
-          AND available_at <= CURRENT_TIMESTAMP
-          AND job_type = 'email_outreach.send'
+        WHERE job_type = 'email_outreach.send'
+          AND (
+            (status = 'queued' AND available_at <= CURRENT_TIMESTAMP)
+            OR (status = 'processing' AND locked_at < CURRENT_TIMESTAMP - INTERVAL '300 seconds')
+          )
         ORDER BY organization_id`)).rows.map((row) => row.organization_id);
   for (const organizationId of organizations) {
     for (let i = 0; i < 10; i += 1) {

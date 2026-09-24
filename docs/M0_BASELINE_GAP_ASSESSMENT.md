@@ -19,7 +19,7 @@ Reference branch: main
 | Workers | Partial | Durable PostgreSQL jobs exist in server/services/jobService.ts | Redis-backed worker requirement is not established |
 | Cache | Partial | cacheService.ts uses in-process Map plus disk persistence | Not equivalent to distributed Redis |
 | CI | Partial | ci.yml runs npm ci, lint, build, test | No explicit integration/security stages identified |
-| Package management | Conflict | package-lock.json and bun.lock both exist | Establish one authoritative package-manager workflow |
+| Package management | Resolved | package-lock.json is the sole committed lockfile and CI uses npm ci | Keep npm as the authoritative package-manager workflow |
 | Infrastructure | Partial | Cloudflare/deployment assets and Dockerfile exist | Reconcile with final staging/production architecture |
 | Environment config | Present | .env.example exists | Formal production secret/environment contract needed |
 | API health | Present | /api/health checks PostgreSQL | Dedicated readiness contract needs verification |

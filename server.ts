@@ -49,14 +49,23 @@ async function startServer() {
 
   app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
 
-  // Bound request sizes before parsing and rate-limit all API traffic before authentication.
+  // Rate-limit before body parsing so abusive requests cannot consume parser memory first.
+  app.use('/api/auth', createRateLimiter({
+    windowMs: 60_000,
+    max: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
+    message: 'Too many authentication requests. Please try again in a minute.',
+    keyPrefix: 'auth',
+  }));
+  app.use('/api', createRateLimiter({
+    windowMs: 60_000,
+    max: Number(process.env.API_RATE_LIMIT_MAX || 300),
+    keyPrefix: 'api',
+  }));
+
+  // Keep request bodies bounded in every environment. Individual endpoints should
+  // validate their own payload shape and size after parsing.
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '5mb' }));
   app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
-  app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 20, message: 'Too many authentication requests. Please try again in a minute.' }));
-  app.use('/api', createRateLimiter({ windowMs: 60_000, max: 300 }));
-
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // Initialize DB & Migrations on Boot
   try {
@@ -87,6 +96,23 @@ async function startServer() {
         appliedMigrationsCount: db.appliedMigrationsCount,
       },
     });
+  });
+
+  app.post('/internal/scheduler/email-outreach', async (req, res) => {
+    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
+    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
+    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for email worker execution' });
+      const { runEmailWorkerOnce } = await import('./server/workers/emailWorker');
+      const processed = await runEmailWorkerOnce();
+      return res.json({ processedJobs: processed });
+    } catch (err: any) {
+      console.error('[email-scheduler-trigger] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Email scheduler trigger failed' });
+    }
   });
 
   app.post('/internal/scheduler/property-refresh', async (req, res) => {
@@ -449,6 +475,7 @@ async function startServer() {
 
   // Execute Custom Workflow Chain Step-by-Step
   app.post('/api/workflows/execute', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    let activeWorkflowRun: WorkflowRun | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -463,11 +490,10 @@ async function startServer() {
         return res.status(400).json({ error: 'No executable steps found in workflow request' });
       }
 
-      const runId = `run_wf_${Date.now()}`;
+      const runId = `run_wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const executedTasks: Task[] = [];
       const stepOutputs: Record<string, any> = {};
       let previousStepResult: any = custom_input || {};
-
       // Initialize run record in persistence store
       const workflowRun: WorkflowRun = {
         run_id: runId,
@@ -492,6 +518,7 @@ async function startServer() {
       });
 
       await createWorkflowRun(pool, orgId, workflowRun);
+      activeWorkflowRun = workflowRun;
 
       const runStartTime = Date.now();
 
@@ -681,6 +708,16 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Workflow execution error:', err);
+      if (activeWorkflowRun) {
+        try {
+          activeWorkflowRun.status = 'failed';
+          activeWorkflowRun.completed_at = new Date().toISOString();
+          activeWorkflowRun.final_summary = err?.message || 'Workflow execution failed';
+          await updateWorkflowRun(getPgPool()!, requireOrganizationId((req as AuthRequest).dbUser?.organization_id), activeWorkflowRun);
+        } catch (persistErr) {
+          console.error('Failed to persist workflow execution failure:', persistErr);
+        }
+      }
       res.status(500).json({ error: err.message || 'Workflow execution failed' });
     }
   });
@@ -698,9 +735,12 @@ async function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    let activeWorkflowRun: WorkflowRun | null = null;
+    let orgIdForPersistence: string | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      orgIdForPersistence = orgId;
       const pool = getPgPool();
       if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
       const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
@@ -740,6 +780,9 @@ async function startServer() {
           };
         }
       });
+
+      await createWorkflowRun(pool, orgId, workflowRun);
+      activeWorkflowRun = workflowRun;
 
       const runStartTime = Date.now();
 
@@ -976,6 +1019,16 @@ async function startServer() {
       res.end();
     } catch (err: any) {
       console.error('Workflow stream error:', err);
+      if (activeWorkflowRun && orgIdForPersistence) {
+        try {
+          activeWorkflowRun.status = 'failed';
+          activeWorkflowRun.completed_at = new Date().toISOString();
+          activeWorkflowRun.final_summary = err?.message || 'Streaming execution failed';
+          await updateWorkflowRun(getPgPool()!, orgIdForPersistence, activeWorkflowRun);
+        } catch (persistErr) {
+          console.error('Failed to persist workflow stream failure:', persistErr);
+        }
+      }
       sendEvent('error', { error: err.message || 'Streaming execution failed' });
       res.end();
     }

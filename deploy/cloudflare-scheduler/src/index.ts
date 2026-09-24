@@ -18,13 +18,20 @@ export default {
 };
 
 async function triggerScheduler(env: Env): Promise<Response> {
-  const url = `${env.VORTEX_ONE_API_URL.replace(/\/$/, '')}/internal/scheduler/property-refresh`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'x-vortex-scheduler-secret': env.SCHEDULER_TRIGGER_SECRET },
-  });
-  return new Response(await response.text(), {
-    status: response.status,
-    headers: { 'content-type': response.headers.get('content-type') || 'application/json' },
+  const base = env.VORTEX_ONE_API_URL.replace(/\/$/, '');
+  const headers = { 'x-vortex-scheduler-secret': env.SCHEDULER_TRIGGER_SECRET };
+  const [propertyResponse, emailResponse] = await Promise.all([
+    fetch(`${base}/internal/scheduler/property-refresh`, { method: 'POST', headers }),
+    fetch(`${base}/internal/scheduler/email-outreach`, { method: 'POST', headers }),
+  ]);
+  const propertyBody = await propertyResponse.text();
+  const emailBody = await emailResponse.text();
+  const status = propertyResponse.ok && emailResponse.ok ? 200 : 502;
+  return new Response(JSON.stringify({
+    property_refresh: { status: propertyResponse.status, body: propertyBody },
+    email_outreach: { status: emailResponse.status, body: emailBody },
+  }), {
+    status,
+    headers: { 'content-type': 'application/json' },
   });
 }

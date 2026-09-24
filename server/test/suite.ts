@@ -88,8 +88,9 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 13, 'Migration list contains 13 defined migrations', `Expected 13, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 14, 'Migration list contains 14 defined migrations', `Expected 14, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
   assert(
@@ -234,7 +235,7 @@ async function runAllTests() {
     assert(startRes.session.status === 'active', 'Dialing session started for campaign');
     // Keep the integration test deterministic regardless of the CI runner clock.
     await pgPool.query(
-      "UPDATE campaign SET calling_hours_start = '00:00', calling_hours_end = '23:59' WHERE id = $1 AND organization_id = $2",
+      "UPDATE campaign SET timezone = 'UTC', calling_hours_start = '00:00', calling_hours_end = '23:59:59' WHERE id = $1 AND organization_id = $2",
       [newCamp.id, 'org_cmc_realty'],
     );
 

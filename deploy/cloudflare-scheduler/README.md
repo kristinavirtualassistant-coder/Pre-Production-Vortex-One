@@ -1,6 +1,6 @@
 # Vortex One Cloudflare Scheduler
 
-This Worker is the managed trigger for the Vortex One durable property-refresh worker.
+This Worker is the managed trigger for the Vortex One durable property-refresh and email-outreach workers.
 
 ## Runtime configuration
 
@@ -9,7 +9,7 @@ Set these Worker secrets/variables:
 - `VORTEX_ONE_API_URL`: the public HTTPS origin of the Vortex One Node/Express API.
 - `SCHEDULER_TRIGGER_SECRET`: the same high-entropy secret configured as `SCHEDULER_TRIGGER_SECRET` in the Vortex One API runtime.
 
-The Cron Trigger runs hourly in UTC and calls the API's internal scheduler endpoint. The API drains up to 10 queued/due property-refresh jobs per invocation.
+The Cron Trigger runs hourly in UTC and calls the API's internal scheduler endpoint. The API drains up to 10 queued/due property-refresh jobs and up to 10 email-outreach jobs per invocation. Stale email job leases are recovered before processing.
 
 ## Deploy
 

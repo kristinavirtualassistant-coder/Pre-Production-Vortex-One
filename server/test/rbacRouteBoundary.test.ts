@@ -8,6 +8,8 @@ const mutationLines = source
   .filter((line) => /app\.(post|put|patch|delete)\('/.test(line));
 
 const explicitlyUnprotected = new Set([
+  "app.post('/internal/scheduler/email-outreach'",
+
   "app.post('/internal/scheduler/property-refresh'",
   "app.post('/api/runs/:id/abort'",
   "app.post('/api/property-search'",
