@@ -37,6 +37,7 @@ import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { queueEmailOutreach } from './server/services/emailOutreachService';
 import { createRateLimiter } from './server/middleware/rateLimit';
+import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns, abortWorkflowRun } from './server/services/workflowRunService';
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
@@ -388,24 +389,62 @@ async function startServer() {
   });
 
   // Workflow run read/mutation APIs were intentionally retired until durable PostgreSQL workflow-run persistence is available.
-  app.get('/api/runs', (_req, res) => {
-    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
+  app.get('/api/runs', async (req: AuthRequest, res) => {
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
+      const orgId = requireOrganizationId(req.dbUser?.organization_id);
+      const runs = await listWorkflowRuns(pool, orgId, {
+        workflowId: typeof req.query.workflow_id === 'string' ? req.query.workflow_id : undefined,
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : 20,
+      });
+      return res.json(runs);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to load workflow runs' });
+    }
   });
 
-  app.get('/api/runs/latest', (_req, res) => {
-    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
+  app.get('/api/runs/latest', async (req: AuthRequest, res) => {
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
+    const orgId = requireOrganizationId(req.dbUser?.organization_id);
+    const runs = await listWorkflowRuns(pool, orgId, { limit: 1 });
+    return res.json(runs[0] || null);
   });
 
-  app.get('/api/runs/active', (_req, res) => {
-    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
+  app.get('/api/runs/active', async (req: AuthRequest, res) => {
+    const pool = getPgPool();
+    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
+    const orgId = requireOrganizationId(req.dbUser?.organization_id);
+    const runs = await listWorkflowRuns(pool, orgId, { limit: 100 });
+    return res.json(runs.filter((run) => run.status === 'queued' || run.status === 'running' || run.status === 'paused_approval'));
   });
 
-  app.get('/api/runs/:id', (_req, res) => {
-    res.status(410).json({ error: 'Workflow run read API was removed; use the PostgreSQL workflow execution stream.' });
+  app.get('/api/runs/:id', async (req: AuthRequest, res) => {
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
+      const orgId = requireOrganizationId(req.dbUser?.organization_id);
+      const run = await getWorkflowRun(pool, orgId, req.params.id);
+      if (!run) return res.status(404).json({ error: 'Workflow run not found' });
+      return res.json(run);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to load workflow run' });
+    }
   });
 
-  app.post('/api/runs/:id/abort', (_req, res) => {
-    res.status(410).json({ error: 'Workflow run mutation API was removed; durable workflow-run persistence is required.' });
+  app.post('/api/runs/:id/abort', requireRole(['admin', 'executive', 'manager']), async (req: AuthRequest, res) => {
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
+      const orgId = requireOrganizationId(req.dbUser?.organization_id);
+      const run = await abortWorkflowRun(pool, orgId, req.params.id);
+      if (!run) return res.status(404).json({ error: 'Active workflow run not found' });
+      return res.json(run);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to abort workflow run' });
+    }
   });
 
   // Execute Custom Workflow Chain Step-by-Step
@@ -452,6 +491,8 @@ async function startServer() {
         }
       });
 
+      await createWorkflowRun(pool, orgId, workflowRun);
+
       const runStartTime = Date.now();
 
       for (let i = 0; i < stepsToRun.length; i++) {
@@ -470,6 +511,7 @@ async function startServer() {
             startedAt: new Date().toISOString(),
           };
         }
+        await updateWorkflowRun(pool, orgId, workflowRun);
 
         // Construct task with inherited context from previous steps or initial parameters
         const task: Task = {
@@ -515,6 +557,7 @@ async function startServer() {
           stepOutputs[stepKey] = subAgentRes.result;
           workflowRun.step_outputs = { ...stepOutputs };
           workflowRun.completed_steps = i + 1;
+          await updateWorkflowRun(pool, orgId, workflowRun);
 
           if (workflowRun.node_states) {
             workflowRun.node_states[stepKey] = {
@@ -586,6 +629,7 @@ async function startServer() {
             };
           }
           workflowRun.status = 'failed';
+          await updateWorkflowRun(pool, orgId, workflowRun);
 
           // Persist failure audit entry in PostgreSQL
           await pool.query(
@@ -622,6 +666,7 @@ async function startServer() {
       workflowRun.completed_at = new Date().toISOString();
       workflowRun.execution_time_ms = Date.now() - runStartTime;
       workflowRun.final_summary = `Completed ${workflowRun.completed_steps}/${stepsToRun.length} steps in ${workflowRun.execution_time_ms}ms`;
+      await updateWorkflowRun(pool, orgId, workflowRun);
 
       res.json({
         run_id: runId,
@@ -721,6 +766,7 @@ async function startServer() {
             startedAt: new Date().toISOString(),
           };
         }
+        await updateWorkflowRun(pool, orgId, workflowRun);
 
         // 1. Emit step_start (Node turns Blue / Active)
         sendEvent('step_start', {
@@ -781,6 +827,7 @@ async function startServer() {
           stepOutputs[stepKey] = subAgentRes.result;
           workflowRun.step_outputs = { ...stepOutputs };
           workflowRun.completed_steps = i + 1;
+          await updateWorkflowRun(pool, orgId, workflowRun);
 
           if (workflowRun.node_states) {
             workflowRun.node_states[stepKey] = {
@@ -873,6 +920,7 @@ async function startServer() {
             };
           }
           workflowRun.status = 'failed';
+          await updateWorkflowRun(pool, orgId, workflowRun);
 
           // Emit step_failed (Node turns Red / Failed)
           sendEvent('step_failed', {
@@ -910,6 +958,7 @@ async function startServer() {
       workflowRun.completed_at = new Date().toISOString();
       workflowRun.execution_time_ms = Date.now() - runStartTime;
       workflowRun.final_summary = `Completed ${workflowRun.completed_steps}/${stepsToRun.length} steps in ${workflowRun.execution_time_ms}ms`;
+      await updateWorkflowRun(pool, orgId, workflowRun);
 
       // 3. Emit workflow_completed
       sendEvent('workflow_completed', {
