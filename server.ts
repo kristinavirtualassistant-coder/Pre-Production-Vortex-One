@@ -735,9 +735,6 @@ async function startServer() {
 
     let activeWorkflowRun: WorkflowRun | null = null;
     let orgIdForPersistence: string | null = null;
-
-    let activeWorkflowRun: WorkflowRun | null = null;
-    let orgIdForPersistence: string | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
