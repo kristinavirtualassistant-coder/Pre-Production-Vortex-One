@@ -123,9 +123,10 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   const organizationName = typeof req.body?.organizationName === 'string' ? req.body.organizationName.trim() : '';
+  const inviteToken = typeof req.body?.inviteToken === 'string' ? req.body.inviteToken.trim() : '';
 
-  if (!email || !password || !name || !organizationName) {
-    return res.status(400).json({ error: 'Email, password, name, and organizationName are required' });
+  if (!email || !password || !name || (!organizationName && !inviteToken)) {
+    return res.status(400).json({ error: 'Email, password, name, and organization are required' });
   }
   if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
   if (organizationName.length < 2 || organizationName.length > 255) {
@@ -145,44 +146,68 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
-    const existingOrganization = await client.query(
-      'SELECT id FROM organizations WHERE lower(name) = lower($1) LIMIT 1',
-      [organizationName],
-    );
-    if (existingOrganization.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'An organization with this name already exists' });
-    }
+    let organizationId: string;
+    let assignedRole = 'admin';
 
-    const organizationId = `org_${randomUUID()}`;
-    const slugBase = organizationName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || 'organization';
-    let slug = slugBase;
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const suffix = attempt === 0 ? '' : `-${attempt + 1}`;
-      const candidate = `${slugBase.slice(0, 100 - suffix.length)}${suffix}`;
-      const slugCheck = await client.query('SELECT 1 FROM organizations WHERE slug = $1 LIMIT 1', [candidate]);
-      if (!slugCheck.rowCount) {
-        slug = candidate;
-        break;
+    if (inviteToken) {
+      const invite = await client.query(
+        `SELECT id, organization_id, email, role, expires_at, accepted_at
+         FROM organization_invites
+         WHERE token_hash = $1
+           AND accepted_at IS NULL
+           AND expires_at > CURRENT_TIMESTAMP
+         LIMIT 1
+         FOR UPDATE`,
+        [hashSessionToken(inviteToken)],
+      );
+      const row = invite.rows[0];
+      if (!row || row.email.toLowerCase() !== email.toLowerCase()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'This invitation is invalid, expired, or not issued to this email address' });
       }
-      if (attempt === 4) {
-        throw Object.assign(new Error('Organization slug could not be allocated'), { code: 'ORG_SLUG_CONFLICT' });
+      organizationId = row.organization_id;
+      assignedRole = row.role;
+      await client.query('UPDATE organization_invites SET accepted_at = CURRENT_TIMESTAMP WHERE id = $1', [row.id]);
+    } else {
+      const existingOrganization = await client.query(
+        'SELECT id FROM organizations WHERE lower(name) = lower($1) LIMIT 1',
+        [organizationName],
+      );
+      if (existingOrganization.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'An organization with this name already exists. Ask an administrator to invite you.' });
       }
-    }
 
-    await client.query(
-      `INSERT INTO organizations (id, name, slug)
-       VALUES ($1, $2, $3)`,
-      [organizationId, organizationName, slug],
-    );
+      organizationId = `org_${randomUUID()}`;
+      const slugBase = organizationName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || 'organization';
+      let slug = slugBase;
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const suffix = attempt === 0 ? '' : `-${attempt + 1}`;
+        const candidate = `${slugBase.slice(0, 100 - suffix.length)}${suffix}`;
+        const slugCheck = await client.query('SELECT 1 FROM organizations WHERE slug = $1 LIMIT 1', [candidate]);
+        if (!slugCheck.rowCount) {
+          slug = candidate;
+          break;
+        }
+        if (attempt === 4) {
+          throw Object.assign(new Error('Organization slug could not be allocated'), { code: 'ORG_SLUG_CONFLICT' });
+        }
+      }
+
+      await client.query(
+        `INSERT INTO organizations (id, name, slug)
+         VALUES ($1, $2, $3)`,
+        [organizationId, organizationName, slug],
+      );
+    }
 
     const passwordHash = await hashPassword(password);
     const result = await client.query(
       `INSERT INTO users (id, organization_id, email, name, role, password_hash)
-       VALUES ($1, $2, $3, $4, 'admin', $5)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, organization_id, email, name, role`,
-      [`user_${randomUUID()}`, organizationId, email, name, passwordHash],
+      [`user_${randomUUID()}`, organizationId, email, name, assignedRole, passwordHash],
     );
 
     await client.query('COMMIT');
@@ -197,6 +222,26 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
   }
 }
 
+async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const role = typeof req.body?.role === 'string' ? req.body.role : 'member';
+  const allowedRoles = ['member', 'agent', 'manager', 'executive'];
+  if (!email || !/^\\S+@\\S+\\.\\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
+  if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid invite role' });
+  if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
+
+  const existing = await pool.query('SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1', [req.dbUser.organization_id, email]);
+  if (existing.rowCount) return res.status(409).json({ error: 'This person is already a member of your tenant' });
+
+  const rawToken = randomUUID() + randomUUID().replace(/-/g, '');
+  await pool.query(
+    `INSERT INTO organization_invites (id, organization_id, email, role, token_hash, expires_at, invited_by)
+     VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP + INTERVAL '7 days', $6)`,
+    [`invite_${randomUUID()}`, req.dbUser.organization_id, email, role, hashSessionToken(rawToken), req.dbUser.id],
+  );
+  return res.status(201).json({ email, role, token: rawToken, expiresInDays: 7 });
+}
+
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const pool = getPgPool();
   if (!pool) return res.status(503).json({ error: 'Database unavailable' });
@@ -206,6 +251,9 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
     if (req.path === '/auth/login' && req.method === 'POST') return handleLogin(req, res, pool);
     if (req.path === '/auth/signup' && req.method === 'POST') return handleSignup(req, res, pool);
+    if (req.path === '/tenant/invites' && req.method === 'POST') {
+      return createTenantInvite(req, res, pool);
+    }
     if (req.path === '/auth/logout' && req.method === 'POST') {
       const authorization = req.headers.authorization;
       if (authorization?.startsWith('Bearer ')) {
