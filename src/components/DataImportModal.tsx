@@ -109,7 +109,7 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   const { addToast } = useToast();
 
   const organizationId = userProfile?.organization_id || '';
-  const orgName = userProfile?.organization_name || 'CMC Realty & Property Management';
+  const orgName = userProfile?.organization_name || 'Tenant Organization';
 
   const resetState = () => {
     setFile(null);
