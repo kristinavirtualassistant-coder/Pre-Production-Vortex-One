@@ -150,7 +150,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 </div>
                 <h2 className="text-xl font-bold text-slate-100 tracking-tight">{currentReport.title}</h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Generated for <strong>CMC Realty &amp; Property Management</strong> · {currentReport.period}
+                  Generated for <strong>Tenant Organization &amp; Property Management</strong> · {currentReport.period}
                 </p>
               </div>
 
