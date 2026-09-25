@@ -229,6 +229,7 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   if (!email || !/^\\S+@\\S+\\.\\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid invite role' });
   if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
+  if (!['admin', 'executive', 'manager'].includes(req.dbUser.role)) return res.status(403).json({ error: 'Only tenant administrators and managers can invite members' });
 
   const existing = await pool.query('SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1', [req.dbUser.organization_id, email]);
   if (existing.rowCount) return res.status(409).json({ error: 'This person is already a member of your tenant' });
