@@ -62,7 +62,7 @@ export const CrmOptionsModal: React.FC<CrmOptionsModalProps> = ({
     setHighPriorityThreshold(80);
     setAutoAdvanceStageOnCall(true);
     setStrictTcpaScrub(true);
-    addToast('Scoring weights reset to CMC Realty default baseline.', 'info');
+    addToast('Scoring weights reset to Tenant Organization default baseline.', 'info');
   };
 
   return (
