@@ -55,10 +55,10 @@ const DEFAULT_VARIABLES = [
   { name: 'estimated_value', label: 'Estimated Valuation', group: 'Financials', sample: '$2,650,000' },
   { name: 'estimated_equity', label: 'Estimated Equity', group: 'Financials', sample: '$1,850,000' },
   { name: 'assessed_tax_value', label: 'Assessed Tax Value', group: 'Financials', sample: '$1,720,000' },
-  { name: 'company_name', label: 'Brokerage / Company Name', group: 'Brokerage', sample: 'CMC Realty & Property Management' },
-  { name: 'agent_name', label: 'Agent Name', group: 'Brokerage', sample: 'Marcus Vance' },
+  { name: 'company_name', label: 'Brokerage / Company Name', group: 'Brokerage', sample: 'Tenant Organization' },
+  { name: 'agent_name', label: 'Agent Name', group: 'Brokerage', sample: 'Vortex One' },
   { name: 'agent_phone', label: 'Agent Phone', group: 'Brokerage', sample: '(949) 555-0199' },
-  { name: 'agent_email', label: 'Agent Email', group: 'Brokerage', sample: 'marcus@cmcrealty.com' },
+  { name: 'agent_email', label: 'Agent Email', group: 'Brokerage', sample: '' },
   { name: 'lead_score', label: 'Lead Score', group: 'Lead', sample: '94' },
   { name: 'lead_classification', label: 'Lead Classification', group: 'Lead', sample: 'High Priority' },
 ];
@@ -609,10 +609,10 @@ export const OutreachTemplateManager: React.FC<OutreachTemplateManagerProps> = (
         estimated_value: activeProp ? `$${Number(activeProp.estimated_value || 2650000).toLocaleString()}` : '$2,650,000',
         estimated_equity: activeProp ? `$${Number(activeProp.estimated_equity || 1850000).toLocaleString()}` : '$1,850,000',
         assessed_tax_value: activeProp ? `$${Number(activeProp.assessed_tax_value || 1720000).toLocaleString()}` : '$1,720,000',
-        company_name: 'CMC Realty & Property Management',
-        agent_name: 'Marcus Vance',
+        company_name: 'Tenant Organization',
+        agent_name: 'Vortex One',
         agent_phone: '(949) 555-0199',
-        agent_email: 'marcus@cmcrealty.com',
+        agent_email: '',
         lead_score: String(activeProp?.viability_score || 94),
         lead_classification: 'High Priority',
       };
@@ -1442,7 +1442,7 @@ export const OutreachTemplateManager: React.FC<OutreachTemplateManagerProps> = (
                     </div>
                     <div className="flex items-center">
                       <span className="w-16 text-slate-500 font-medium">From:</span>
-                      <span className="text-slate-300">Marcus Vance &lt;marcus@cmcrealty.com&gt;</span>
+                      <span className="text-slate-300">Vortex One &lt;&gt;</span>
                     </div>
                     <div className="flex items-center">
                       <span className="w-16 text-slate-500 font-medium">To:</span>
