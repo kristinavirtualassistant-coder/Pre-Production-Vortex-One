@@ -32,7 +32,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRefreshDb,
   onNavigate,
 }) => {
-  const { userProfile, activeTenant, availableTenants } = useAuth();
+  const { userProfile, activeTenant, availableTenants, getAuthHeaders } = useAuth();
   const { addToast } = useToast();
 
   const [activeTab, setActiveTab] = useState<'general' | 'telephony' | 'gis' | 'security'>('general');
@@ -40,6 +40,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [timezone, setTimezone] = useState('America/Los_Angeles');
   const [minLeadScore, setMinLeadScore] = useState('65');
   const [smartForwarding, setSmartForwarding] = useState({ enabled: false, rules: [] as Array<{ leadSource: string; extension: string }> });
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('member');
+  const [inviteLink, setInviteLink] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
 
   React.useEffect(() => {
     fetch('/api/settings/smart-forwarding')
@@ -57,6 +61,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       body: JSON.stringify(nextSettings)
     });
     addToast(`Smart Forwarding ${nextEnabled ? 'enabled' : 'disabled'}.`, 'success');
+  };
+
+  const handleInviteMember = async () => {
+    setInviteLoading(true);
+    try {
+      const response = await fetch('/api/tenant/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Unable to create invitation');
+      const link = `${window.location.origin}/?invite=${encodeURIComponent(data.token)}`;
+      setInviteLink(link);
+      addToast('Tenant invitation created. Share the invitation link with the user.', 'success');
+      setInviteEmail('');
+    } catch (error: any) {
+      addToast(error.message || 'Unable to create invitation', 'error');
+    } finally {
+      setInviteLoading(false);
+    }
   };
 
   const handleSaveGeneral = (e: React.FormEvent) => {
@@ -133,6 +158,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 font-mono"
                 />
               </div>
+            </div>
+
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-3">
+              <div>
+                <h3 className="text-xs font-bold text-slate-900">Tenant Team Access</h3>
+                <p className="text-[11px] text-slate-500 mt-1">Vortex One is the service provider. Your company is the tenant. Invite coworkers into this tenant instead of creating separate organizations.</p>
+              </div>
+              {['admin','executive','manager'].includes(userProfile?.role || '') ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="coworker@company.com" className="sm:col-span-2 text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg" />
+                    <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className="text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg">
+                      <option value="member">Member</option><option value="agent">Agent</option><option value="manager">Manager</option><option value="executive">Executive</option>
+                    </select>
+                  </div>
+                  <button type="button" disabled={!inviteEmail.trim() || inviteLoading} onClick={handleInviteMember} className="px-3 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-xs font-semibold">
+                    {inviteLoading ? 'Creating invitation…' : 'Create secure invitation'}
+                  </button>
+                  {inviteLink && <div className="text-[11px] text-slate-600 break-all bg-white border border-slate-200 rounded-lg p-2"><strong>Invitation link:</strong> {inviteLink}</div>}
+                </>
+              ) : <p className="text-[11px] text-slate-500">Only tenant administrators and managers can invite users.</p>}
             </div>
 
             <div>
