@@ -15,8 +15,17 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
+  const [inviteToken, setInviteToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  React.useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('invite');
+    if (token) {
+      setInviteToken(token);
+      setMode('signup');
+    }
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -26,7 +35,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
       addToast('Email and password are required.', 'error');
       return;
     }
-    if (mode === 'signup' && (!name.trim() || !organizationName.trim())) {
+    if (mode === 'signup' && (!name.trim() || (!organizationName.trim() && !inviteToken))) {
       addToast('Name and organization are required.', 'error');
       return;
     }
@@ -46,6 +55,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
           password,
           name: name.trim(),
           organizationName: organizationName.trim(),
+          inviteToken: inviteToken || undefined,
         });
         addToast('Account created and signed in successfully.', 'success');
       }
@@ -117,8 +127,9 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
                   Organization name
                   <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                     <Building2 className="h-4 w-4 text-slate-500" />
-                    <input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Your company or organization" className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="organization" required />
+                    <input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Your company or organization" className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="organization" required={!inviteToken} disabled={!!inviteToken} />
                   </div>
+                  {inviteToken && <span className="mt-1 block text-xs text-cyan-400">You are joining an existing Vortex One tenant.</span>}
                 </label>
               </>
             )}
