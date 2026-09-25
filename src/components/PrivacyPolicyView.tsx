@@ -107,7 +107,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onNavigate
               1. Overview and Scope
             </h2>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-              This Privacy Policy applies to the Vortex One Multi-Agent Intelligence platform, operated on behalf of CMC Realty &amp; Property Management ("we", "us", or "our"). It governs how we collect, process, store, and safeguard data when you use our autonomous real estate intelligence software, APIs, multi-agent dispatch pipelines, and integrated telephony systems.
+              This Privacy Policy applies to the Vortex One Multi-Agent Intelligence platform, operated on behalf of Tenant Organization &amp; Property Management ("we", "us", or "our"). It governs how we collect, process, store, and safeguard data when you use our autonomous real estate intelligence software, APIs, multi-agent dispatch pipelines, and integrated telephony systems.
             </p>
           </section>
 
