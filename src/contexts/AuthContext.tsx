@@ -33,6 +33,7 @@ interface SignUpParams {
   password: string;
   name: string;
   organizationName: string;
+  inviteToken?: string;
 }
 
 interface AuthContextType {
@@ -158,6 +159,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           password: params.password,
           name: params.name,
           organizationName: params.organizationName,
+          inviteToken: params.inviteToken,
         }),
       });
       const data = await response.json().catch(() => ({}));
