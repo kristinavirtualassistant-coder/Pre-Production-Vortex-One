@@ -944,8 +944,10 @@ async function runAllTests() {
   assert(sacProvider.isGovernmentSource === true, 'Sacramento County provider flagged as official government source');
 
   // Live government GIS calls are mandatory integration tests.
-  // CI sets VORTEX_ONE_LIVE_GIS_TESTS=1, and any provider outage, schema drift,
-  // routing regression, or empty/invalid live response must fail the suite.
+  // Any provider outage, schema drift, routing regression, or empty/invalid live
+  // response must fail the suite; the CI workflow separately verifies that both
+  // mandatory live-query sections execute and that the historical skip message
+  // is never emitted.
   const unifiedProvider = new UnifiedPropertyDataProvider();
 
   console.log('  Executing Live Query against Orange County Public Works GIS...');
