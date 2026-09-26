@@ -34,7 +34,11 @@ jobs:
       - name: Build frontend
         run: npm run build:client
 
+      - name: Add SPA fallback
+        run: printf '%s\\n' '/* /index.html 200' > dist/_redirects
+
       - name: Deploy prebuilt frontend
-        run: npx --yes netlify-cli@23.6.0 deploy --prod --dir=dist --site="$NETLIFY_SITE_ID" --auth="$NETLIFY_AUTH_TOKEN"
+        working-directory: dist
+        run: npx --yes netlify-cli@23.6.0 deploy --prod --dir=. --site="$NETLIFY_SITE_ID" --auth="$NETLIFY_AUTH_TOKEN"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
