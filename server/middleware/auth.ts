@@ -129,7 +129,7 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
     return res.status(400).json({ error: 'Email, password, name, and organization are required' });
   }
   if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
-  if (organizationName.length < 2 || organizationName.length > 255) {
+  if (!inviteToken && (organizationName.length < 2 || organizationName.length > 255)) {
     return res.status(400).json({ error: 'Organization name must be between 2 and 255 characters' });
   }
 
