@@ -50,7 +50,6 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/vortex_one_test
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
       VORTEX_ONE_SEED_DEMO_DATA: "0"
-      VORTEX_ONE_LIVE_GIS_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,4 +57,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Run integration tests with mandatory live GIS verification
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee integration-test-output.log
+          grep -Fq "Executing Live Query against Orange County Public Works GIS..." integration-test-output.log
+          grep -Fq "Executing Live Query against Los Angeles County Assessor GIS..." integration-test-output.log
+          ! grep -Fq "Skipping live government GIS integration tests" integration-test-output.log
