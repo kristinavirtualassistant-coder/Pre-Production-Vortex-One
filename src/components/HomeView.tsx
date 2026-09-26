@@ -540,7 +540,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <span className="font-bold text-base text-slate-950 tracking-tight">VORTEX ONE</span>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed max-w-sm">
-                Enterprise multi-agent artificial intelligence platform for CMC Realty &amp; Property Management. Empowering off-market property discovery, skip-trace research, and compliant outreach.
+                Enterprise multi-agent artificial intelligence platform for Tenant Organization &amp; Property Management. Empowering off-market property discovery, skip-trace research, and compliant outreach.
               </p>
               <div className="text-[11px] text-slate-400">
                 Authorized for Commercial &amp; Residential Real Estate Operations.
@@ -601,7 +601,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-between text-slate-500 text-[11px] space-y-3 sm:space-y-0">
             <div>
-              &copy; {new Date().getFullYear()} Vortex One &amp; CMC Realty &amp; Property Management. All rights reserved.
+              &copy; {new Date().getFullYear()} Vortex One &amp; Tenant Organization &amp; Property Management. All rights reserved.
             </div>
             <div className="flex items-center space-x-4">
               <button onClick={() => onNavigate('home')} className="hover:text-slate-900 transition cursor-pointer">Home</button>

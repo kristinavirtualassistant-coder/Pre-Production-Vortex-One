@@ -954,7 +954,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button onClick={() => onNavigate('terms')} className="hover:text-cyan-700 font-semibold cursor-pointer">Terms of Service</button>
         </div>
         <div>
-          CMC Realty &amp; Property Management • Enterprise Multi-Agent OS
+          Tenant Organization &amp; Property Management • Enterprise Multi-Agent OS
         </div>
       </div>
     </div>

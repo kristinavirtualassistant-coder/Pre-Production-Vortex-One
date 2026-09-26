@@ -95,7 +95,7 @@ export const inMemoryStore = {
 };
 
 /**
- * Seed realistic property, lead, and CRM data tailored for CMC Realty & Property Management
+ * Seed realistic property, lead, and CRM data tailored for Tenant Organization
  */
 export function seedInitialData() {
   const orgId = 'org_cmc_realty';
@@ -478,7 +478,7 @@ export function seedInitialData() {
       requires_human_approval: true,
       proposed_by: 'sub_agent_5',
       payload: {
-        template: 'Hi {Owner_Name}, CMC Realty is offering comprehensive local property management for your {Property_Address} property with 0% vacancy guarantee.',
+        template: 'Hi {Owner_Name}, Tenant Organization is offering comprehensive local property management for your {Property_Address} property with 0% vacancy guarantee.',
         contactCount: 12,
         market: 'Costa Mesa, CA',
       },

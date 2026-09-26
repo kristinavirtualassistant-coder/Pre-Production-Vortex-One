@@ -261,7 +261,7 @@ Distinguish between VERIFIED facts, STRONG indications, and INFERENCES. Retain s
       if (!lead) {
         return { status: 'needs_review', result: { outreach_state: 'NO_SOURCE_BACKED_LEAD' }, confidence: 1, provenance, warnings: ['No source-backed lead was supplied.'] };
       }
-      const prompt = `You are Sub-Agent 5 (Outreach Intelligence for CMC Realty & Property Management).
+      const prompt = `You are Sub-Agent 5 (Outreach Intelligence for Tenant Organization).
 Generate a personalized, high-conversion outbound call strategy and script for:
 Lead Owner: ${lead?.owner_name || 'Absentee Owner'}
 Property: ${lead?.property_address || 'Costa Mesa Multi-Family Asset'}
@@ -281,14 +281,14 @@ Format with:
       // Optional TTS generation for the elevator pitch hook
       let audioBase64: string | null = null;
       try {
-        const shortPitch = `Hi ${lead?.owner_name || 'there'}, this is CMC Realty in Costa Mesa. We noticed your multi-family property on Newport Boulevard. We specialize in eliminating landlord headaches with zero vacancy downtime.`;
+        const shortPitch = `Hi ${lead?.owner_name || 'there'}, this is Tenant Organization in Costa Mesa. We noticed your multi-family property on Newport Boulevard. We specialize in eliminating landlord headaches with zero vacancy downtime.`;
         audioBase64 = await generateSpeechTTS(shortPitch, 'Kore');
       } catch (e) {
         // Fallback gracefully
       }
 
       provenance.push({
-        source: 'CMC Realty & Property Management Strategy Playbook 2026',
+        source: 'Tenant Organization Strategy Playbook 2026',
         sourceType: 'crm',
         retrievedAt: new Date().toISOString(),
         confidence: 0.95,
@@ -299,7 +299,7 @@ Format with:
         status: 'completed',
         result: {
           call_strategy_brief: aiRes.text,
-          sms_followup_template: `Hi ${lead?.owner_name || 'Owner'}, CMC Realty offers local full-service property management for your ${lead?.property_address || 'property'} with full tenant placement. Would next Tuesday work for a quick rent-yield review?`,
+          sms_followup_template: `Hi ${lead?.owner_name || 'Owner'}, Tenant Organization offers local full-service property management for your ${lead?.property_address || 'property'} with full tenant placement. Would next Tuesday work for a quick rent-yield review?`,
           tts_audio_base64: audioBase64,
           outreach_state: 'RECOMMENDED_ACTION',
         },
@@ -389,7 +389,7 @@ Format with:
         approvalPayload: {
           action_type: proposedAction,
           contact_count: contactCount,
-          reason: 'Bulk outbound SMS & Dialing sequence for CMC Realty leads.',
+          reason: 'Bulk outbound SMS & Dialing sequence for Tenant Organization leads.',
         },
       };
     }

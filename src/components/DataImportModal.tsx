@@ -109,7 +109,7 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
   const { addToast } = useToast();
 
   const organizationId = userProfile?.organization_id || '';
-  const orgName = userProfile?.organization_name || 'CMC Realty & Property Management';
+  const orgName = userProfile?.organization_name || 'Tenant Organization';
 
   const resetState = () => {
     setFile(null);
@@ -1042,7 +1042,7 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
                     <p className="text-xs text-slate-500 mt-1">
                       {file
                         ? `${(file.size / 1024).toFixed(1)} KB • ${parsedData.length} records parsed`
-                        : 'Supports standard Property, Lead, Assessor, CoStar, BatchLeads, and CRM export CSVs'}
+                        : 'Supports standard Property, Lead, Assessor, CoStar, standard CSV, and CRM export CSVs'}
                     </p>
                   </div>
 

@@ -7,12 +7,26 @@ import type { Migration } from './migrations';
  * is never reconstructed or overwritten by an automated patch.
  */
 export const POSTGRESQL_AUTH_MIGRATION: Migration = {
-  version: 12,
-  name: '012_create_postgresql_auth_schema',
+  version: 13,
+  name: '013_create_tenant_invitation_schema',
   sql: `
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP WITH TIME ZONE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE;
+
+    CREATE TABLE IF NOT EXISTS organization_invites (
+      id VARCHAR(128) PRIMARY KEY,
+      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      email VARCHAR(255) NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'member',
+      token_hash VARCHAR(64) NOT NULL UNIQUE,
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      invited_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+      accepted_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_org_invites_org ON organization_invites(organization_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_org_invites_email ON organization_invites(lower(email), expires_at);
 
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id VARCHAR(128) PRIMARY KEY,

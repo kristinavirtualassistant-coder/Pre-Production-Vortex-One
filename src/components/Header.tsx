@@ -150,8 +150,8 @@ export const Header: React.FC<HeaderProps> = ({
                 Agent OS
               </span>
             </div>
-            <p className="hidden xl:block text-[11px] text-slate-500 font-medium">
-              Enterprise Property Intelligence Platform
+            <p className="text-[10px] lg:text-[11px] text-slate-500 font-medium truncate max-w-[190px]">
+              {activeTenant?.name || 'Tenant Organization'}
             </p>
           </div>
         </div>
@@ -168,7 +168,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Switch Active Tenant Organization"
           >
             <Building className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
-            <span className="max-w-[130px] lg:max-w-[160px] truncate">{activeTenant.name}</span>
+            <span className="max-w-[130px] lg:max-w-[160px] truncate">{activeTenant?.name || 'Tenant Organization'}</span>
             <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
           </button>
 
@@ -186,7 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
                     type="button"
                     onClick={() => handleTenantSelect(tenant.id, tenant.name)}
                     className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition cursor-pointer ${
-                      activeTenant.id === tenant.id ? 'bg-cyan-50 text-cyan-900 font-semibold' : 'text-slate-700'
+                      activeTenant?.id === tenant.id ? 'bg-cyan-50 text-cyan-900 font-semibold' : 'text-slate-700'
                     }`}
                   >
                     <div className="flex items-center space-x-2">
@@ -196,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
                         <p className="text-[10px] text-slate-400">{tenant.id}</p>
                       </div>
                     </div>
-                    {activeTenant.id === tenant.id && <Check className="w-4 h-4 text-cyan-600 shrink-0" />}
+                    {activeTenant?.id === tenant.id && <Check className="w-4 h-4 text-cyan-600 shrink-0" />}
                   </button>
                 ))}
               </div>
@@ -560,8 +560,8 @@ export const Header: React.FC<HeaderProps> = ({
 
                 <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Current Organization</p>
-                  <p className="text-xs font-semibold text-slate-800 mt-0.5">{activeTenant.name}</p>
-                  <p className="text-[10px] text-slate-500">ID: {activeTenant.id}</p>
+                  <p className="text-xs font-semibold text-slate-800 mt-0.5">{activeTenant?.name || 'Tenant Organization'}</p>
+                  <p className="text-[10px] text-slate-500">ID: {activeTenant?.id || '—'}</p>
                 </div>
 
                 <div className="py-1">

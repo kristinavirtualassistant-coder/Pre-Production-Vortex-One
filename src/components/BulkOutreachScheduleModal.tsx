@@ -54,7 +54,7 @@ export const BulkOutreachScheduleModal: React.FC<BulkOutreachScheduleModalProps>
   );
   const [telephonyProvider] = useState<'ringcentral'>('ringcentral');
   const [callBrief, setCallBrief] = useState(
-    'Outbound pitch regarding CMC Realty proactive property management, zero vacancy guarantee, and local Costa Mesa asset optimization.'
+    'Outbound pitch regarding Tenant Organization proactive property management, zero vacancy guarantee, and local Costa Mesa asset optimization.'
   );
 
   // Execution Mode: 'immediate' | 'scheduled'

@@ -71,7 +71,7 @@ export class MasterOrchestrator {
     }, auditLogs);
 
     // 2. Intent Understanding & Task Graph Planning
-    const planPrompt = `You are Agent 1, the Master Control Orchestrator for Vortex One (operating for CMC Realty & Property Management).
+    const planPrompt = `You are Agent 1, the Master Control Orchestrator for Vortex One (operating for Tenant Organization).
 The user requested: "${userPrompt}".
 Decompose this request into structured sub-tasks.
 Available sub-agents:

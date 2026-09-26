@@ -503,7 +503,7 @@ export interface SharedMemoryState {
     scratchpad: Record<string, any>;
   }>;
   businessMemory: {
-    client_name: string; // CMC Realty & Property Management
+    client_name: string; // Tenant Organization
     objective: string;
     target_geography: string[];
     min_equity_percent: number;

@@ -50,6 +50,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/vortex_one_test
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
       VORTEX_ONE_SEED_DEMO_DATA: "0"
+      VORTEX_ONE_LIVE_GIS_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

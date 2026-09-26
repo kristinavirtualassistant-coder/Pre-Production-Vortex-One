@@ -735,7 +735,7 @@ export const DialerView: React.FC<DialerViewProps> = ({
     setIsPlayingTTS(true);
 
     try {
-      const pitch = `Hi ${contactName}, this is CMC Realty in Costa Mesa. We manage multi-family portfolios across Orange County and noticed your property on Newport Boulevard. We offer dedicated local vendor rates and zero vacancy downtime.`;
+      const pitch = `Hi ${contactName}, this is Tenant Organization in Costa Mesa. We manage multi-family portfolios across Orange County and noticed your property on Newport Boulevard. We offer dedicated local vendor rates and zero vacancy downtime.`;
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

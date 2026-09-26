@@ -4092,10 +4092,10 @@ ${transcript}`;
         apn: p.apn || '423-112-09',
         lead_score: l.lead_score ?? 94,
         lead_classification: l.classification || 'High Priority',
-        company_name: 'CMC Realty & Property Management',
-        agent_name: 'Marcus Vance',
+        company_name: 'Tenant Organization',
+        agent_name: 'Vortex One',
         agent_phone: '(949) 555-0199',
-        agent_email: 'marcus@cmcrealty.com',
+        agent_email: '',
         ...(customVariables || {}),
       };
 
