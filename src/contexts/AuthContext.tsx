@@ -163,8 +163,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Sign-up failed');
-      await signInWithEmail(params.email, params.password);
+      if (!response.ok) throw new Error(
+        data.detail ? `${data.error || 'Sign-up failed'}: ${data.detail}` : (data.error || 'Sign-up failed')
+      );
+      if (!data?.token || !data?.user?.id) throw new Error('Account was created but no login session was returned. Please sign in again.');
+      applySession(data);
     } catch (err: any) {
       const message = err?.message || 'Sign-up failed';
       setError(message);
