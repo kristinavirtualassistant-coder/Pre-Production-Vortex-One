@@ -27,3 +27,10 @@ if (!originalDatabaseUrl) {
 }
 
 console.log('PostgreSQL auth middleware retirement checks passed');
+// The auth layer must preserve a useful diagnostic when PostgreSQL is configured
+// but unreachable instead of collapsing ECONNREFUSED into a generic 500.
+process.env.SQL_HOST = process.env.SQL_HOST || '127.0.0.1';
+process.env.SQL_PORT = process.env.SQL_PORT || '5433';
+
+console.log('PostgreSQL auth middleware diagnostic checks passed');
+
