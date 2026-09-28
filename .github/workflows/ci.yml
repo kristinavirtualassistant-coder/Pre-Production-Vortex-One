@@ -48,6 +48,12 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/vortex_one_test
+      SQL_HOST: 127.0.0.1
+      SQL_PORT: "5432"
+      SQL_DB_NAME: vortex_one_test
+      SQL_USER: postgres
+      SQL_PASSWORD: postgres
+      SQL_SSL: "false"
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
       VORTEX_ONE_SEED_DEMO_DATA: "0"
     steps:

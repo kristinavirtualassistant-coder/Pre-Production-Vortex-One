@@ -17,6 +17,7 @@ assert.equal(authView.includes('continueAsGuest'), false, 'AuthView must not exp
 assert.equal(authView.includes('signInWithGoogle'), false, 'AuthView must not expose provider authentication');
 assert.equal(authView.includes('signInWithEmail'), true, 'AuthView must use PostgreSQL email authentication');
 assert.equal(authView.includes('signUpWithEmail'), true, 'AuthView must use PostgreSQL signup');
+assert.equal(authView.includes('Google sign-in is not available'), false, 'AuthView must not surface a dead Google provider path');
 
 
 const authMiddleware = fs.readFileSync(path.resolve(process.cwd(), 'server/middleware/auth.ts'), 'utf8');

@@ -211,7 +211,30 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
     );
 
     await client.query('COMMIT');
-    return res.status(201).json({ user: result.rows[0] });
+
+    const createdUser = result.rows[0];
+    const token = createSessionToken();
+    await pool.query(
+      `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
+      [`sess_${randomUUID()}`, createdUser.id, hashSessionToken(token)],
+    );
+
+    const organization = await pool.query(
+      'SELECT id, name, slug, settings FROM organizations WHERE id = $1 LIMIT 1',
+      [createdUser.organization_id],
+    );
+    const organizationRow = organization.rows[0];
+
+    return res.status(201).json({
+      token,
+      user: {
+        ...createdUser,
+        organization_name: organizationRow?.name,
+        organization_slug: organizationRow?.slug,
+        organization_settings: organizationRow?.settings,
+      },
+    });
   } catch (error: any) {
     try { await client.query('ROLLBACK'); } catch { /* preserve original failure */ }
     if (error?.code === '23505') return res.status(409).json({ error: 'An account or organization with these details already exists' });
@@ -290,6 +313,14 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     return next();
   } catch (error: any) {
     if (error instanceof AuthorizationError) return res.status(error.statusCode).json({ error: error.message });
+    if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT') {
+      console.error('PostgreSQL authentication connection error:', error);
+      return res.status(503).json({
+        error: 'Authentication database unavailable',
+        code: 'AUTH_DATABASE_UNAVAILABLE',
+        detail: `Unable to connect to PostgreSQL at ${process.env.SQL_HOST || process.env.DB_HOST || 'configured host'}:${process.env.SQL_PORT || process.env.DB_PORT || '5432'}.`,
+      });
+    }
     console.error('PostgreSQL authentication error:', error);
     return res.status(500).json({ error: 'Authentication service unavailable' });
   }
