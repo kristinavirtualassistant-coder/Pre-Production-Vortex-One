@@ -725,4 +725,85 @@ export const MIGRATIONS: Migration[] = [
       WHERE email_verified_at IS NULL;
     `,
   },
+  {
+    version: 19,
+    name: '019_create_reporting_analytics_layer',
+    sql: `
+      CREATE TABLE IF NOT EXISTS analytics_cost_events (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        category VARCHAR(50) NOT NULL,
+        provider VARCHAR(100),
+        quantity NUMERIC(18,6) NOT NULL DEFAULT 1,
+        unit_cost_usd NUMERIC(18,6) NOT NULL DEFAULT 0,
+        total_cost_usd NUMERIC(18,6) NOT NULL,
+        reference_type VARCHAR(80),
+        reference_id VARCHAR(128),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_cost_org_time
+        ON analytics_cost_events(organization_id, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_cost_org_campaign
+        ON analytics_cost_events(organization_id, campaign_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS analytics_ai_usage (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        agent_id VARCHAR(128),
+        workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+        provider VARCHAR(100) NOT NULL,
+        model VARCHAR(150),
+        operation VARCHAR(100) NOT NULL,
+        input_tokens BIGINT NOT NULL DEFAULT 0,
+        output_tokens BIGINT NOT NULL DEFAULT 0,
+        total_tokens BIGINT NOT NULL DEFAULT 0,
+        estimated_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        success BOOLEAN NOT NULL DEFAULT true,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_ai_org_time
+        ON analytics_ai_usage(organization_id, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_ai_org_agent
+        ON analytics_ai_usage(organization_id, agent_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS analytics_value_events (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('revenue','acquisition_value','management_value','other')),
+        amount_usd NUMERIC(18,2) NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_value_org_time
+        ON analytics_value_events(organization_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS appointments (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        assigned_user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'scheduled'
+          CHECK (status IN ('scheduled','confirmed','completed','cancelled','no_show')),
+        outcome VARCHAR(100),
+        notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_appointments_org_scheduled
+        ON appointments(organization_id, scheduled_at);
+      CREATE INDEX IF NOT EXISTS idx_appointments_org_status
+        ON appointments(organization_id, status);
+    `,
+  },
 ];\n
