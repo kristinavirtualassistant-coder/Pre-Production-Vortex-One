@@ -94,7 +94,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 23, 'Migration list contains 23 defined migrations', `Expected 23, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 26, 'Migration list contains 26 defined migrations', `Expected 26, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
@@ -102,8 +102,12 @@ async function runAllTests() {
   assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 19 && migration.name === '019_production_auth_account_management'), 'Production auth migration 19 present', 'Expected production auth migration 19 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 20 && migration.name === '020_create_reporting_analytics_layer'), 'Reporting analytics migration 20 present', 'Expected reporting analytics migration 20 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 21 && migration.name === '021_create_file_assets'), 'File assets migration 21 present', 'Expected file assets migration 21 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 22 && migration.name === '022_create_workflow_communication_suppression'), 'Communication suppression migration 22 present', 'Expected communication suppression migration 22 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 23 && migration.name === '023_create_workflow_communication_deliveries'), 'Workflow communication outbox migration 23 present', 'Expected workflow communication outbox migration 23 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 24 && migration.name === '024_create_stripe_webhook_events'), 'Stripe webhook migration 24 present', 'Expected Stripe webhook migration 24 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 25 && migration.name === '025_create_owner_enrichment'), 'Owner enrichment migration 25 present', 'Expected owner enrichment migration 25 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 26 && migration.name === '026_create_unified_communications'), 'Unified communications migration 26 present', 'Expected unified communications migration 26 to be present');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
