@@ -1293,7 +1293,7 @@ async function startServer() {
         ownerName: ownerName ? String(ownerName) : undefined,
         organizationId,
         preferredProvider: preferredProvider as any,
-        persist: persist !== 'false',
+        persist: persist === 'true',
         limit: limit ? Number(limit) : 10,
       });
       res.json(results);
@@ -3687,8 +3687,9 @@ ${transcript}`;
         return res.status(404).json({ error: 'Imported file record not found' });
       }
 
-      const filePath = path.join(orgDir, targetMeta.fileName);
-      if (!fs.existsSync(filePath)) {
+      const resolvedOrgDir = path.resolve(orgDir);
+      const filePath = path.resolve(orgDir, String(targetMeta.fileName || ''));
+      if (!filePath.startsWith(resolvedOrgDir + path.sep) || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Physical file not found on disk' });
       }
 
@@ -3720,7 +3721,9 @@ ${transcript}`;
           const metaPath = path.join(orgDir, mf);
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
           if (meta.id === fileId || meta.fileName === fileId) {
-            const dataFilePath = path.join(orgDir, meta.fileName);
+            const resolvedOrgDir = path.resolve(orgDir);
+            const dataFilePath = path.resolve(orgDir, String(meta.fileName || ''));
+            if (!dataFilePath.startsWith(resolvedOrgDir + path.sep)) continue;
             if (fs.existsSync(dataFilePath)) fs.unlinkSync(dataFilePath);
             if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
             found = true;
