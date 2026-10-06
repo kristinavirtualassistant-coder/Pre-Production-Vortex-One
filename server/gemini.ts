@@ -69,6 +69,7 @@ export async function generateAgentText(
   options: ModelCallOptions = {}
 ): Promise<{ text: string; searchSources?: Array<{ uri: string; title: string }>; cached?: boolean }> {
   const category = 'gemini_text';
+  // Tenant CRM/owner data must never be returned from the process-global cache.
   const inputPayload = { prompt, model: options.model, systemInstruction: options.systemInstruction, temperature: options.temperature };
 
   const { result, isCached } = await taskCacheService.wrapTask(
@@ -177,10 +178,10 @@ export async function generateAgentText(
         text: `[Vortex One Intelligence Synthesis]\nRequest analyzed: ${prompt.slice(0, 140)}...\nProcessed against property records, CRM data structures, and operational rules engine.`,
       };
     },
-    { skipCache: options.skipCache, forceRefresh: options.forceRefresh }
+    { skipCache: true, forceRefresh: options.forceRefresh }
   );
 
-  return { ...result, cached: isCached };
+  return { ...result, cached: false };
 }
 
 /**
@@ -220,7 +221,8 @@ export async function generateSpeechTTS(
         console.warn('TTS Generation temporarily unavailable:', err.message || err);
         return null;
       }
-    }
+    },
+    { skipCache: true }
   );
 
   return result;
