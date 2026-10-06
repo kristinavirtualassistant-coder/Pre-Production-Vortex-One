@@ -200,16 +200,24 @@ router.get('/tracking/unsubscribe/:token', async (req,res) => {
 
 router.get('/tracking/click/:token', async (req,res) => {
   const url=typeof req.query.url === 'string' ? req.query.url : '';
-  const safe=/^https?:\/\//i.test(url) ? url : '/';
+  const signature=typeof req.query.sig === 'string' ? req.query.sig : '';
   const pool=getPgPool();
-  if(pool) await recordTrackingEvent(pool,req.params.token,'clicked',safe).catch(()=>undefined);
+  if(pool) {
+    try {
+      await recordTrackingEvent(pool,req.params.token,'clicked',url,signature);
+      return res.redirect(url);
+    } catch {
+      return res.status(400).send('Invalid tracking link');
+    }
+  }
   res.redirect(safe);
 });
 
 router.post('/webhooks/twilio/inbound', async (req,res) => {
   const pool=getPgPool(); if(!pool) return res.status(503).send('Communications unavailable');
   try {
-    await handleTwilioInbound(pool,req.protocol + '://' + req.get('host') + req.originalUrl,req.body || {},req.get('X-Twilio-Signature') || undefined);
+    const callbackUrl = (process.env.APP_URL || (req.protocol + '://' + req.get('host'))).replace(/\/$/,'') + req.originalUrl;
+    await handleTwilioInbound(pool,callbackUrl,req.body || {},req.get('X-Twilio-Signature') || undefined);
     res.type('text/xml').send('<Response></Response>');
   } catch(e:any) { res.status(403).type('text/xml').send('<Response><Message>Webhook rejected</Message></Response>'); }
 });
@@ -217,7 +225,8 @@ router.post('/webhooks/twilio/inbound', async (req,res) => {
 router.post('/webhooks/twilio/status', async (req,res) => {
   const pool=getPgPool(); if(!pool) return res.status(503).send('Communications unavailable');
   try {
-    await handleTwilioStatus(pool,req.protocol + '://' + req.get('host') + req.originalUrl,req.body || {},req.get('X-Twilio-Signature') || undefined);
+    const callbackUrl = (process.env.APP_URL || (req.protocol + '://' + req.get('host'))).replace(/\/$/,'') + req.originalUrl;
+    await handleTwilioStatus(pool,callbackUrl,req.body || {},req.get('X-Twilio-Signature') || undefined);
     res.status(204).send();
   } catch(e:any) { res.status(403).json({error:e.message || 'Webhook rejected'}); }
 });
