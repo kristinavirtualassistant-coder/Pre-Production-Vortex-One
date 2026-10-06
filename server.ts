@@ -43,14 +43,3 @@ import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
 import { createFilesRouter } from './server/routes/files';
-import { analyticsRouter } from './server/routes/analytics';
-import { verifyStripeWebhook, handleStripeEvent } from './server/services/billingService';
-
-async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT || 8080);
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
-
-  // Rate-limit before body parsing so abusive requests cannot consume parser memory first.
