@@ -12,11 +12,17 @@ export const AccountSecurityPanel: React.FC = () => {
   const [mfaCode, setMfaCode] = useState('');
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [billing, setBilling] = useState<any>(null);
 
   const load = async () => {
-    const response = await fetch('/api/auth/sessions', { credentials: 'include', headers: getAuthHeaders() });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) setSessions(data.sessions || []);
+    const [sessionResponse, billingResponse] = await Promise.all([
+      fetch('/api/auth/sessions', { credentials: 'include', headers: getAuthHeaders() }),
+      fetch('/api/organization/billing', { credentials: 'include', headers: getAuthHeaders() }),
+    ]);
+    const data = await sessionResponse.json().catch(() => ({}));
+    const billingData = await billingResponse.json().catch(() => ({}));
+    if (sessionResponse.ok) setSessions(data.sessions || []);
+    if (billingResponse.ok) setBilling(billingData);
   };
 
   useEffect(() => { load().catch(() => undefined); }, [getAuthHeaders]);
@@ -109,6 +115,16 @@ export const AccountSecurityPanel: React.FC = () => {
           {!sessions.length && <div className="text-xs text-slate-400">No active sessions returned.</div>}
         </div>
       </div>
+
+      {billing && (
+        <div className="rounded-xl border border-slate-200 p-4">
+          <h3 className="text-sm font-bold text-slate-900">Subscription and usage</h3>
+          <div className="mt-2 text-xs text-slate-600">Plan: <strong>{billing.billing?.plan || 'free'}</strong> · Status: <strong>{billing.billing?.subscription_status || 'active'}</strong></div>
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {Object.entries(billing.usage || {}).map(([metric, value]) => <div key={metric} className="rounded-lg bg-slate-50 p-2"><div className="text-[10px] text-slate-400">{metric}</div><div className="text-xs font-semibold">{String(value)}</div></div>)}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 flex gap-2">
         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
