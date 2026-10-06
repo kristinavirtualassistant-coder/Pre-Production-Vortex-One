@@ -8,6 +8,8 @@ on:
   pull_request:
     branches:
       - main
+  schedule:
+    - cron: '0 2 * * 1-5'
 
 permissions:
   contents: read
@@ -66,7 +68,7 @@ jobs:
         run: npm test
 
   live-gis:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
