@@ -32,19 +32,23 @@ import {
   Radio,
 } from 'lucide-react';
 import { AgentDefinition, WorkflowRun, Task, AgentId } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 import { useWorkflowRuns, useAgentTelemetry } from '../hooks/useWorkflowRuns';
 
 interface AgentMonitorViewProps {
   agents: AgentDefinition[];
   onSelectAgent?: (agent: AgentDefinition) => void;
   initialSelectedAgentId?: string;
+  organizationId?: string;
 }
 
 export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   agents,
   onSelectAgent,
   initialSelectedAgentId,
+  organizationId,
 }) => {
+  const { getAuthHeaders } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentDefinition>(() => {
     if (initialSelectedAgentId) {
       const match = agents.find((a) => a.id === initialSelectedAgentId);
@@ -181,9 +185,9 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   const [inputMessage, setInputMessage] = useState('');
   const [isAgentTyping, setIsAgentTyping] = useState(false);
 
-  const handleSendMessage = (e?: React.FormEvent) => {
+  const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || !selectedAgent.id || !organizationId) return;
 
     const userText = inputMessage.trim();
     const agentId = selectedAgent.id;
@@ -204,20 +208,55 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
     setInputMessage('');
     setIsAgentTyping(true);
 
-    setTimeout(() => {
-      const responseText = `[Instruction Acknowledged] Directive received by ${selectedAgent.name}. Adjusting tool execution parameters, re-indexing records, and updating telemetry.`;
-      const agentMsg = {
-        id: `msg-res-${Date.now()}`,
-        sender: 'agent' as const,
-        text: responseText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
+    try {
+      const response = await fetch(`/api/ai-agents/${encodeURIComponent(agentId)}/runs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+          'x-organization-id': organizationId,
+        },
+        body: JSON.stringify({
+          objective: userText,
+          context: {
+            source: 'agent_monitor',
+            agentName: selectedAgent.name,
+            role: selectedAgent.role,
+          },
+          maxAttempts: selectedAgent.maxRetries || 3,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.errorMessage || 'Agent execution failed');
+
+      const responseText = data.finalText
+        || (data.status === 'awaiting_approval'
+          ? `Approval required before the requested action can continue. Approval ID: ${data.pendingApprovalId}`
+          : `Agent run ${data.runId} returned status ${data.status}.`);
       setMessagesMap((prev) => ({
         ...prev,
-        [agentId]: [...(prev[agentId] || []), agentMsg],
+        [agentId]: [...(prev[agentId] || []), {
+          id: `msg-res-${Date.now()}`,
+          sender: 'agent' as const,
+          text: responseText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
       }));
+      await refreshRuns();
+      await refreshTasks();
+    } catch (err: any) {
+      setMessagesMap((prev) => ({
+        ...prev,
+        [agentId]: [...(prev[agentId] || []), {
+          id: `msg-err-${Date.now()}`,
+          sender: 'agent' as const,
+          text: `Execution failed: ${err?.message || 'Unknown error'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
+      }));
+    } finally {
       setIsAgentTyping(false);
-    }, 1200);
+    }
   };
 
   // SWR-based polling synchronization with /api/runs and /api/tasks
