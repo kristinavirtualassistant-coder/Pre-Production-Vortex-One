@@ -13,6 +13,7 @@ export const AccountSecurityPanel: React.FC = () => {
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [billing, setBilling] = useState<any>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
 
   const load = async () => {
     const [sessionResponse, billingResponse] = await Promise.all([
@@ -64,6 +65,32 @@ export const AccountSecurityPanel: React.FC = () => {
     if (!response.ok) { addToast('Unable to revoke other sessions.', 'error'); return; }
     await load();
     addToast('Other sessions revoked.', 'success');
+  };
+
+  const startCheckout = async (plan: 'starter' | 'professional' | 'enterprise') => {
+    setBillingLoading(true);
+    try {
+      const response = await fetch('/api/organization/billing/checkout', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ plan }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) throw new Error(data.error || 'Unable to start checkout');
+      window.location.assign(data.url);
+    } catch (error: any) { addToast(error.message || 'Unable to start checkout', 'error'); }
+    finally { setBillingLoading(false); }
+  };
+
+  const openBillingPortal = async () => {
+    setBillingLoading(true);
+    try {
+      const response = await fetch('/api/organization/billing/portal', { method: 'POST', credentials: 'include', headers: getAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) throw new Error(data.error || 'Billing portal unavailable');
+      window.location.assign(data.url);
+    } catch (error: any) { addToast(error.message || 'Billing portal unavailable', 'error'); }
+    finally { setBillingLoading(false); }
   };
 
   const copyCodes = async () => {
@@ -118,13 +145,20 @@ export const AccountSecurityPanel: React.FC = () => {
 
       {billing && (
         <div className="rounded-xl border border-slate-200 p-4">
-          <h3 className="text-sm font-bold text-slate-900">Subscription and usage</h3>
-          <div className="mt-2 text-xs text-slate-600">Plan: <strong>{billing.billing?.plan || 'free'}</strong> · Status: <strong>{billing.billing?.subscription_status || 'active'}</strong></div>
+          <div className="flex items-center justify-between">
+            <div><h3 className="text-sm font-bold text-slate-900">Subscription and usage</h3><div className="mt-1 text-xs text-slate-600">Plan: <strong>{billing.billing?.plan || 'free'}</strong> · Status: <strong>{billing.billing?.subscription_status || 'active'}</strong></div></div>
+            {billing.billing?.billing_customer_id && <button type="button" onClick={openBillingPortal} disabled={billingLoading} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700">Manage billing</button>}
+          </div>
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
             {Object.entries(billing.usage || {}).map(([metric, value]) => <div key={metric} className="rounded-lg bg-slate-50 p-2"><div className="text-[10px] text-slate-400">{metric}</div><div className="text-xs font-semibold">{String(value)}</div></div>)}
           </div>
+          {(!billing.billing?.billing_customer_id || billing.billing?.subscription_status === 'canceled') && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+              {(['starter','professional','enterprise'] as const).map(plan => <button key={plan} type="button" onClick={() => startCheckout(plan)} disabled={billingLoading} className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-left"><div className="text-xs font-bold capitalize text-cyan-900">{plan}</div><div className="mt-1 text-[10px] text-cyan-700">Start subscription</div></button>)}
+            </div>
+          )}
         </div>
-      )}
+      )}}
 
       <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 flex gap-2">
         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
