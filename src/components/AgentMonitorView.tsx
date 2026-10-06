@@ -184,6 +184,84 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   });
   const [inputMessage, setInputMessage] = useState('');
   const [isAgentTyping, setIsAgentTyping] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+
+  const refreshAgentApprovals = async () => {
+    if (!organizationId) return;
+    try {
+      const response = await fetch('/api/approvals', {
+        headers: { ...getAuthHeaders(), 'x-organization-id': organizationId },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const approvals = Array.isArray(data) ? data : data.approvals || [];
+      setPendingApprovals(approvals.filter((a: any) =>
+        a.status === 'pending' && String(a.action_type || '').startsWith('agent_tool:')
+      ));
+    } catch {
+      // Approval polling is best-effort; authoritative state remains server-side.
+    }
+  };
+
+  useEffect(() => {
+    refreshAgentApprovals();
+    if (!isAutoPolling) return;
+    const timer = window.setInterval(refreshAgentApprovals, 2500);
+    return () => window.clearInterval(timer);
+  }, [organizationId, isAutoPolling]);
+
+  const decideAgentApproval = async (approval: any, decision: 'approve' | 'reject') => {
+    const runId = approval?.payload?.run_id;
+    if (!runId || !organizationId) return;
+    setApprovalBusyId(approval.id);
+    try {
+      const response = await fetch(`/api/ai-agent-runs/${encodeURIComponent(runId)}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+          'x-organization-id': organizationId,
+        },
+        body: JSON.stringify({
+          approvalId: approval.id,
+          decision,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Approval action failed');
+
+      setPendingApprovals((prev) => prev.filter((item) => item.id !== approval.id));
+      const result = data.result;
+      if (result?.finalText) {
+        const agentId = approval?.payload?.agent_id || selectedAgent.id;
+        setMessagesMap((prev) => ({
+          ...prev,
+          [agentId]: [...(prev[agentId] || []), {
+            id: `approval-result-${Date.now()}`,
+            sender: 'agent' as const,
+            text: result.finalText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }],
+        }));
+      }
+      await refreshRuns();
+      await refreshTasks();
+    } catch (err: any) {
+      setMessagesMap((prev) => ({
+        ...prev,
+        [selectedAgent.id]: [...(prev[selectedAgent.id] || []), {
+          id: `approval-error-${Date.now()}`,
+          sender: 'agent' as const,
+          text: `Approval failed: ${err?.message || 'Unknown error'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
+      }));
+    } finally {
+      setApprovalBusyId(null);
+      refreshAgentApprovals();
+    }
+  };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1168,6 +1246,49 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
               </div>
             )}
           </div>
+
+          {pendingApprovals.length > 0 && (
+            <div className="space-y-3 pt-4 border-t border-amber-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center space-x-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Agent Actions Awaiting Human Approval ({pendingApprovals.length})</span>
+                </h3>
+                <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">HUMAN GATE</span>
+              </div>
+              <div className="space-y-2">
+                {pendingApprovals.map((approval) => (
+                  <div key={approval.id} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900">{approval.action_type}</div>
+                        <div className="text-[11px] text-slate-600 mt-1">{approval.description || approval.reason || 'Agent requested an external action.'}</div>
+                        <div className="text-[10px] text-slate-500 mt-1 font-mono truncate">
+                          Run: {approval.payload?.run_id || 'unknown'} · Agent: {approval.payload?.agent_id || 'unknown'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => decideAgentApproval(approval, 'reject')}
+                          disabled={approvalBusyId === approval.id}
+                          className="px-3 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 text-[11px] font-bold hover:bg-rose-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => decideAgentApproval(approval, 'approve')}
+                          disabled={approvalBusyId === approval.id}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve & Execute
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Real-Time Agent Feedback & Live Instruction Thread */}
           <div className="space-y-3 pt-4 border-t border-slate-200">
