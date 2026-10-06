@@ -42,7 +42,8 @@ import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, runWor
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
-import { createFilesRouter } from './server/routes/files';\nimport { analyticsRouter } from './server/routes/analytics';
+import { createFilesRouter } from './server/routes/files';
+import { analyticsRouter } from './server/routes/analytics';
 
 async function startServer() {
   const app = express();
