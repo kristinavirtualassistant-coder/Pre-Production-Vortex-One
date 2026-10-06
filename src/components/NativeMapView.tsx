@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { APIProvider, AdvancedMarker, Map, Polygon } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, Marker, Polygon } from '@vis.gl/react-google-maps';
 import {
   Building2,
   Check,
@@ -391,7 +391,7 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
               {layers.properties && mapProperties.map((property) => {
                 if (property.latitude == null || property.longitude == null) return null;
                 return (
-                  <AdvancedMarker
+                  <Marker
                     key={property.id}
                     position={{ lat: Number(property.latitude), lng: Number(property.longitude) }}
                     title={property.address}
@@ -404,7 +404,7 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
                       type="button"
                       className={`w-3 h-3 rounded-full border-2 border-white shadow-md ${selectedIds.includes(property.id) ? 'bg-cyan-400 scale-125' : property.has_lead ? 'bg-amber-400' : 'bg-slate-700'}`}
                     />
-                  </AdvancedMarker>
+                  </Marker>
                 );
               })}
 
@@ -423,9 +423,9 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
               )}
 
               {drawing && draftPath.map((point, index) => (
-                <AdvancedMarker key={`draft-${index}`} position={point}>
+                <Marker key={`draft-${index}`} position={point}>
                   <MapPin className="w-4 h-4 text-cyan-400" />
-                </AdvancedMarker>
+                </Marker>
               ))}
             </Map>
           </APIProvider>
