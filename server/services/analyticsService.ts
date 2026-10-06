@@ -202,8 +202,7 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
           (SELECT COUNT(*) FROM property_owners WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS owners_created,
           (SELECT COUNT(*) FROM contacts WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS contacts_created,
           (SELECT COUNT(*) FROM contacts WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND jsonb_array_length(phone_numbers) > 0) AS contacts_with_phone,
-          (SELECT COUNT(*) FROM contacts WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND jsonb_array_length(email_addresses) > 0) AS contacts_with_email,
-          (SELECT COUNT(*) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND data_quality IS NOT NULL) AS quality_scored
+          (SELECT COUNT(*) FROM contacts WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND jsonb_array_length(email_addresses) > 0) AS contacts_with_email
         `,
         [organizationId, start, end],
       ),
