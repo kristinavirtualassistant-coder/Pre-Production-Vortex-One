@@ -10,6 +10,14 @@ export const WORKFLOW_JOB_TYPE = 'workflow.execute';
 export type WorkflowActionType = 'email'|'sms'|'phone'|'webhook'|'ai_agent'|'wait'|'noop';
 
 function parseJson(value: unknown, fallback: any = {}) { if (value == null) return fallback; if (typeof value === 'string') { try { return JSON.parse(value); } catch { return fallback; } } return value; }
+function cronFieldMatches(value:number, field:string, min:number, max:number){
+  return field.split(',').some(part=>{ const bits=part.split('/'); const base=bits[0]; const step=Math.max(1,Number(bits[1]||1)); let start=min,end=max; if(base!=='*'){ if(base.includes('-')){const p=base.split('-').map(Number);start=p[0];end=p[1];}else{const n=Number(base);return value===n;} } if(value<start||value>end)return false; return (value-start)%step===0; });
+}
+function cronMatches(d:Date, expr:string){
+  const f=expr.trim().split(/\s+/); if(f.length!==5) throw new Error('Cron expressions must use five fields');
+  return cronFieldMatches(d.getUTCMinutes(),f[0],0,59)&&cronFieldMatches(d.getUTCHours(),f[1],0,23)&&cronFieldMatches(d.getUTCDate(),f[2],1,31)&&cronFieldMatches(d.getUTCMonth()+1,f[3],1,12)&&cronFieldMatches(d.getUTCDay(),f[4],0,6);
+}
+function nextCronRun(expr:string, from=new Date()){ const d=new Date(from); d.setUTCSeconds(0,0); d.setUTCMinutes(d.getUTCMinutes()+1); for(let i=0;i<60*24*366;i++){if(cronMatches(d,expr))return d; d.setUTCMinutes(d.getUTCMinutes()+1);} throw new Error('Could not find next cron occurrence within one year'); }
 function render(value: any, context: Record<string, any>): any {
   if (typeof value === 'string') return value.replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (_, key) => String(key.split('.').reduce((v:any,k:string)=>v?.[k], context) ?? ''));
   if (Array.isArray(value)) return value.map(v=>render(v,context));
@@ -49,17 +57,17 @@ export async function publishWorkflowVersion(pool:Pool,organizationId:string,wor
   }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
 export async function scheduleWorkflow(pool:Pool,organizationId:string,workflowId:string,createdBy:string,input:any){
-  const org=requireOrganizationId(organizationId); if(input.schedule_type==='once'&&!input.run_at) throw new Error('run_at is required'); if(input.schedule_type==='interval'&&Number(input.interval_seconds)<60) throw new Error('interval_seconds must be at least 60'); if(input.schedule_type==='cron'&&!input.cron_expression) throw new Error('cron_expression is required');
+  const org=requireOrganizationId(organizationId); if(input.schedule_type==='once'&&!input.run_at) throw new Error('run_at is required'); if(input.schedule_type==='interval'&&Number(input.interval_seconds)<60) throw new Error('interval_seconds must be at least 60'); if(input.schedule_type==='cron'&&!input.cron_expression) throw new Error('cron_expression is required'); if(input.schedule_type==='cron'&&input.timezone&&input.timezone!=='UTC') throw new Error('Cron scheduling currently requires UTC');
   const v=input.workflow_version_id ? await pool.query("SELECT id FROM workflow_versions WHERE id=$1 AND workflow_id=$2 AND organization_id=$3 AND status='published'",[input.workflow_version_id,workflowId,org]) : await pool.query("SELECT id FROM workflow_versions WHERE workflow_id=$1 AND organization_id=$2 AND status='published' ORDER BY version DESC LIMIT 1",[workflowId,org]);
   if(!v.rowCount) throw new Error('A published workflow version is required');
-  const next=input.schedule_type==='once'?new Date(input.run_at):new Date(Date.now()+Number(input.interval_seconds||60)*1000);
+  const next=input.schedule_type==='once'?new Date(input.run_at):input.schedule_type==='cron'?nextCronRun(input.cron_expression):new Date(Date.now()+Number(input.interval_seconds||60)*1000);
   const result=await pool.query("INSERT INTO workflow_schedules (id,organization_id,workflow_id,workflow_version_id,name,schedule_type,run_at,interval_seconds,cron_expression,timezone,status,next_run_at,trigger_payload,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11,$12::jsonb,$13) RETURNING *",['wfs_'+randomUUID(),org,workflowId,v.rows[0].id,input.name,input.schedule_type,input.run_at||null,input.interval_seconds||null,input.cron_expression||null,input.timezone||'UTC',next,JSON.stringify(input.trigger_payload||{}),createdBy]);
   return result.rows[0];
 }
 export async function claimDueWorkflowSchedules(pool:Pool){
-  const result=await pool.query("WITH due AS (SELECT id FROM workflow_schedules WHERE status='active' AND next_run_at<=CURRENT_TIMESTAMP ORDER BY next_run_at FOR UPDATE SKIP LOCKED LIMIT 25) UPDATE workflow_schedules s SET last_run_at=CURRENT_TIMESTAMP,next_run_at=CASE WHEN s.schedule_type='interval' THEN CURRENT_TIMESTAMP+(s.interval_seconds*INTERVAL '1 second') WHEN s.schedule_type='once' THEN NULL ELSE CURRENT_TIMESTAMP+INTERVAL '1 minute' END,status=CASE WHEN s.schedule_type='once' THEN 'completed' ELSE 'active' END,updated_at=CURRENT_TIMESTAMP FROM due WHERE s.id=due.id RETURNING s.*");
+  const result=await pool.query("WITH due AS (SELECT id FROM workflow_schedules WHERE status='active' AND next_run_at<=CURRENT_TIMESTAMP ORDER BY next_run_at FOR UPDATE SKIP LOCKED LIMIT 25) UPDATE workflow_schedules s SET last_run_at=CURRENT_TIMESTAMP,next_run_at=CASE WHEN s.schedule_type='interval' THEN CURRENT_TIMESTAMP+(s.interval_seconds*INTERVAL '1 second') WHEN s.schedule_type='once' THEN NULL WHEN s.schedule_type='cron' THEN NULL ELSE CURRENT_TIMESTAMP+(s.interval_seconds*INTERVAL '1 second') END,status=CASE WHEN s.schedule_type='once' THEN 'completed' ELSE 'active' END,updated_at=CURRENT_TIMESTAMP FROM due WHERE s.id=due.id RETURNING s.*");
   for(const row of result.rows) await enqueueJob(pool,row.organization_id,WORKFLOW_JOB_TYPE,{scheduleId:row.id,workflowId:row.workflow_id,workflowVersionId:row.workflow_version_id,triggerPayload:row.trigger_payload,runId:'wfr_'+randomUUID()},3);
-  return result.rows;
+  for(const row of result.rows){ if(row.schedule_type==='cron'){ const next=nextCronRun(row.cron_expression,new Date()); await pool.query("UPDATE workflow_schedules SET next_run_at=$1 WHERE id=$2",[next,row.id]); row.next_run_at=next; } } return result.rows;
 }
 async function executeAction(pool:Pool,orgId:string,step:any,context:any){
   const action=(step.action_type||step.action||(step.type==='WAIT'?'wait':'noop')) as WorkflowActionType; const input=render(step.input_mapping||step.input||{},context);
