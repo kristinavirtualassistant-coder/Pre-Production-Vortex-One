@@ -2,8 +2,9 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import type { Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { sendEmail } from './emailService';
+import { hashSessionToken } from './postgresqlAuth';
 
-const SESSION_COOKIE = 'vortex_session';
+const SESSION_COOKIE = process.env.NODE_ENV === 'production' ? '__Host-vortex_session' : 'vortex_session';
 const SESSION_DAYS = 7;
 const TOKEN_BYTES = 32;
 
@@ -67,7 +68,7 @@ export async function issueSession(
     [
       `sess_${randomUUID()}`,
       userId,
-      hashOneTimeToken(token),
+      hashSessionToken(token),
       String(req.headers['user-agent'] || '').slice(0, 500),
       req.ip || null,
       options.mfaVerified === true,

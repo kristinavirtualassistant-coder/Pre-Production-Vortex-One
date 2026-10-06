@@ -55,6 +55,17 @@ export class SuppressionService {
     };
   }
 
+  public static async isEmailSuppressed(organizationId: string, email: string): Promise<{ isSuppressed: boolean; reason?: string }> {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return { isSuppressed: false };
+    const pool = requireSuppressionPool();
+    const res = await pool.query(
+      `SELECT reason FROM communication_suppression WHERE organization_id=$1 AND channel='email' AND LOWER(destination)=$2 AND (expires_at IS NULL OR expires_at>CURRENT_TIMESTAMP) LIMIT 1`,
+      [organizationId, normalized],
+    );
+    return res.rowCount ? { isSuppressed: true, reason: res.rows[0].reason || 'Email suppression' } : { isSuppressed: false };
+  }
+
   public static async addSuppression(
     organizationId: string,
     phoneNumber: string,

@@ -7,8 +7,8 @@ import type { Migration } from './migrations';
  * is never reconstructed or overwritten by an automated patch.
  */
 export const POSTGRESQL_AUTH_MIGRATION: Migration = {
-  version: 13,
-  name: '013_create_tenant_invitation_schema',
+  version: 19,
+  name: '019_auth_bootstrap_compatibility',
   sql: `
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP WITH TIME ZONE;
