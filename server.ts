@@ -1,5 +1,3 @@
-import 'dotenv/config';
-
 /**
  * Vortex One - Server Entry Point (Express + Vite)
  */
@@ -10,7 +8,6 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
-import { persistLegacyCall, buildCallPersistencePlan } from './server/db/legacySchemaCompatibility';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
@@ -25,50 +22,24 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
 import { applyCallDisposition } from './server/services/dispositionService';
 import { subscribeDialerEvents } from './server/dialer/realtime';
-import { validateDialRequest } from './server/dialer/dialRequestValidation';
 import { searchProperties, type PropertySearchQuery } from './server/services/propertySearchService';
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
-import { queueEmailOutreach } from './server/services/emailOutreachService';
-import { createRateLimiter } from './server/middleware/rateLimit';
-import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns, abortWorkflowRun } from './server/services/workflowRunService';
-import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
-import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
-import { getAllAgents, getAgent } from './server/agents/registry';
-import { enqueueJob, JOB_TYPES } from './server/services/jobService';
-// Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
-import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
+import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
 
-  app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
-
-  // Rate-limit before body parsing so abusive requests cannot consume parser memory first.
-  app.use('/api/auth', createRateLimiter({
-    windowMs: 60_000,
-    max: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
-    message: 'Too many authentication requests. Please try again in a minute.',
-    keyPrefix: 'auth',
-  }));
-  app.use('/api', createRateLimiter({
-    windowMs: 60_000,
-    max: Number(process.env.API_RATE_LIMIT_MAX || 300),
-    keyPrefix: 'api',
-  }));
-
-  // Keep request bodies bounded in every environment. Individual endpoints should
-  // validate their own payload shape and size after parsing.
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '5mb' }));
-  app.use(express.urlencoded({ extended: true, limit: process.env.URLENCODED_BODY_LIMIT || '1mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // Initialize DB & Migrations on Boot
   try {
@@ -86,58 +57,12 @@ async function startServer() {
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
-    const db = getDatabaseStatus();
-    const healthy = db.connected && db.type === 'postgresql';
-    res.status(healthy ? 200 : 503).json({
-      status: healthy ? 'ok' : 'degraded',
+    res.json({
+      status: 'ok',
       platform: 'Vortex One Multi-Agent Intelligence',
       version: '1.0.0',
       timestamp: new Date().toISOString(),
-      db: {
-        type: db.type,
-        connected: db.connected,
-        appliedMigrationsCount: db.appliedMigrationsCount,
-      },
     });
-  });
-
-  app.post('/internal/scheduler/email-outreach', async (req, res) => {
-    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
-    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
-    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
-
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for email worker execution' });
-      const { runEmailWorkerOnce } = await import('./server/workers/emailWorker');
-      const processed = await runEmailWorkerOnce();
-      return res.json({ processedJobs: processed });
-    } catch (err: any) {
-      console.error('[email-scheduler-trigger] failed:', err);
-      return res.status(500).json({ error: err?.message || 'Email scheduler trigger failed' });
-    }
-  });
-
-  app.post('/internal/scheduler/property-refresh', async (req, res) => {
-    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
-    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
-    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
-
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for scheduler execution' });
-      const { runPropertyRefreshWorkerOnce } = await import('./server/workers/schedulerWorker');
-      const results = [];
-      for (let i = 0; i < 10; i += 1) {
-        const result = await runPropertyRefreshWorkerOnce();
-        if (!result.claimed) break;
-        results.push(result);
-      }
-      return res.json({ processedJobs: results.length, results });
-    } catch (err: any) {
-      console.error('[scheduler-trigger] failed:', err);
-      return res.status(500).json({ error: err?.message || 'Scheduler trigger failed' });
-    }
   });
 
   app.get('/api/ready', (req, res) => {
@@ -159,69 +84,10 @@ async function startServer() {
     return requireAuth(req, res, next);
   });
 
+  app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
+
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
-  });
-
-  // --- Integration Center ---
-  app.get('/api/integrations', async (req, res) => {
-    const pool = getPgPool();
-    const organizationId = (req as AuthRequest).dbUser?.organization_id;
-    if (!pool || !organizationId) return res.status(503).json({ error: 'Integration service unavailable' });
-    try {
-      const result = await pool.query(
-        `SELECT provider, account_email, external_account_id, scopes, status, token_expires_at, updated_at
-         FROM integration_connections WHERE organization_id = $1 ORDER BY provider`,
-        [organizationId],
-      );
-      res.json({ connections: result.rows.map((row) => ({ ...row, access_token: undefined, refresh_token: undefined })) });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Failed to load integrations' });
-    }
-  });
-
-  app.get('/api/integrations/oauth/start/:provider', async (req, res) => {
-    const pool = getPgPool();
-    const auth = req as AuthRequest;
-    if (!pool || !auth.dbUser) return res.status(503).json({ error: 'Integration service unavailable' });
-    const provider = req.params.provider as OAuthProvider;
-    if (provider !== 'google-workspace' && provider !== 'microsoft-365') return res.status(404).json({ error: 'OAuth provider is not supported' });
-    try {
-      const url = await createOAuthStart(pool, { provider, userId: auth.dbUser.id, organizationId: auth.dbUser.organization_id });
-      res.json({ provider, authorizationUrl: url });
-    } catch (error: any) {
-      res.status(503).json({ error: error.message || 'OAuth provider is not configured' });
-    }
-  });
-
-  app.get('/api/integrations/oauth/callback/:provider', async (req, res) => {
-    const pool = getPgPool();
-    const provider = req.params.provider as OAuthProvider;
-    const code = typeof req.query.code === 'string' ? req.query.code : '';
-    const state = typeof req.query.state === 'string' ? req.query.state : '';
-    if (!pool || !code || !state) return res.status(400).send('OAuth callback is missing required parameters.');
-    if (provider !== 'google-workspace' && provider !== 'microsoft-365') return res.status(404).send('OAuth provider is not supported.');
-    try {
-      await completeOAuthCallback(pool, provider, state, code);
-      const returnUrl = `${process.env.APP_URL || 'http://localhost:8080'}/?view=integrations&connected=${encodeURIComponent(provider)}`;
-      res.redirect(returnUrl);
-    } catch (error: any) {
-      console.error(`OAuth callback failed for ${provider}:`, error);
-      const returnUrl = `${process.env.APP_URL || 'http://localhost:8080'}/?view=integrations&integrationError=${encodeURIComponent(error.message || 'OAuth connection failed')}`;
-      res.redirect(returnUrl);
-    }
-  });
-
-  app.delete('/api/integrations/:provider', requireRole(['admin', 'executive']), async (req, res) => {
-    const pool = getPgPool();
-    const auth = req as AuthRequest;
-    if (!pool || !auth.dbUser) return res.status(503).json({ error: 'Integration service unavailable' });
-    try {
-      await pool.query('DELETE FROM integration_connections WHERE organization_id = $1 AND user_id = $2 AND provider = $3', [auth.dbUser.organization_id, auth.dbUser.id, req.params.provider]);
-      res.status(204).send();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Failed to disconnect integration' });
-    }
   });
 
   app.get('/api/operational/metrics', async (req, res) => {
@@ -265,7 +131,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/cache/clear', requireRole(['admin', 'executive']), (req, res) => {
+  app.post('/api/cache/clear', (req, res) => {
     try {
       const { category } = req.body || {};
       const count = taskCacheService.clear(category);
@@ -277,7 +143,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/cache/entries/:key', requireRole(['admin', 'executive']), (req, res) => {
+  app.delete('/api/cache/entries/:key', (req, res) => {
     try {
       const key = req.params.key;
       const deleted = taskCacheService.delete(key);
@@ -290,7 +156,7 @@ async function startServer() {
   });
 
   // Master Orchestration Dispatch
-  app.post('/api/orchestrate', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/orchestrate', async (req, res) => {
     try {
       const { prompt, organizationId } = req.body;
       if (!prompt || typeof prompt !== 'string') {
@@ -321,7 +187,7 @@ async function startServer() {
     res.json(agent);
   });
 
-  app.post('/api/agents', requireRole(['admin', 'executive']), (req, res) => {
+  app.post('/api/agents', (req, res) => {
     const body: AgentDefinition = req.body;
     if (!body.id || !body.name || !body.role) {
       return res.status(400).json({ error: 'Missing required agent fields (id, name, role)' });
@@ -340,7 +206,7 @@ async function startServer() {
     res.status(201).json(created);
   });
 
-  app.put('/api/agents/:id', requireRole(['admin', 'executive']), (req, res) => {
+  app.put('/api/agents/:id', (req, res) => {
     const updated = updateAgent(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Agent not found' });
     res.json(updated);
@@ -355,7 +221,7 @@ async function startServer() {
     catch (err: any) { console.error('Task list error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  app.post('/api/tasks', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/tasks', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const { objective, priority, due_date, assigned_agent, parent_task_id, task_id, input, dependencies } = req.body;
     if (!objective || !priority) return res.status(400).json({ error: 'Objective and priority are required' });
@@ -386,7 +252,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow get error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/workflows', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if (!req.body.name || !Array.isArray(req.body.steps)) return res.status(400).json({ error: 'Workflow name and steps array are required' });
     const pool = getPgPool();
@@ -395,7 +261,7 @@ async function startServer() {
     catch (err: any) { console.error('Workflow upsert error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.put('/api/workflows/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.put('/api/workflows/:id', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
@@ -406,7 +272,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow update error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.delete('/api/workflows/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.delete('/api/workflows/:id', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
@@ -417,68 +283,72 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow delete error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  // Workflow run read/mutation APIs were intentionally retired until durable PostgreSQL workflow-run persistence is available.
-  app.get('/api/runs', async (req: AuthRequest, res) => {
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
-      const orgId = requireOrganizationId(req.dbUser?.organization_id);
-      const runs = await listWorkflowRuns(pool, orgId, {
-        workflowId: typeof req.query.workflow_id === 'string' ? req.query.workflow_id : undefined,
-        status: typeof req.query.status === 'string' ? req.query.status : undefined,
-        limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : 20,
-      });
-      return res.json(runs);
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to load workflow runs' });
+  // --- Workflow Runs Subscription & Polling APIs ---
+  app.get('/api/runs', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
+    let runs = [...(inMemoryStore.runs || [])];
+    const { workflow_id, status, limit } = req.query;
+
+    if (workflow_id && typeof workflow_id === 'string') {
+      runs = runs.filter((r) => r.workflow_id === workflow_id);
     }
-  });
-
-  app.get('/api/runs/latest', async (req: AuthRequest, res) => {
-    const pool = getPgPool();
-    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
-    const orgId = requireOrganizationId(req.dbUser?.organization_id);
-    const runs = await listWorkflowRuns(pool, orgId, { limit: 1 });
-    return res.json(runs[0] || null);
-  });
-
-  app.get('/api/runs/active', async (req: AuthRequest, res) => {
-    const pool = getPgPool();
-    if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
-    const orgId = requireOrganizationId(req.dbUser?.organization_id);
-    const runs = await listWorkflowRuns(pool, orgId, { limit: 100 });
-    return res.json(runs.filter((run) => run.status === 'queued' || run.status === 'running' || run.status === 'paused_approval'));
-  });
-
-  app.get('/api/runs/:id', async (req: AuthRequest, res) => {
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
-      const orgId = requireOrganizationId(req.dbUser?.organization_id);
-      const run = await getWorkflowRun(pool, orgId, req.params.id);
-      if (!run) return res.status(404).json({ error: 'Workflow run not found' });
-      return res.json(run);
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to load workflow run' });
+    if (status && typeof status === 'string') {
+      runs = runs.filter((r) => r.status === status);
     }
+
+    runs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    if (limit) {
+      const parsedLimit = parseInt(limit as string, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) {
+        runs = runs.slice(0, parsedLimit);
+      }
+    }
+
+    res.json(runs);
   });
 
-  app.post('/api/runs/:id/abort', requireRole(['admin', 'executive', 'manager']), async (req: AuthRequest, res) => {
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for durable workflow run state' });
-      const orgId = requireOrganizationId(req.dbUser?.organization_id);
-      const run = await abortWorkflowRun(pool, orgId, req.params.id);
-      if (!run) return res.status(404).json({ error: 'Active workflow run not found' });
-      return res.json(run);
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to abort workflow run' });
+  app.get('/api/runs/latest', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
+    const runs = inMemoryStore.runs || [];
+    if (runs.length === 0) {
+      return res.json(null);
     }
+    const sorted = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    res.json(sorted[0]);
+  });
+
+  app.get('/api/runs/active', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
+    const runs = inMemoryStore.runs || [];
+    const active = runs.find((r) => r.status === 'running' || r.status === 'paused_approval');
+    if (active) {
+      return res.json(active);
+    }
+    const latest = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+    res.json(latest);
+  });
+
+  app.get('/api/runs/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
+    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
+    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
+    res.json(run);
+  });
+
+  app.post('/api/runs/:id/abort', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run mutation API was removed; use PostgreSQL durable jobs.' });
+    const run = (inMemoryStore.runs || []).find((r) => r.run_id === req.params.id);
+    if (!run) return res.status(404).json({ error: 'Workflow run not found' });
+
+    run.status = 'failed';
+    run.final_summary = 'Run aborted by user request.';
+    run.completed_at = new Date().toISOString();
+    res.json(run);
   });
 
   // Execute Custom Workflow Chain Step-by-Step
-  app.post('/api/workflows/execute', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    let activeWorkflowRun: WorkflowRun | null = null;
+  app.post('/api/workflows/execute', async (req, res) => {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -493,10 +363,11 @@ async function startServer() {
         return res.status(400).json({ error: 'No executable steps found in workflow request' });
       }
 
-      const runId = `run_wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const runId = `run_wf_${Date.now()}`;
       const executedTasks: Task[] = [];
       const stepOutputs: Record<string, any> = {};
       let previousStepResult: any = custom_input || {};
+
       // Initialize run record in persistence store
       const workflowRun: WorkflowRun = {
         run_id: runId,
@@ -520,8 +391,8 @@ async function startServer() {
         }
       });
 
-      await createWorkflowRun(pool, orgId, workflowRun);
-      activeWorkflowRun = workflowRun;
+      if (!inMemoryStore.runs) inMemoryStore.runs = [];
+      inMemoryStore.runs.unshift(workflowRun);
 
       const runStartTime = Date.now();
 
@@ -541,7 +412,6 @@ async function startServer() {
             startedAt: new Date().toISOString(),
           };
         }
-        await updateWorkflowRun(pool, orgId, workflowRun);
 
         // Construct task with inherited context from previous steps or initial parameters
         const task: Task = {
@@ -587,7 +457,6 @@ async function startServer() {
           stepOutputs[stepKey] = subAgentRes.result;
           workflowRun.step_outputs = { ...stepOutputs };
           workflowRun.completed_steps = i + 1;
-          await updateWorkflowRun(pool, orgId, workflowRun);
 
           if (workflowRun.node_states) {
             workflowRun.node_states[stepKey] = {
@@ -624,26 +493,20 @@ async function startServer() {
             }
           }
 
-          // Persist audit entry in PostgreSQL
-          await pool.query(
-            `INSERT INTO audit_logs
-              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
-            [
-              `audit_step_${Date.now()}_${i}`,
-              orgId,
-              step.assigned_agent,
-              taskId,
-              `workflow_step_${step.type.toLowerCase()}`,
-              JSON.stringify({ stepName: step.name, objective: step.objective }),
-              JSON.stringify({ summary: Object.keys(subAgentRes.result || {}).join(', ') }),
-              'success',
-              task.executionTimeMs,
-              subAgentRes.confidence,
-              'workflow_stream',
-              new Date().toISOString(),
-            ],
-          );
+          // Log audit entry for step
+          inMemoryStore.auditLogs.unshift({
+            id: `audit_step_${Date.now()}_${i}`,
+            timestamp: new Date().toISOString(),
+            agent: step.assigned_agent,
+            task_id: taskId,
+            action: `workflow_step_${step.type.toLowerCase()}`,
+            input: { stepName: step.name, objective: step.objective },
+            output: { summary: Object.keys(subAgentRes.result || {}).join(', ') },
+            status: 'success',
+            latency_ms: task.executionTimeMs,
+            confidence: subAgentRes.confidence,
+            organization_id: orgId,
+          });
         } catch (stepErr: any) {
           task.status = 'failed';
           task.error = stepErr.message || 'Step execution encountered an error';
@@ -659,28 +522,19 @@ async function startServer() {
             };
           }
           workflowRun.status = 'failed';
-          await updateWorkflowRun(pool, orgId, workflowRun);
 
-          // Persist failure audit entry in PostgreSQL
-          await pool.query(
-            `INSERT INTO audit_logs
-              (id, organization_id, agent, task_id, action, input, output, status, latency_ms, confidence, source, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
-            [
-              `audit_step_fail_${Date.now()}_${i}`,
-              orgId,
-              step.assigned_agent,
-              taskId,
-              'workflow_step_failed',
-              JSON.stringify({ stepName: step.name }),
-              JSON.stringify({ error: task.error }),
-              'error',
-              task.executionTimeMs,
-              null,
-              'workflow_stream',
-              new Date().toISOString(),
-            ],
-          );
+          inMemoryStore.auditLogs.unshift({
+            id: `audit_step_fail_${Date.now()}_${i}`,
+            timestamp: new Date().toISOString(),
+            agent: step.assigned_agent,
+            task_id: taskId,
+            action: 'workflow_step_failed',
+            input: { stepName: step.name },
+            output: { error: task.error },
+            status: 'error',
+            latency_ms: task.executionTimeMs,
+            organization_id: orgId,
+          });
 
           // Break loop on failure unless step allows continuation
           break;
@@ -696,7 +550,6 @@ async function startServer() {
       workflowRun.completed_at = new Date().toISOString();
       workflowRun.execution_time_ms = Date.now() - runStartTime;
       workflowRun.final_summary = `Completed ${workflowRun.completed_steps}/${stepsToRun.length} steps in ${workflowRun.execution_time_ms}ms`;
-      await updateWorkflowRun(pool, orgId, workflowRun);
 
       res.json({
         run_id: runId,
@@ -711,22 +564,12 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Workflow execution error:', err);
-      if (activeWorkflowRun) {
-        try {
-          activeWorkflowRun.status = 'failed';
-          activeWorkflowRun.completed_at = new Date().toISOString();
-          activeWorkflowRun.final_summary = err?.message || 'Workflow execution failed';
-          await updateWorkflowRun(getPgPool()!, requireOrganizationId((req as AuthRequest).dbUser?.organization_id), activeWorkflowRun);
-        } catch (persistErr) {
-          console.error('Failed to persist workflow execution failure:', persistErr);
-        }
-      }
       res.status(500).json({ error: err.message || 'Workflow execution failed' });
     }
   });
 
   // Execute Workflow with Real-time Server-Sent Events (SSE) Streaming Progress
-  app.post('/api/workflows/execute/stream', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/workflows/execute/stream', async (req, res) => {
     // Set headers for Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -738,12 +581,9 @@ async function startServer() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    let activeWorkflowRun: WorkflowRun | null = null;
-    let orgIdForPersistence: string | null = null;
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      orgIdForPersistence = orgId;
       const pool = getPgPool();
       if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow execution' });
       const matchedWf = workflow_id ? await getWorkflow(pool, orgId, workflow_id) : null;
@@ -784,8 +624,8 @@ async function startServer() {
         }
       });
 
-      await createWorkflowRun(pool, orgId, workflowRun);
-      activeWorkflowRun = workflowRun;
+      if (!inMemoryStore.runs) inMemoryStore.runs = [];
+      inMemoryStore.runs.unshift(workflowRun);
 
       const runStartTime = Date.now();
 
@@ -812,7 +652,6 @@ async function startServer() {
             startedAt: new Date().toISOString(),
           };
         }
-        await updateWorkflowRun(pool, orgId, workflowRun);
 
         // 1. Emit step_start (Node turns Blue / Active)
         sendEvent('step_start', {
@@ -873,7 +712,6 @@ async function startServer() {
           stepOutputs[stepKey] = subAgentRes.result;
           workflowRun.step_outputs = { ...stepOutputs };
           workflowRun.completed_steps = i + 1;
-          await updateWorkflowRun(pool, orgId, workflowRun);
 
           if (workflowRun.node_states) {
             workflowRun.node_states[stepKey] = {
@@ -966,7 +804,6 @@ async function startServer() {
             };
           }
           workflowRun.status = 'failed';
-          await updateWorkflowRun(pool, orgId, workflowRun);
 
           // Emit step_failed (Node turns Red / Failed)
           sendEvent('step_failed', {
@@ -1004,7 +841,6 @@ async function startServer() {
       workflowRun.completed_at = new Date().toISOString();
       workflowRun.execution_time_ms = Date.now() - runStartTime;
       workflowRun.final_summary = `Completed ${workflowRun.completed_steps}/${stepsToRun.length} steps in ${workflowRun.execution_time_ms}ms`;
-      await updateWorkflowRun(pool, orgId, workflowRun);
 
       // 3. Emit workflow_completed
       sendEvent('workflow_completed', {
@@ -1022,16 +858,6 @@ async function startServer() {
       res.end();
     } catch (err: any) {
       console.error('Workflow stream error:', err);
-      if (activeWorkflowRun && orgIdForPersistence) {
-        try {
-          activeWorkflowRun.status = 'failed';
-          activeWorkflowRun.completed_at = new Date().toISOString();
-          activeWorkflowRun.final_summary = err?.message || 'Streaming execution failed';
-          await updateWorkflowRun(getPgPool()!, orgIdForPersistence, activeWorkflowRun);
-        } catch (persistErr) {
-          console.error('Failed to persist workflow stream failure:', persistErr);
-        }
-      }
       sendEvent('error', { error: err.message || 'Streaming execution failed' });
       res.end();
     }
@@ -1043,7 +869,7 @@ async function startServer() {
     currentLeadId: null as string | null,
   };
 
-  app.post('/api/agent/state', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/agent/state', (req, res) => {
     const { status, leadId } = req.body;
     agentState.status = status;
     agentState.currentLeadId = leadId;
@@ -1051,7 +877,7 @@ async function startServer() {
   });
 
   // Predictive Dialing Trigger
-  app.post('/api/predictive/trigger', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/predictive/trigger', async (req, res) => {
       if (agentState.status === 'wrapping_up') {
           // Trigger next call logic
           res.json({ status: 'triggered' });
@@ -1066,7 +892,7 @@ async function startServer() {
     res.json(inMemoryStore.smartForwarding);
   });
 
-  app.post('/api/settings/smart-forwarding', requireRole(['admin', 'executive']), (req, res) => {
+  app.post('/api/settings/smart-forwarding', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     const { enabled, rules } = req.body;
     if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
@@ -1085,7 +911,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit/log', requireRole(['admin', 'executive']), (req, res) => {
+  app.post('/api/audit/log', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log writer was removed; audit events are persisted server-side.' });
     try {
       const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
@@ -1120,7 +946,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/webhooks', requireRole(['admin', 'executive']), async (req, res) => {
+  app.post('/api/webhooks', async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
@@ -1130,7 +956,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.put('/api/webhooks/:id', async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
@@ -1141,7 +967,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.delete('/api/webhooks/:id', async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
@@ -1152,7 +978,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/webhooks/:id/test', requireRole(['admin', 'executive']), async (req, res) => {
+  app.post('/api/webhooks/:id/test', async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
@@ -1248,7 +1074,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/properties/:id/create-lead', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/properties/:id/create-lead', async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -1447,7 +1273,7 @@ async function startServer() {
   });
 
   // Bulk Apply / Remove Tags on Selected Properties
-  app.post('/api/properties/bulk-tags', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/properties/bulk-tags', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], tags = [], mode = 'add' } = req.body;
@@ -1554,7 +1380,7 @@ async function startServer() {
   });
 
   // Batch Update Properties (Status, Assigned Agent, Property Type, Tax Status, etc.)
-  app.post('/api/properties/batch-update', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/properties/batch-update', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { propertyIds = [], updates = {} } = req.body;
@@ -1625,7 +1451,7 @@ async function startServer() {
   });
 
   // Single Property Tag Update (Add / Remove / Set)
-  app.patch('/api/properties/:id/tags', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.patch('/api/properties/:id/tags', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const propId = req.params.id;
@@ -1701,7 +1527,7 @@ async function startServer() {
   // ==========================================
   // 5-Step Skip Tracing Intelligence Endpoints
   // ==========================================
-  app.post('/api/skip-trace/execute', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/skip-trace/execute', async (req, res) => {
     try {
       const { propertyId, address, apn, city, county, state, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1723,7 +1549,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/skip-trace/save-contacts', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/skip-trace/save-contacts', async (req, res) => {
     try {
       const ownerId = req.body.ownerId || req.body.owner_id;
       const propertyId = req.body.propertyId || req.body.property_id;
@@ -1862,7 +1688,7 @@ async function startServer() {
   });
 
   // Automated Property Search + Skip Tracing Pipeline Endpoint
-  app.post('/api/skip-trace/automated-pipeline', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/skip-trace/automated-pipeline', async (req, res) => {
     try {
       const {
         county,
@@ -1915,7 +1741,7 @@ async function startServer() {
   });
 
   // Batch Skip Trace Endpoint
-  app.post('/api/skip-trace/batch', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/skip-trace/batch', async (req, res) => {
     try {
       const { propertyIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1933,7 +1759,7 @@ async function startServer() {
   });
 
   // Single Owner Instant Auto-Enrich
-  app.post('/api/skip-trace/auto-enrich', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/skip-trace/auto-enrich', async (req, res) => {
     try {
       const { ownerId, propertyId, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1967,7 +1793,7 @@ async function startServer() {
   });
 
   // Bulk Leads Deep Enrichment Workflow Endpoint (LinkedIn, CA SOS, Social & Corporate Records)
-  app.post('/api/leads/deep-enrich', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/leads/deep-enrich', async (req, res) => {
     try {
       const { leadIds, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2219,9 +2045,8 @@ async function startServer() {
     };
   };
 
-  // Development-only scheduler. Production uses managed worker invocations.
-  if (!isProduction) {
-    setInterval(() => {
+  // Background timer interval: check every 30 seconds for due schedules & scheduled campaign execution
+  setInterval(() => {
     try {
       const now = new Date().getTime();
       const schedules = inMemoryStore.propertyRefreshSchedules || [];
@@ -2244,173 +2069,166 @@ async function startServer() {
     } catch (schedTickErr) {
       console.error('[Scheduler] Periodic tick check error:', schedTickErr);
     }
-    }, 30000).unref?.();
-  }
+  }, 30000);
 
   // Scheduler API Endpoints
-  app.get('/api/scheduler/schedules', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool = getPgPool();
-      if (pool) {
-        const result = await pool.query(
-          `SELECT s.*, COALESCE((SELECT json_agg(l ORDER BY l.executed_at DESC) FROM property_refresh_logs l WHERE l.schedule_id = s.id), '[]'::json) AS history
-           FROM property_refresh_schedules s
-           WHERE s.organization_id = $1
-           ORDER BY s.next_run_at ASC`,
-          [orgId],
-        );
-        return res.json(result.rows);
-      }
-      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-      return res.json((inMemoryStore.propertyRefreshSchedules || []).filter((s) => s.organization_id === orgId));
-    } catch (err: any) {
-      console.error('List schedules error:', err);
-      return res.status(500).json({ error: err.message || 'Failed to list schedules' });
-    }
+  app.get('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
+    const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    const schedules = (inMemoryStore.propertyRefreshSchedules || []).filter(
+      (s) => !orgId || s.organization_id === orgId
+    );
+    res.json(schedules);
   });
 
-  app.post('/api/scheduler/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/scheduler/schedules', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed; durable scheduler is not yet exposed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const { name, description, target_property_ids = [], target_selection_mode = 'selected', county_filter, interval_hours = 24,
-        enrichment_options = { refresh_tax_assessor: true, refresh_gis_geometry: true, refresh_market_valuation: true, check_absentee_status: true, verify_tcpa_dnc: true } } = req.body;
-      if (!name) return res.status(400).json({ error: 'Schedule name is required' });
-      const now = new Date();
-      const intervalHours = Number(interval_hours) || 24;
-      const nextRun = new Date(now.getTime() + intervalHours * 3600000);
-      const schedule = {
-        id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, organization_id: orgId, name,
-        description: description || `Automated ${intervalHours}-hour background refresh for selected property records.`,
-        target_property_ids: Array.isArray(target_property_ids) ? target_property_ids : [], target_selection_mode,
-        county_filter: county_filter || null, interval_hours: intervalHours,
-        cron_expression: intervalHours === 24 ? '0 0 * * *' : null, status: 'active', last_run_at: null,
-        next_run_at: nextRun.toISOString(), last_run_status: null, last_run_summary: 'Initialized. Scheduled for automatic execution.',
-        last_run_refreshed_count: 0, enrichment_options: { refresh_tax_assessor: enrichment_options.refresh_tax_assessor !== false,
-          refresh_gis_geometry: enrichment_options.refresh_gis_geometry !== false, refresh_market_valuation: enrichment_options.refresh_market_valuation !== false,
-          check_absentee_status: enrichment_options.check_absentee_status !== false, verify_tcpa_dnc: enrichment_options.verify_tcpa_dnc !== false },
-        created_at: now.toISOString(), updated_at: now.toISOString(), created_by: 'Operations Executive', history: [],
-      };
-      const pool = getPgPool();
-      if (pool) {
-        await pool.query(`INSERT INTO property_refresh_schedules (id, organization_id, name, description, target_property_ids, target_selection_mode, county_filter, interval_hours, cron_expression, status, last_run_at, next_run_at, last_run_summary, last_run_refreshed_count, enrichment_options, created_at, updated_at, created_by)
-          VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18)`,
-          [schedule.id, orgId, schedule.name, schedule.description, JSON.stringify(schedule.target_property_ids), schedule.target_selection_mode, schedule.county_filter,
-            schedule.interval_hours, schedule.cron_expression, schedule.status, null, schedule.next_run_at, schedule.last_run_summary, 0, JSON.stringify(schedule.enrichment_options), schedule.created_at, schedule.updated_at, schedule.created_by]);
-        return res.status(201).json(schedule);
+      const {
+        name,
+        description,
+        target_property_ids = [],
+        target_selection_mode = 'selected',
+        county_filter,
+        interval_hours = 24,
+        enrichment_options = {
+          refresh_tax_assessor: true,
+          refresh_gis_geometry: true,
+          refresh_market_valuation: true,
+          check_absentee_status: true,
+          verify_tcpa_dnc: true,
+        },
+      } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ error: 'Schedule name is required' });
       }
-      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-      inMemoryStore.propertyRefreshSchedules.unshift(schedule as any);
-      return res.status(201).json(schedule);
+
+      const now = new Date();
+      const nextRun = new Date(now.getTime() + (Number(interval_hours) || 24) * 3600000);
+
+      const newSchedule = {
+        id: `sched_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        organization_id: orgId,
+        name,
+        description: description || `Automated ${interval_hours}-hour background refresh for selected property records.`,
+        target_property_ids: Array.isArray(target_property_ids) ? target_property_ids : [],
+        target_selection_mode: target_selection_mode || 'selected',
+        county_filter: county_filter || undefined,
+        interval_hours: Number(interval_hours) || 24,
+        cron_expression: Number(interval_hours) === 24 ? '0 0 * * *' : undefined,
+        status: 'active' as const,
+        last_run_at: null,
+        next_run_at: nextRun.toISOString(),
+        last_run_status: undefined,
+        last_run_summary: 'Initialized. Scheduled for automatic 24-hour execution.',
+        last_run_refreshed_count: 0,
+        enrichment_options: {
+          refresh_tax_assessor: enrichment_options.refresh_tax_assessor !== false,
+          refresh_gis_geometry: enrichment_options.refresh_gis_geometry !== false,
+          refresh_market_valuation: enrichment_options.refresh_market_valuation !== false,
+          check_absentee_status: enrichment_options.check_absentee_status !== false,
+          verify_tcpa_dnc: enrichment_options.verify_tcpa_dnc !== false,
+        },
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+        created_by: 'Operations Executive',
+        history: [],
+      };
+
+      inMemoryStore.propertyRefreshSchedules.unshift(newSchedule);
+      res.status(201).json(newSchedule);
     } catch (err: any) {
       console.error('Create schedule error:', err);
-      return res.status(500).json({ error: err.message || 'Failed to create schedule' });
+      res.status(500).json({ error: err.message || 'Failed to create schedule' });
     }
   });
 
-  app.put('/api/scheduler/schedules/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.put('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduleId = req.params.id;
-      const pool = getPgPool();
-      if (pool) {
-        const body = req.body || {};
-        const existing = await pool.query('SELECT * FROM property_refresh_schedules WHERE id = $1 AND organization_id = $2 LIMIT 1', [scheduleId, orgId]);
-        if (!existing.rows[0]) return res.status(404).json({ error: 'Schedule not found' });
-        const current = existing.rows[0];
-        const nextInterval = Number(body.interval_hours ?? current.interval_hours ?? 24) || 24;
-        const nextRun = body.next_run_at || new Date(Date.now() + nextInterval * 3600000).toISOString();
-        const enrichment = body.enrichment_options || current.enrichment_options || {};
-        const result = await pool.query(`UPDATE property_refresh_schedules SET name=$1, description=$2, target_property_ids=$3::jsonb, target_selection_mode=$4, county_filter=$5, interval_hours=$6, cron_expression=$7, enrichment_options=$8::jsonb, next_run_at=$9, updated_at=CURRENT_TIMESTAMP WHERE id=$10 AND organization_id=$11 RETURNING *`,
-          [body.name ?? current.name, body.description ?? current.description, JSON.stringify(Array.isArray(body.target_property_ids) ? body.target_property_ids : current.target_property_ids), body.target_selection_mode ?? current.target_selection_mode,
-            body.county_filter ?? current.county_filter, nextInterval, nextInterval === 24 ? '0 0 * * *' : null, JSON.stringify(enrichment), nextRun, scheduleId, orgId]);
-        return res.json(result.rows[0]);
-      }
-      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-      const index = inMemoryStore.propertyRefreshSchedules.findIndex((s) => s.id === scheduleId && s.organization_id === orgId);
-      if (index < 0) return res.status(404).json({ error: 'Schedule not found' });
-      inMemoryStore.propertyRefreshSchedules[index] = { ...inMemoryStore.propertyRefreshSchedules[index], ...req.body, id: scheduleId, organization_id: orgId, updated_at: new Date().toISOString() };
-      return res.json(inMemoryStore.propertyRefreshSchedules[index]);
-    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to update schedule' }); }
-  });
-
-  app.post('/api/scheduler/schedules/:id/toggle', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
-      if (pool) {
-        const result = await pool.query(`UPDATE property_refresh_schedules SET status = CASE WHEN status='active' THEN 'paused' ELSE 'active' END, updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 RETURNING *`, [scheduleId, orgId]);
-        if (!result.rows[0]) return res.status(404).json({ error: 'Schedule not found' }); return res.json(result.rows[0]);
-      }
-      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-      const schedule = inMemoryStore.propertyRefreshSchedules.find((s) => s.id === scheduleId && s.organization_id === orgId); if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
-      schedule.status = schedule.status === 'active' ? 'paused' : 'active'; schedule.updated_at = new Date().toISOString(); return res.json(schedule);
-    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to toggle schedule' }); }
-  });
-
-  app.post('/api/scheduler/schedules/:id/run', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const scheduleId = req.params.id;
-      const pool = getPgPool();
-      if (!pool) {
-        if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-        return res.status(410).json({ error: 'Development scheduler execution is disabled on this route.' });
-      }
-      const schedule = await pool.query(
-        `SELECT id, status FROM property_refresh_schedules WHERE id=$1 AND organization_id=$2`,
-        [scheduleId, orgId],
+      const index = inMemoryStore.propertyRefreshSchedules.findIndex(
+        (s) => s.id === scheduleId && s.organization_id === orgId
       );
-      if (!schedule.rows[0]) return res.status(404).json({ error: 'Schedule not found' });
-      if (schedule.rows[0].status === 'paused') return res.status(409).json({ error: 'Schedule is paused' });
-      const jobId = await enqueueJob(pool, orgId, JOB_TYPES.PROPERTY_REFRESH, { scheduleId }, 3);
-      return res.status(202).json({ queued: true, jobId, scheduleId });
-    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to queue scheduled property refresh' }); }
-  });
 
-  app.delete('/api/scheduler/schedules/:id', requireRole(['admin', 'executive']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const scheduleId = req.params.id; const pool = getPgPool();
-      if (pool) {
-        const result = await pool.query('DELETE FROM property_refresh_schedules WHERE id=$1 AND organization_id=$2 RETURNING id', [scheduleId, orgId]);
-        if (!result.rows[0]) return res.status(404).json({ error: 'Schedule not found' }); return res.json({ success: true, message: 'Schedule deleted successfully' });
+      if (index === -1) {
+        return res.status(404).json({ error: 'Schedule not found' });
       }
-      if (isProduction) return res.status(503).json({ error: 'PostgreSQL is required for production scheduler state' });
-      const before = inMemoryStore.propertyRefreshSchedules.length; inMemoryStore.propertyRefreshSchedules = inMemoryStore.propertyRefreshSchedules.filter((s) => !(s.id === scheduleId && s.organization_id === orgId));
-      if (before === inMemoryStore.propertyRefreshSchedules.length) return res.status(404).json({ error: 'Schedule not found' }); return res.json({ success: true, message: 'Schedule deleted successfully' });
-    } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to delete schedule' }); }
+
+      const existing = inMemoryStore.propertyRefreshSchedules[index];
+      const updated = {
+        ...existing,
+        ...req.body,
+        id: existing.id,
+        organization_id: existing.organization_id,
+        updated_at: new Date().toISOString(),
+      };
+
+      inMemoryStore.propertyRefreshSchedules[index] = updated;
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update schedule' });
+    }
   });
 
-  // Automated Email Outreach — authenticated, tenant-scoped, durable.
-  app.post('/api/leads/:id/email-outreach', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/scheduler/schedules/:id/toggle', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'Email outreach requires PostgreSQL', code: 'EMAIL_DATABASE_UNAVAILABLE' });
+      const scheduleId = req.params.id;
+      const index = inMemoryStore.propertyRefreshSchedules.findIndex(
+        (s) => s.id === scheduleId && s.organization_id === orgId
+      );
 
-      const userId = (req as AuthRequest).dbUser?.id;
-      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-      const result = await queueEmailOutreach(pool, orgId, req.params.id, userId);
-      if (result.status === 'existing') {
-        return res.status(200).json({
-          success: true,
-          status: 'already_processed',
-          outreachId: result.outreachId,
-          jobId: result.jobId,
-        });
+      if (index === -1) {
+        return res.status(404).json({ error: 'Schedule not found' });
       }
 
-      return res.status(202).json({
-        success: true,
-        status: 'queued',
-        outreachId: result.outreachId,
-        jobId: result.jobId,
-      });
+      const existing = inMemoryStore.propertyRefreshSchedules[index];
+      const nextStatus = existing.status === 'active' ? 'paused' : 'active';
+      existing.status = nextStatus;
+      existing.updated_at = new Date().toISOString();
+
+      inMemoryStore.propertyRefreshSchedules[index] = existing;
+      res.json(existing);
     } catch (err: any) {
-      const message = err?.message || 'Failed to queue automated email outreach';
-      const status = /not found/i.test(message) ? 404 : /valid email|template/i.test(message) ? 400 : 500;
-      console.error('Email outreach error:', err);
-      return res.status(status).json({ error: message });
+      res.status(500).json({ error: err.message || 'Failed to toggle schedule' });
+    }
+  });
+
+  app.post('/api/scheduler/schedules/:id/run', async (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const scheduleId = req.params.id;
+      const result = await executePropertyRefreshTask(scheduleId, orgId);
+      res.json(result);
+    } catch (err: any) {
+      console.error('Manual schedule run error:', err);
+      res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' });
+    }
+  });
+
+  app.delete('/api/scheduler/schedules/:id', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Legacy in-memory scheduler was removed.' });
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const scheduleId = req.params.id;
+      const initialLength = inMemoryStore.propertyRefreshSchedules.length;
+      inMemoryStore.propertyRefreshSchedules = inMemoryStore.propertyRefreshSchedules.filter(
+        (s) => !(s.id === scheduleId && s.organization_id === orgId)
+      );
+
+      if (inMemoryStore.propertyRefreshSchedules.length === initialLength) {
+        return res.status(404).json({ error: 'Schedule not found' });
+      }
+
+      res.json({ success: true, message: 'Schedule deleted successfully' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to delete schedule' });
     }
   });
 
@@ -2435,7 +2253,7 @@ async function startServer() {
   });
 
   // Update Individual Lead
-  app.patch('/api/leads/:id', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.patch('/api/leads/:id', async (req, res) => {
     try {
       const { id } = req.params;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2526,7 +2344,7 @@ async function startServer() {
   });
 
   // Batch Update Leads
-  app.post('/api/leads/batch-update', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/leads/batch-update', async (req, res) => {
     try {
       const { leadIds, updates, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2616,7 +2434,7 @@ async function startServer() {
   });
 
   // PostgreSQL-authoritative explainable lead scoring.
-  app.post('/api/leads/rescore', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/leads/rescore', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -2645,7 +2463,7 @@ async function startServer() {
   });
 
   // Create Lead Manually
-  app.post('/api/leads/create', requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
+  app.post('/api/leads/create', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead creation route removed; create leads from canonical properties.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2723,7 +2541,7 @@ async function startServer() {
   });
 
   // Delete Individual Lead
-  app.delete('/api/leads/:id', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.delete('/api/leads/:id', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { id } = req.params;
@@ -2743,7 +2561,7 @@ async function startServer() {
   });
 
   // Batch Delete Leads
-  app.post('/api/leads/batch-delete', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/leads/batch-delete', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy lead deletion route removed; use canonical CRM controls.' });
     try {
       const { leadIds, organizationId } = req.body;
@@ -2764,7 +2582,7 @@ async function startServer() {
   });
 
   // Automated Data Import & CRM Reconciliation APIs
-  app.post('/api/import/reconcile', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/import/reconcile', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       if (!orgId) {
@@ -2786,7 +2604,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/import/sync-production', requireRole(['admin', 'executive']), (_req, res) => {
+  app.post('/api/import/sync-production', (_req, res) => {
     res.status(410).json({ error: 'The legacy synthetic CRM feed was removed. Use the authoritative import endpoint.' });
   });
 
@@ -2900,7 +2718,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const camp = await CampaignManager.createCampaign({
@@ -2926,7 +2744,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/schedule', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/schedule', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const scheduledAt = req.body.scheduled_at || req.body.scheduledAt;
@@ -2943,7 +2761,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/cancel-schedule', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/cancel-schedule', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
@@ -2953,7 +2771,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/start', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/start', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
@@ -2963,7 +2781,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/pause', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/pause', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.pauseCampaign(orgId, req.params.id);
@@ -2973,7 +2791,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/stop', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/stop', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       await CampaignManager.stopCampaign(orgId, req.params.id);
@@ -3001,7 +2819,7 @@ async function startServer() {
     res.json([]);
   });
 
-  app.post('/api/campaigns/:id/contacts', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/campaigns/:id/contacts', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const contacts = req.body.contacts || [req.body];
@@ -3012,7 +2830,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/dial-next', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/campaigns/:id/dial-next', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.dialNextContact({
@@ -3028,7 +2846,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/dial-batch', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/campaigns/:id/dial-batch', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3045,7 +2863,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/:id/shuffle', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/campaigns/:id/shuffle', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
@@ -3127,7 +2945,7 @@ async function startServer() {
   });
 
   // Direct outbound dial: provider is authoritative; no fabricated completed calls.
-  app.post('/api/calls/dial', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/dial', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Manual dialing requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
@@ -3186,7 +3004,7 @@ async function startServer() {
     res.json(list);
   });
 
-  app.post('/api/suppression', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/suppression', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { phone_number, reason, source } = req.body;
@@ -3205,7 +3023,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/suppression/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.delete('/api/suppression/:id', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const success = await SuppressionService.removeSuppression(orgId, req.params.id);
@@ -3256,7 +3074,7 @@ async function startServer() {
     catch (err: any) { console.error('Approval list error:', err); res.status(503).json({ error: 'Approval state unavailable' }); }
   });
 
-  app.post('/api/approvals/:id/decide', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/approvals/:id/decide', async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative approval state' });
@@ -3303,15 +3121,15 @@ app.get('/api/dialer/voicemails', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`SELECT id,organization_id,label,url,created_at FROM voicemail_library WHERE organization_id=$1 ORDER BY created_at DESC`,[orgId]); return res.json(result.rows); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-app.post('/api/dialer/voicemails', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+app.post('/api/dialer/voicemails', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const label=String(req.body?.label||'').trim(); const url=String(req.body?.url||'').trim(); if(!label||!url)return res.status(400).json({error:'label and url are required'}); const id=`vm_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; const result=await pool.query(`INSERT INTO voicemail_library (id,organization_id,label,url) VALUES ($1,$2,$3,$4) RETURNING id,organization_id,label,url,created_at`,[id,orgId,label,url]); return res.status(201).json(result.rows[0]); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+app.delete('/api/dialer/voicemails/:id', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`DELETE FROM voicemail_library WHERE id=$1 AND organization_id=$2 RETURNING id`,[req.params.id,orgId]); if(!result.rowCount)return res.status(404).json({error:'Voicemail not found'}); return res.json({success:true,deletedId:result.rows[0].id}); }
   catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
 });
-  app.post('/api/calls/:id/drop-voicemail', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/:id/drop-voicemail', async (req, res) => {
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Voicemail drop requires PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
 
@@ -3373,7 +3191,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
     }
   });
 
-  app.patch('/api/calls/:id', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.patch('/api/calls/:id', async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3391,7 +3209,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
     }
   });
 
-  app.post('/api/calls/:id/notes', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/:id/notes', async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3409,7 +3227,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
     }
   });
 
-  app.post('/api/calls/:id/end', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/:id/end', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3424,7 +3242,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
-  app.post('/api/calls/:id/disposition', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/:id/disposition', async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3456,7 +3274,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
     }
   });
 
-  app.post('/api/calls/:id/suggest-task', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/calls/:id/suggest-task', async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { id } = req.params;
@@ -3536,7 +3354,7 @@ ${transcript}`;
   });
 
   // Import Data & Archive to Imported Files Folder
-  app.post('/api/import-data', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/import-data', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const { records, fileName, rawContent } = req.body;
@@ -3594,7 +3412,7 @@ ${transcript}`;
   // --- Imported Files Folder Management APIs ---
 
   // Ensure / Create Folder for Imported Files
-  app.post('/api/imported-files/create-folder', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/imported-files/create-folder', (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const baseDir = path.join(process.cwd(), 'data', 'imported_files');
@@ -3704,7 +3522,7 @@ ${transcript}`;
   });
 
   // Delete a file from the Imported Files folder
-  app.delete('/api/imported-files/:id', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.delete('/api/imported-files/:id', (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -3838,7 +3656,7 @@ ${transcript}`;
   });
 
   // 3. Create template
-  app.post('/api/outreach-templates', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/outreach-templates', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3905,7 +3723,7 @@ ${transcript}`;
   });
 
   // 4. Update template
-  app.put('/api/outreach-templates/:id', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.put('/api/outreach-templates/:id', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3962,7 +3780,7 @@ ${transcript}`;
   });
 
   // 5. Delete template
-  app.delete('/api/outreach-templates/:id', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.delete('/api/outreach-templates/:id', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3995,7 +3813,7 @@ ${transcript}`;
   });
 
   // 6. Duplicate template
-  app.post('/api/outreach-templates/:id/duplicate', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/outreach-templates/:id/duplicate', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -4030,7 +3848,7 @@ ${transcript}`;
   });
 
   // 7. Render Template with dynamic property / owner / custom variables
-  app.post('/api/outreach-templates/render', requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
+  app.post('/api/outreach-templates/render', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const {
@@ -4095,10 +3913,10 @@ ${transcript}`;
         apn: p.apn || '423-112-09',
         lead_score: l.lead_score ?? 94,
         lead_classification: l.classification || 'High Priority',
-        company_name: 'Tenant Organization',
-        agent_name: 'Vortex One',
+        company_name: 'CMC Realty & Property Management',
+        agent_name: 'Marcus Vance',
         agent_phone: '(949) 555-0199',
-        agent_email: '',
+        agent_email: 'marcus@cmcrealty.com',
         ...(customVariables || {}),
       };
 
@@ -4134,7 +3952,7 @@ ${transcript}`;
   });
 
   // 8. Record usage & performance for a template
-  app.post('/api/outreach-templates/:id/use', requireRole(['admin', 'executive', 'manager', 'agent']), (req, res) => {
+  app.post('/api/outreach-templates/:id/use', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -4348,7 +4166,7 @@ ${transcript}`;
   }
 
   // Multi-Dialer Execution Route
-  app.post('/api/dial-batch', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/dial-batch', async (req, res) => {
     try {
       const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
 

@@ -33,6 +33,7 @@ import {
   ChevronUp,
   Radio,
   Blocks,
+  Archive,
 } from 'lucide-react';
 import { AgentDefinition } from '../types';
 
@@ -113,6 +114,12 @@ export const PRIMARY_NAV_SECTIONS: {
     items: [
       { id: 'analytics', label: 'Analytics', symbol: '▥', icon: BarChart3 },
       { id: 'reports', label: 'Reports', symbol: '◌', icon: FileText },
+    ],
+  },
+  {
+    category: 'DOCUMENTS',
+    items: [
+      { id: 'files', label: 'Files & Documents', symbol: '▣', icon: Archive, badge: 'Private' },
     ],
   },
   {

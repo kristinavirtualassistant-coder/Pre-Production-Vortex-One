@@ -618,69 +618,396 @@ export const MIGRATIONS: Migration[] = [
 
   {
     version: 18,
-    name: '018_create_real_ai_agent_runtime',
+    name: '018_create_workflow_automation_runtime',
     sql: `
-      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS provider VARCHAR(30);
-      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS max_retries INTEGER DEFAULT 3 NOT NULL;
-      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN DEFAULT true NOT NULL;
+      CREATE TABLE IF NOT EXISTS workflow_versions (id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, workflow_id VARCHAR(64) NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, version INTEGER NOT NULL, definition JSONB NOT NULL DEFAULT '{}'::jsonb, status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived')), created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, published_at TIMESTAMP WITH TIME ZONE, UNIQUE (organization_id, workflow_id, version), UNIQUE (organization_id, id));
+      CREATE INDEX IF NOT EXISTS idx_workflow_versions_lookup ON workflow_versions(organization_id, workflow_id, version DESC);
+      CREATE TABLE IF NOT EXISTS workflow_schedules (id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, workflow_id VARCHAR(64) NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, workflow_version_id VARCHAR(64) REFERENCES workflow_versions(id) ON DELETE RESTRICT, name VARCHAR(255) NOT NULL, schedule_type VARCHAR(20) NOT NULL DEFAULT 'once' CHECK (schedule_type IN ('once','interval','cron')), run_at TIMESTAMP WITH TIME ZONE, interval_seconds INTEGER, cron_expression VARCHAR(255), timezone VARCHAR(100) NOT NULL DEFAULT 'UTC', status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','completed','failed')), next_run_at TIMESTAMP WITH TIME ZONE, last_run_at TIMESTAMP WITH TIME ZONE, last_error TEXT, trigger_payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, CHECK (interval_seconds IS NULL OR interval_seconds > 0), CHECK (schedule_type <> 'interval' OR interval_seconds IS NOT NULL), CHECK (schedule_type <> 'once' OR run_at IS NOT NULL), CHECK (schedule_type <> 'cron' OR cron_expression IS NOT NULL));
+      CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due ON workflow_schedules(status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_workflow_schedules_org ON workflow_schedules(organization_id, status, next_run_at);
+      CREATE TABLE IF NOT EXISTS workflow_execution_steps (id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, workflow_run_id VARCHAR(64) NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE, workflow_step_id VARCHAR(128) NOT NULL, step_index INTEGER NOT NULL DEFAULT 0, action_type VARCHAR(50) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','waiting','completed','failed','blocked','skipped')), attempt INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, scheduled_at TIMESTAMP WITH TIME ZONE, started_at TIMESTAMP WITH TIME ZONE, completed_at TIMESTAMP WITH TIME ZONE, idempotency_key VARCHAR(255) NOT NULL, input JSONB NOT NULL DEFAULT '{}'::jsonb, output JSONB, error TEXT, provider_reference VARCHAR(255), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, UNIQUE (organization_id, idempotency_key));
+      CREATE INDEX IF NOT EXISTS idx_workflow_execution_steps_run ON workflow_execution_steps(organization_id, workflow_run_id, step_index);
+      CREATE INDEX IF NOT EXISTS idx_workflow_execution_steps_due ON workflow_execution_steps(status, scheduled_at);
+      CREATE TABLE IF NOT EXISTS workflow_execution_logs (id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE CASCADE, workflow_step_id VARCHAR(128), level VARCHAR(20) NOT NULL DEFAULT 'info' CHECK (level IN ('debug','info','warn','error')), event VARCHAR(100) NOT NULL, message TEXT NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_workflow_execution_logs_run ON workflow_execution_logs(organization_id, workflow_run_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_workflow_due ON jobs(job_type, status, available_at);
+    `,
+  },
 
-      CREATE TABLE IF NOT EXISTS agent_memories (
+  {
+    version: 19,
+    name: '019_production_auth_account_management',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_backup_codes JSONB DEFAULT '[]'::jsonb NOT NULL;
+
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS user_agent VARCHAR(500);
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS ip_address INET;
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS device_label VARCHAR(255);
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS mfa_verified_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_active_user
+        ON auth_sessions(user_id, last_seen_at DESC)
+        WHERE revoked_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS email_verification_tokens (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        used_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_verification_user
+        ON email_verification_tokens(user_id, expires_at DESC);
+
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        used_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_password_reset_user
+        ON password_reset_tokens(user_id, expires_at DESC);
+
+      CREATE TABLE IF NOT EXISTS auth_mfa_challenges (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        challenge_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        attempts INTEGER DEFAULT 0 NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user
+        ON auth_mfa_challenges(user_id, expires_at DESC);
+
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS billing_email VARCHAR(320);
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS timezone VARCHAR(100) DEFAULT 'America/Los_Angeles' NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS organization_billing (
+        organization_id VARCHAR(64) PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+        plan VARCHAR(40) NOT NULL DEFAULT 'free',
+        subscription_status VARCHAR(40) NOT NULL DEFAULT 'active',
+        billing_customer_id VARCHAR(255),
+        billing_subscription_id VARCHAR(255),
+        trial_ends_at TIMESTAMP WITH TIME ZONE,
+        current_period_start TIMESTAMP WITH TIME ZONE,
+        current_period_end TIMESTAMP WITH TIME ZONE,
+        cancel_at_period_end BOOLEAN DEFAULT false NOT NULL,
+        limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS organization_usage (
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        period_start DATE NOT NULL,
+        metric VARCHAR(80) NOT NULL,
+        used BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        PRIMARY KEY (organization_id, period_start, metric)
+      );
+      CREATE INDEX IF NOT EXISTS idx_organization_usage_period
+        ON organization_usage(organization_id, period_start DESC);
+
+      INSERT INTO organization_billing (organization_id, plan, subscription_status, limits)
+      SELECT id, 'free', 'active',
+        '{"users":5,"calls_month":250,"emails_month":500,"sms_month":100,"ai_actions_month":250,"properties":10000}'::jsonb
+      FROM organizations
+      ON CONFLICT (organization_id) DO NOTHING;
+
+      UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at)
+      WHERE email_verified_at IS NULL;
+    `,
+  },
+  {
+    version: 20,
+    name: '020_create_reporting_analytics_layer',
+    sql: `
+      CREATE TABLE IF NOT EXISTS analytics_cost_events (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        agent_id VARCHAR(64) NOT NULL,
-        memory_key VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        importance NUMERIC(4,3) DEFAULT 0.500 NOT NULL,
-        metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        category VARCHAR(50) NOT NULL,
+        provider VARCHAR(100),
+        quantity NUMERIC(18,6) NOT NULL DEFAULT 1,
+        unit_cost_usd NUMERIC(18,6) NOT NULL DEFAULT 0,
+        total_cost_usd NUMERIC(18,6) NOT NULL,
+        reference_type VARCHAR(80),
+        reference_id VARCHAR(128),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_cost_org_time
+        ON analytics_cost_events(organization_id, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_cost_org_campaign
+        ON analytics_cost_events(organization_id, campaign_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS analytics_ai_usage (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        agent_id VARCHAR(128),
+        workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+        provider VARCHAR(100) NOT NULL,
+        model VARCHAR(150),
+        operation VARCHAR(100) NOT NULL,
+        input_tokens BIGINT NOT NULL DEFAULT 0,
+        output_tokens BIGINT NOT NULL DEFAULT 0,
+        total_tokens BIGINT NOT NULL DEFAULT 0,
+        estimated_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        success BOOLEAN NOT NULL DEFAULT true,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_ai_org_time
+        ON analytics_ai_usage(organization_id, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_ai_org_agent
+        ON analytics_ai_usage(organization_id, agent_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS analytics_value_events (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('revenue','acquisition_value','management_value','other')),
+        amount_usd NUMERIC(18,2) NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_value_org_time
+        ON analytics_value_events(organization_id, occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS appointments (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        campaign_id VARCHAR(64) REFERENCES campaign(id) ON DELETE SET NULL,
+        assigned_user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'scheduled'
+          CHECK (status IN ('scheduled','confirmed','completed','cancelled','no_show')),
+        outcome VARCHAR(100),
+        notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_appointments_org_scheduled
+        ON appointments(organization_id, scheduled_at);
+      CREATE INDEX IF NOT EXISTS idx_appointments_org_status
+        ON appointments(organization_id, status);
+    `,
+  },
+  {
+    version: 21,
+    name: '021_create_file_assets',
+    sql: `
+      CREATE TABLE IF NOT EXISTS file_assets (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        entity_type VARCHAR(50), entity_id VARCHAR(64), category VARCHAR(50) NOT NULL,
+        original_name VARCHAR(512) NOT NULL, storage_bucket VARCHAR(255) NOT NULL,
+        storage_path VARCHAR(1024) NOT NULL, mime_type VARCHAR(255) NOT NULL,
+        size_bytes BIGINT NOT NULL DEFAULT 0, checksum_sha256 VARCHAR(64), description TEXT,
+        extracted_text TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending', uploaded_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE,
+        CONSTRAINT uq_file_assets_org_storage UNIQUE (organization_id, storage_bucket, storage_path),
+        CONSTRAINT ck_file_assets_status CHECK (status IN ('pending','ready','failed','deleted')),
+        CONSTRAINT ck_file_assets_category CHECK (category IN ('property_document','owner_document','contract','photo','call_recording','call_transcript','import','export','other'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_created ON file_assets(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_entity ON file_assets(organization_id, entity_type, entity_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_category ON file_assets(organization_id, category, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_search ON file_assets USING GIN (to_tsvector('simple', coalesce(original_name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(extracted_text,'')));
+    `,
+  },
+  {
+    version: 22,
+    name: '022_create_workflow_communication_suppression',
+    sql: `
+      CREATE TABLE IF NOT EXISTS communication_suppression (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','phone')),
+        destination VARCHAR(320) NOT NULL,
+        reason TEXT,
+        source VARCHAR(100),
+        expires_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, channel, destination)
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_suppression_lookup ON communication_suppression(organization_id, channel, destination);
+    `,
+  },
+  {
+    version: 23,
+    name: '023_create_workflow_communication_deliveries',
+    sql: `
+      CREATE TABLE IF NOT EXISTS workflow_communication_deliveries (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+        workflow_step_id VARCHAR(128),
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','phone')),
+        destination VARCHAR(320) NOT NULL,
+        idempotency_key VARCHAR(255) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','manual_review')),
+        provider_reference VARCHAR(255),
+        error TEXT,
+        request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        UNIQUE (organization_id, agent_id, memory_key)
+        UNIQUE (organization_id, idempotency_key)
       );
-      CREATE INDEX IF NOT EXISTS idx_agent_memories_lookup
-        ON agent_memories(organization_id, agent_id, importance DESC, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_delivery_status ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
+  },
+  {
+    version: 24,
+    name: '024_create_stripe_webhook_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+        id VARCHAR(255) PRIMARY KEY,
+        event_type VARCHAR(120) NOT NULL,
+        payload JSONB NOT NULL,
+        received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_type_time
+        ON stripe_webhook_events(event_type, received_at DESC);
+    `,
+  },
 
-      CREATE TABLE IF NOT EXISTS agent_runs (
+  {
+    version: 25,
+    name: '025_create_owner_enrichment',
+    sql: `
+      CREATE TABLE IF NOT EXISTS owner_enrichment_providers (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        agent_id VARCHAR(64) NOT NULL,
-        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
-        objective TEXT NOT NULL,
-        provider VARCHAR(30) NOT NULL,
-        model VARCHAR(100) NOT NULL,
+        provider_key VARCHAR(100) NOT NULL,
+        display_name VARCHAR(255) NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        priority INTEGER NOT NULL DEFAULT 100,
+        capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, provider_key)
+      );
+      CREATE TABLE IF NOT EXISTS owner_enrichment_jobs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        provider_key VARCHAR(100),
+        job_type VARCHAR(50) NOT NULL DEFAULT 'FULL_ENRICHMENT',
         status VARCHAR(30) NOT NULL DEFAULT 'queued',
-        input_context JSONB DEFAULT '{}'::jsonb NOT NULL,
-        output JSONB,
-        error TEXT,
-        attempts INTEGER DEFAULT 0 NOT NULL,
-        max_attempts INTEGER DEFAULT 3 NOT NULL,
-        input_tokens INTEGER DEFAULT 0 NOT NULL,
-        output_tokens INTEGER DEFAULT 0 NOT NULL,
-        estimated_cost_usd NUMERIC(12,6) DEFAULT 0 NOT NULL,
-        execution_time_ms INTEGER,
-        pending_approval_id VARCHAR(64),
+        requested_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        records_found INTEGER NOT NULL DEFAULT 0,
+        records_added INTEGER NOT NULL DEFAULT 0,
+        records_updated INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
         started_at TIMESTAMP WITH TIME ZONE,
         completed_at TIMESTAMP WITH TIME ZONE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_created ON agent_runs(organization_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_agent ON agent_runs(organization_id, agent_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_status ON agent_runs(organization_id, status, created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS agent_run_steps (
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_jobs_org_owner ON owner_enrichment_jobs(organization_id, owner_id, created_at DESC);
+      CREATE TABLE IF NOT EXISTS owner_source_records (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        run_id VARCHAR(64) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-        step_no INTEGER NOT NULL,
-        step_type VARCHAR(30) NOT NULL,
-        tool_name VARCHAR(128),
-        status VARCHAR(30) NOT NULL,
-        input JSONB DEFAULT '{}'::jsonb NOT NULL,
-        output JSONB DEFAULT '{}'::jsonb NOT NULL,
-        error TEXT,
-        latency_ms INTEGER DEFAULT 0 NOT NULL,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        enrichment_job_id VARCHAR(64) REFERENCES owner_enrichment_jobs(id) ON DELETE SET NULL,
+        source_type VARCHAR(100) NOT NULL,
+        provider_key VARCHAR(100),
+        external_record_id VARCHAR(255),
+        source_url TEXT,
+        raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        raw_hash VARCHAR(64) NOT NULL,
+        retrieved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run ON agent_run_steps(organization_id, run_id, step_no, created_at);
+      CREATE INDEX IF NOT EXISTS idx_owner_source_records_org_owner ON owner_source_records(organization_id, owner_id, retrieved_at DESC);
+      CREATE TABLE IF NOT EXISTS owner_contact_points (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        type VARCHAR(20) NOT NULL,
+        value TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        contact_subtype VARCHAR(30),
+        is_primary BOOLEAN NOT NULL DEFAULT false,
+        is_verified BOOLEAN NOT NULL DEFAULT false,
+        confidence_score NUMERIC(5,4),
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, owner_id, type, normalized_value)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_contact_points_org_owner ON owner_contact_points(organization_id, owner_id, type);
+      CREATE TABLE IF NOT EXISTS owner_ownerships (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+        ownership_type VARCHAR(50) NOT NULL DEFAULT 'record_owner',
+        ownership_percentage NUMERIC(7,4),
+        start_date DATE,
+        end_date DATE,
+        recorded_date DATE,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 1,
+        UNIQUE(organization_id, owner_id, property_id, ownership_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_ownerships_org_owner ON owner_ownerships(organization_id, owner_id);
+      CREATE TABLE IF NOT EXISTS owner_relationships (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        related_entity_type VARCHAR(50) NOT NULL,
+        related_entity_id VARCHAR(64),
+        related_name VARCHAR(255) NOT NULL,
+        relationship_type VARCHAR(50) NOT NULL,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, owner_id, related_entity_type, related_name, relationship_type)
+      );
+      CREATE TABLE IF NOT EXISTS owner_lead_signals (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE CASCADE,
+        signal_type VARCHAR(80) NOT NULL,
+        signal_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        score NUMERIC(6,2) NOT NULL DEFAULT 0,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        observed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE,
+        UNIQUE(organization_id, owner_id, property_id, signal_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_lead_signals_org_owner ON owner_lead_signals(organization_id, owner_id, score DESC);
+      CREATE TABLE IF NOT EXISTS owner_identity_matches (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        candidate_name VARCHAR(255) NOT NULL,
+        match_score NUMERIC(5,4) NOT NULL,
+        match_status VARCHAR(30) NOT NULL DEFAULT 'candidate',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
     `,
   },
 ];
