@@ -269,10 +269,20 @@ export async function sendEmailNow(pool: Pool, args: any) {
   const t = await thread(pool,{organizationId:args.organizationId,userId:args.userId,channel:'email',provider:providerName,contactKey:to,externalThreadId:args.externalThreadId,subject:args.subject,...links});
   const idempotencyKey = args.idempotencyKey || 'email:' + args.organizationId + ':' + to + ':' + createHash('sha256').update(args.subject + '\n' + args.body).digest('hex');
   const existing = await pool.query('SELECT * FROM communication_messages WHERE organization_id=$1 AND idempotency_key=$2 LIMIT 1',[args.organizationId,idempotencyKey]);
-  if (existing.rowCount) return existing.rows[0];
+  if (existing.rowCount && ['sent','delivered','read','replied'].includes(existing.rows[0].status)) return existing.rows[0];
+  if (existing.rowCount && existing.rows[0].status === 'queued' && existing.rows[0].metadata?.provider_attempted) {
+    throw new Error('A provider attempt is already recorded for this idempotency key; manual recovery is required');
+  }
   const row = await connection(pool,args.organizationId,args.userId,args.provider);
-  const trackingToken = randomUUID().replace(/-/g,'');
-  const pending = await record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'email',provider:providerName,direction:'outbound',fromAddress:row.account_email,toAddress:to,subject:args.subject,body:args.body,status:'queued',trackingToken,idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId});
+  const trackingToken = existing.rows[0]?.tracking_token || randomUUID().replace(/-/g,'');
+  let pending = existing.rows[0];
+  if (pending?.status === 'failed') {
+    const reset = await pool.query("UPDATE communication_messages SET status='queued',error_message=NULL,metadata=metadata - 'provider_attempted' WHERE id=$1 AND organization_id=$2 RETURNING *",[pending.id,args.organizationId]);
+    pending = reset.rows[0];
+  } else if (!pending) {
+    pending = await record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'email',provider:providerName,direction:'outbound',fromAddress:row.account_email,toAddress:to,subject:args.subject,body:args.body,status:'queued',trackingToken,idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId});
+  }
+  await pool.query("UPDATE communication_messages SET metadata=metadata || '{\"provider_attempted\":true}'::jsonb WHERE id=$1 AND organization_id=$2",[pending.id,args.organizationId]);
   try {
     const sent = args.provider === 'microsoft-365'
       ? await sendOutlook(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id})
