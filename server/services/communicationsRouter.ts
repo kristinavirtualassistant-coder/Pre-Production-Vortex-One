@@ -169,6 +169,17 @@ router.get('/tracking/open/:token.gif', async (req,res) => {
   res.setHeader('Content-Type','image/gif'); res.setHeader('Cache-Control','no-store'); res.status(200).send(pixel);
 });
 
+router.get('/tracking/unsubscribe/:token', async (req,res) => {
+  const pool=getPgPool();
+  if(!pool) return res.status(503).send('Communications unavailable');
+  try {
+    const message=await pool.query('SELECT organization_id,to_address FROM communication_messages WHERE tracking_token=$1 AND channel=''email'' LIMIT 1',[req.params.token]);
+    if(!message.rowCount || !message.rows[0].to_address) return res.status(404).send('Invalid unsubscribe link');
+    await suppress(pool,message.rows[0].organization_id,'email',message.rows[0].to_address,'unsubscribe','email-link');
+    res.status(200).send('<html><body style="font-family:system-ui;padding:40px"><h2>You have been unsubscribed.</h2><p>You will not receive further Vortex One email outreach at this address.</p></body></html>');
+  } catch(e:any) { res.status(500).send('Unable to process unsubscribe request'); }
+});
+
 router.get('/tracking/click/:token', async (req,res) => {
   const url=typeof req.query.url === 'string' ? req.query.url : '';
   const safe=/^https?:\/\//i.test(url) ? url : '/';
