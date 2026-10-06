@@ -88,12 +88,13 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 18, 'Migration list contains 18 defined migrations', `Expected 18, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 19, 'Migration list contains 19 defined migrations', `Expected 19, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 17 && migration.name === '017_enforce_global_user_email_identity'), 'Global email identity migration 17 present', 'Expected global email identity migration 17 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 20 && migration.name === '020_create_native_property_map_spatial_layer'), 'Native map migration 20 present', 'Expected native map migration 20 to be present');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
