@@ -151,7 +151,7 @@ async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: 
 
   if (!ownerId && args.channel === 'sms') {
     const owner = await pool.query(
-      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(phone_numbers,'[]'::jsonb)) p WHERE regexp_replace(COALESCE(p->>'number',''),'[^0-9+]'','','g')=regexp_replace($2,'[^0-9+]'','','g')) LIMIT 1",
+      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(phone_numbers,'[]'::jsonb)) p WHERE regexp_replace(COALESCE(p->>'number',''),'[^0-9+]','','g')=regexp_replace($2,'[^0-9+]','','g')) LIMIT 1",
       [organizationId, args.contactKey],
     );
     ownerId = owner.rows[0]?.id || null;
@@ -272,7 +272,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
     await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2',[sent.externalThreadId,t.id]);
     return updated.rows[0];
   } catch (error: any) {
-    await pool.query("UPDATE communication_messages SET status='failed',error_message=$1 WHERE id=$2',[error.message || 'Email send failed"pending.id]);
+    await pool.query("UPDATE communication_messages SET status='failed',error_message=$1 WHERE id=$2", [error.message || 'Email send failed',pending.id]);
     throw error;
   }
 }
@@ -320,13 +320,22 @@ function validTwilio(reqUrl: string, params: Record<string,string>, signature: s
   return createHmac('sha1',token).update(payload).digest('base64') === signature;
 }
 
-export async function handleTwilioInbound(pool: Pool, organizationId: string, reqUrl: string, body: Record<string,string>, signature?: string) {
+export async function handleTwilioInbound(pool: Pool, reqUrl: string, body: Record<string,string>, signature?: string) {
   const cfg = await twilio();
-  if (process.env.NODE_ENV === 'production' && (!signature || !validTwilio(reqUrl,body,signature,cfg.token))) throw new Error('Invalid Twilio webhook signature');
+  const localUnsigned = process.env.NODE_ENV === 'development' && process.env.ALLOW_UNSIGNED_TWILIO_WEBHOOKS === 'true';
+  if (!signature || !validTwilio(reqUrl,body,signature,cfg.token)) {
+    if (!localUnsigned) throw new Error('Invalid Twilio webhook signature');
+  }
   const from = normalizePhone(body.From);
   const to = normalizePhone(body.To);
   const text = String(body.Body || '').trim();
-  if (!PHONE_RE.test(from) || !text) return;
+  if (!PHONE_RE.test(from) || !PHONE_RE.test(to) || !text) return;
+  const numberResult = await pool.query(
+    "SELECT organization_id FROM messaging_numbers WHERE provider='twilio' AND phone_number=$1 AND status='active' LIMIT 2",
+    [to],
+  );
+  if (numberResult.rowCount !== 1) throw new Error('Twilio destination number is not mapped to exactly one organization');
+  const organizationId = numberResult.rows[0].organization_id;
   const links = await resolveLink(pool,organizationId,{channel:'sms',contactKey:from});
   const t = await thread(pool,{organizationId,channel:'sms',provider:'twilio',contactKey:from,externalThreadId:body.MessageSid,subject:'SMS conversation',...links});
   const message = await record(pool,{organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'inbound',externalMessageId:body.MessageSid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:text,status:'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{twilio:body}});
@@ -336,11 +345,17 @@ export async function handleTwilioInbound(pool: Pool, organizationId: string, re
   }
 }
 
-export async function handleTwilioStatus(pool: Pool, organizationId: string, reqUrl: string, body: Record<string,string>, signature?: string) {
+export async function handleTwilioStatus(pool: Pool, reqUrl: string, body: Record<string,string>, signature?: string) {
   const cfg = await twilio();
-  if (process.env.NODE_ENV === 'production' && (!signature || !validTwilio(reqUrl,body,signature,cfg.token))) throw new Error('Invalid Twilio webhook signature');
+  const localUnsigned = process.env.NODE_ENV === 'development' && process.env.ALLOW_UNSIGNED_TWILIO_WEBHOOKS === 'true';
+  if (!signature || !validTwilio(reqUrl,body,signature,cfg.token)) {
+    if (!localUnsigned) throw new Error('Invalid Twilio webhook signature');
+  }
   const sid = body.MessageSid || body.SmsSid;
   if (!sid) return;
+  const messageOrg = await pool.query('SELECT organization_id,id FROM communication_messages WHERE provider=\'twilio\' AND external_message_id=$1 LIMIT 2',[sid]);
+  if (messageOrg.rowCount !== 1) throw new Error('Twilio message is not mapped to exactly one organization');
+  const organizationId = messageOrg.rows[0].organization_id;
   const status = String(body.MessageStatus || body.SmsStatus || '').toLowerCase();
   const mapped = status === 'delivered' ? 'delivered' : status === 'failed' || status === 'undelivered' ? 'failed' : status === 'read' ? 'read' : 'sent';
   await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1='failed' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4", [mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
@@ -456,10 +471,13 @@ export async function listTimeline(pool: Pool, organizationId: string, filters: 
   return result.rows;
 }
 
-export async function recordTrackingEvent(pool: Pool, token: string, type:'opened'|'clicked', url?:string) {
+export async function recordTrackingEvent(pool: Pool, token: string, type:'opened'|'clicked', url?:string, signature?:string) {
   const result=await pool.query('SELECT id,organization_id FROM communication_messages WHERE tracking_token=$1 LIMIT 1',[token]);
   if (!result.rowCount) return;
   const message=result.rows[0];
+  if (type === 'clicked') {
+    if (!url || !/^https?:\/\//i.test(url) || !signature || trackingSignature(token,url) !== signature) throw new Error('Invalid tracking destination');
+  }
   await pool.query('INSERT INTO communication_events (id,organization_id,message_id,event_type,event_url) VALUES ($1,$2,$3,$4,$5)',['ce_' + randomUUID(),message.organization_id,message.id,type,url || null]);
   await pool.query("UPDATE communication_messages SET status=CASE WHEN $1='opened' AND status='sent' THEN 'read' WHEN $1='clicked' THEN 'read' ELSE status END WHERE id=$2", [type,message.id]);
 }
