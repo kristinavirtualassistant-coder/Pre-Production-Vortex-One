@@ -516,7 +516,7 @@ export async function enrollSequence(pool: Pool, organizationId: string, userId:
   );
   const row=await pool.query('SELECT id FROM communication_sequence_enrollments WHERE organization_id=$1 AND sequence_id=$2 AND lead_id=$3',[organizationId,sequenceId,leadId]);
   await pool.query(
-    "UPDATE jobs SET status='cancelled',locked_at=NULL,locked_by=NULL,last_error='Superseded by sequence re-enrollment' WHERE organization_id=$1 AND job_type=$2 AND status='queued' AND payload->>'enrollmentId'=$3",
+    "DELETE FROM jobs WHERE organization_id=$1 AND job_type=$2 AND status='queued' AND payload->>'enrollmentId'=$3",
     [organizationId,COMMUNICATION_JOB_TYPES.SEQUENCE_STEP,row.rows[0].id],
   );
   await queueCommunicationJob(pool,organizationId,COMMUNICATION_JOB_TYPES.SEQUENCE_STEP,{enrollmentId:row.rows[0].id},nextAt);
