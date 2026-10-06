@@ -11,6 +11,8 @@ export interface UserProfile {
   tenant_ids: string[];
   createdAt: string;
   lastLoginAt: string;
+  emailVerified?: boolean;
+  mfaEnabled?: boolean;
 }
 
 export interface OrganizationTenant {
@@ -44,9 +46,13 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   isGuest: boolean;
+  mfaChallengeToken: string | null;
+  verificationRequired: boolean;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
+  verifyMfa: (code: string) => Promise<void>;
   signUpWithEmail: (params: SignUpParams) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchOrganization: (orgId: string, orgName: string) => Promise<void>;
   updateUserProfileData: (updates: Partial<UserProfile>) => Promise<void>;
@@ -56,7 +62,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const SESSION_KEY = 'vortex_postgresql_session';
 
 type SessionUser = {
   id: string;
@@ -67,10 +72,13 @@ type SessionUser = {
   organization_name?: string;
   organization_slug?: string;
   organization_settings?: Record<string, unknown>;
+  email_verified_at?: string;
+  mfa_enabled?: boolean;
+  created_at?: string;
+  last_login_at?: string;
 };
 
 function profileFromUser(user: SessionUser): UserProfile {
-  const now = new Date().toISOString();
   return {
     uid: user.id,
     email: user.email,
@@ -79,8 +87,10 @@ function profileFromUser(user: SessionUser): UserProfile {
     organization_id: user.organization_id,
     organization_name: user.organization_name || user.organization_id,
     tenant_ids: [user.organization_id],
-    createdAt: now,
-    lastLoginAt: now,
+    createdAt: user.created_at || new Date().toISOString(),
+    lastLoginAt: user.last_login_at || new Date().toISOString(),
+    emailVerified: Boolean(user.email_verified_at),
+    mfaEnabled: Boolean(user.mfa_enabled),
   };
 }
 
@@ -91,9 +101,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [availableTenants, setAvailableTenants] = useState<OrganizationTenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [mfaChallengeToken, setMfaChallengeToken] = useState<string | null>(null);
+  const [verificationRequired, setVerificationRequired] = useState(false);
 
-  const applySession = useCallback((payload: { token: string; user: SessionUser }) => {
+  const applyUser = useCallback((payload: { user: SessionUser }) => {
     const profile = profileFromUser(payload.user);
     const tenant: OrganizationTenant = {
       id: profile.organization_id,
@@ -101,30 +112,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       slug: payload.user.organization_slug || profile.organization_id.replace(/^org_/, ''),
       settings: payload.user.organization_settings,
     };
-    setAccessToken(payload.token);
     setUser({ uid: payload.user.id, email: payload.user.email, displayName: payload.user.name });
     setUserProfile(profile);
     setActiveTenant(tenant);
     setAvailableTenants([tenant]);
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+    setMfaChallengeToken(null);
+    setVerificationRequired(false);
   }, []);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if (!raw) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const saved = JSON.parse(raw);
-      if (!saved?.token || !saved?.user?.id) throw new Error('Invalid session');
-      applySession(saved);
-    } catch {
-      sessionStorage.removeItem(SESSION_KEY);
-    } finally {
-      setLoading(false);
-    }
-  }, [applySession]);
+    let active = true;
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json();
+        if (active && data?.user?.id) applyUser({ user: data.user });
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [applyUser]);
 
   const signInWithEmail = useCallback(async (email: string, pass: string) => {
     setLoading(true);
@@ -132,20 +139,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Sign-in failed');
-      applySession(data);
+      if (!response.ok) {
+        const error: any = new Error(data.error || 'Sign-in failed');
+        error.code = data.code;
+        throw error;
+      }
+      if (data.mfaRequired && data.challengeToken) {
+        setMfaChallengeToken(data.challengeToken);
+        return;
+      }
+      applyUser(data);
     } catch (err: any) {
-      const message = err?.message || 'Sign-in failed';
-      setError(message);
+      setError(err?.message || 'Sign-in failed');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [applySession]);
+  }, [applyUser]);
+
+  const verifyMfa = useCallback(async (code: string) => {
+    if (!mfaChallengeToken) throw new Error('MFA challenge is missing');
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/auth/mfa/verify', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeToken: mfaChallengeToken, code }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'MFA verification failed');
+      applyUser(data);
+    } catch (err: any) {
+      setError(err?.message || 'MFA verification failed');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [mfaChallengeToken, applyUser]);
 
   const signUpWithEmail = useCallback(async (params: SignUpParams) => {
     setLoading(true);
@@ -153,51 +190,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: params.email,
-          password: params.password,
-          name: params.name,
-          organizationName: params.organizationName,
-          inviteToken: params.inviteToken,
-        }),
+        body: JSON.stringify(params),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(
-        data.detail ? `${data.error || 'Sign-up failed'}: ${data.detail}` : (data.error || 'Sign-up failed')
-      );
-      if (!data?.token || !data?.user?.id) throw new Error('Account was created but no login session was returned. Please sign in again.');
-      applySession(data);
+      if (!response.ok) throw new Error(data.error || 'Sign-up failed');
+      setVerificationRequired(Boolean(data.verificationRequired));
     } catch (err: any) {
-      const message = err?.message || 'Sign-up failed';
-      setError(message);
+      setError(err?.message || 'Sign-up failed');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [signInWithEmail]);
+  }, []);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    const response = await fetch('/api/auth/password-reset/request', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!response.ok) throw new Error('Unable to process password recovery request');
+  }, []);
 
   const signOut = useCallback(async () => {
     try {
-      if (accessToken) {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-      }
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     } finally {
-      sessionStorage.removeItem(SESSION_KEY);
-      setAccessToken(null);
       setUser(null);
       setUserProfile(null);
       setActiveTenant(null);
       setAvailableTenants([]);
+      setMfaChallengeToken(null);
+      setVerificationRequired(false);
     }
-  }, [accessToken]);
+  }, []);
 
   const switchOrganization = useCallback(async (orgId: string, orgName: string) => {
     if (!userProfile || orgId !== userProfile.organization_id) {
-      throw new Error('Organization switching is limited to authenticated PostgreSQL memberships');
+      throw new Error('Organization switching is limited to authenticated memberships');
     }
     setActiveTenant({ id: orgId, name: orgName, slug: orgId.replace(/^org_/, '') });
   }, [userProfile]);
@@ -208,41 +241,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
+
   const getAuthHeaders = useCallback(() => {
-    if (!accessToken || !userProfile) return {};
+    if (!userProfile) return {};
     return {
-      Authorization: `Bearer ${accessToken}`,
       'x-organization-id': userProfile.organization_id,
       'x-user-id': userProfile.uid,
       'x-user-email': userProfile.email,
     };
-  }, [accessToken, userProfile]);
-  const getAccessToken = useCallback(async () => accessToken, [accessToken]);
+  }, [userProfile]);
+
+  const getAccessToken = useCallback(async () => null, []);
 
   const signInWithGoogle = useCallback(async () => {
-    throw new Error('Google sign-in is not available. Use PostgreSQL email/password authentication.');
+    throw new Error('Google sign-in is not available. Use verified PostgreSQL email/password authentication.');
   }, []);
 
-  const value: AuthContextType = {
-    user,
-    userProfile,
-    activeTenant,
-    availableTenants,
-    loading,
-    error,
-    isGuest: false,
-    signInWithGoogle,
-    signInWithEmail,
-    signUpWithEmail,
-    signOut,
-    switchOrganization,
-    updateUserProfileData,
-    clearError,
-    getAuthHeaders,
-    getAccessToken,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{
+      user,userProfile,activeTenant,availableTenants,loading,error,isGuest:false,mfaChallengeToken,verificationRequired,
+      signInWithGoogle,signInWithEmail,verifyMfa,signUpWithEmail,requestPasswordReset,signOut,switchOrganization,
+      updateUserProfileData,clearError,getAuthHeaders,getAccessToken
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export const useAuth = (): AuthContextType => {
