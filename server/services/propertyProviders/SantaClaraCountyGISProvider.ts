@@ -88,6 +88,7 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
       outFields: '*',
       returnGeometry: 'true',
       resultRecordCount: limit.toString(),
+      outSR: '4326',
       f: 'json',
     });
 
@@ -254,6 +255,7 @@ export class SantaClaraCountyGISProvider implements IPropertyDataProvider {
       outFields: '*',
       returnGeometry: 'true',
       resultRecordCount: limit.toString(),
+      outSR: '4326',
       f: 'json',
     });
 

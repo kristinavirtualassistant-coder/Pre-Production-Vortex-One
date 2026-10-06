@@ -76,3 +76,92 @@ export async function removeStoredObject(path:string){
   await storageRequest(`/object/${getFileStorageBucket()}`,{method:'DELETE',body:JSON.stringify({prefixes:[path]})});
 }
 export function createFileId(){return `file_${randomUUID()}`;}
+
+
+export async function archiveRingCentralRecording(input:{organizationId:string;callId:string;recordingUrl:string;contactName?:string}){
+  const organizationId=String(input.organizationId||'').trim();
+  const callId=String(input.callId||'').trim();
+  const recordingUrl=String(input.recordingUrl||'').trim();
+  if(!organizationId||!callId||!recordingUrl) throw new Error('Recording archive requires organizationId, callId, and recordingUrl');
+
+  const url=new URL(recordingUrl);
+  const allowedHosts=new Set(['media.ringcentral.com','platform.ringcentral.com']);
+  if(url.protocol!=='https:'||!allowedHosts.has(url.hostname)||url.username||url.password) {
+    throw new Error('Recording URL host is not an approved RingCentral media endpoint');
+  }
+
+  const {getPgPool}=await import('../db/db');
+  const pool=getPgPool();
+  if(!pool) throw new Error('PostgreSQL is required to archive call recordings');
+
+  const existing=await pool.query(
+    `SELECT id,storage_path FROM file_assets
+     WHERE organization_id=$1 AND entity_type='call' AND entity_id=$2
+       AND category='call_recording' AND status='ready'
+       AND metadata->>'source_url'=$3
+     LIMIT 1`,
+    [organizationId,callId,recordingUrl],
+  );
+  if(existing.rowCount) return existing.rows[0];
+
+  const {SDK}=await import('@ringcentral/sdk');
+  const clientId=process.env.RINGCENTRAL_CLIENT_ID?.trim();
+  const clientSecret=process.env.RINGCENTRAL_CLIENT_SECRET?.trim()||'';
+  const jwt=process.env.RINGCENTRAL_JWT?.trim();
+  if(!clientId||!jwt) throw new Error('RingCentral credentials are required to archive recordings');
+
+  const sdk=new SDK({
+    server:process.env.RINGCENTRAL_SERVER_URL?.trim()||process.env.RINGCENTRAL_SERVER?.trim()||'https://platform.ringcentral.com',
+    clientId,
+    clientSecret,
+  });
+  const platform=sdk.platform();
+  await platform.login({jwt});
+  const tokenData=await platform.auth().data();
+  const accessToken=String(tokenData?.access_token||'');
+  if(!accessToken) throw new Error('RingCentral authentication did not return an access token');
+
+  const sourceResponse=await fetch(recordingUrl,{headers:{Authorization:`Bearer ${accessToken}`,Accept:'audio/*'}})
+  if(!sourceResponse.ok||!sourceResponse.body) throw new Error(`RingCentral recording download failed (${sourceResponse.status})`);
+
+  const contentType=(sourceResponse.headers.get('content-type')||'audio/mpeg').split(';')[0].trim();
+  const contentLength=sourceResponse.headers.get('content-length');
+  const sizeBytes=contentLength?Number(contentLength):0;
+  if(sizeBytes>0) validateFileRequest({originalName:'call-recording.mp3',mimeType:contentType,sizeBytes,category:'call_recording'});
+
+  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
+  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
+  const fileId=`file_callrec_${safeRecordingId}`;
+  const extension=contentType.includes('wav')?'wav':contentType.includes('mp4')?'mp4':contentType.includes('ogg')?'ogg':'mp3';
+  const storagePath=buildStoragePath(organizationId,'call',callId,fileId,`call-recording.${extension}`);
+  const {url:storageBase,key}=config();
+  const uploadHeaders=new Headers({
+    Authorization:`Bearer ${key}`,
+    apikey:key,
+    'Content-Type':contentType,
+    'x-upsert':'false',
+  });
+  if(contentLength) uploadHeaders.set('Content-Length',contentLength);
+  const uploadResponse=await fetch(`${storageBase}/object/${getFileStorageBucket()}/${storagePath}`,{
+    method:'POST',
+    headers:uploadHeaders,
+    body:sourceResponse.body as any,
+    duplex:'half' as any,
+  });
+  if(!uploadResponse.ok){
+    const body=await uploadResponse.text().catch(()=> '');
+    throw new Error(`Private storage upload failed (${uploadResponse.status}): ${body.slice(0,300)}`);
+  }
+
+  const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId,archived_at:new Date().toISOString()};
+  const result=await pool.query(
+    `INSERT INTO file_assets
+      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
+     VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,$7,$8,$9::jsonb,'ready')
+     ON CONFLICT (organization_id,storage_bucket,storage_path) DO UPDATE
+       SET status='ready',mime_type=EXCLUDED.mime_type,size_bytes=EXCLUDED.size_bytes,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP,deleted_at=NULL
+     RETURNING id,storage_path,status`,
+    [fileId,organizationId,callId,`call-recording-${safeRecordingId}.${extension}`,getFileStorageBucket(),storagePath,contentType,sizeBytes||0,JSON.stringify(metadata)],
+  );
+  return result.rows[0];
+}

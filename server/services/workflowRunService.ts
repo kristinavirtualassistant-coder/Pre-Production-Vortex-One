@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import type { WorkflowRun } from '../../src/types';
 import { requireOrganizationId } from './organizationContext';
+import { recordCostEvent } from './analyticsService';
 
 function mapRun(row: any): WorkflowRun {
   return {
@@ -43,7 +44,20 @@ export async function createWorkflowRun(pool: Pool, organizationId: string, run:
       run.execution_time_ms || null, run.created_at, run.completed_at || null,
     ],
   );
-  return mapRun(rows[0]);
+  const mapped = mapRun(rows[0]);
+  await recordCostEvent(pool, {
+    organizationId: orgId,
+    id: `cost_workflow_${run.run_id}`,
+    userId: run.initiated_by,
+    category: 'workflow_execution',
+    provider: 'vortex_one',
+    quantity: 1,
+    totalCostUsd: 0,
+    referenceType: 'workflow_run',
+    referenceId: run.run_id,
+    metadata: { workflowId: run.workflow_id, status: run.status },
+  });
+  return mapped;
 }
 
 export async function updateWorkflowRun(pool: Pool, organizationId: string, run: WorkflowRun): Promise<WorkflowRun | null> {

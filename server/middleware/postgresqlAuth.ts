@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
-import { getSessionToken, hashOneTimeToken } from '../services/accountSecurity';
+import { getSessionToken } from '../services/accountSecurity';
+import { hashSessionToken } from '../services/postgresqlAuth';
 
 export interface PostgreSQLAuthRequest extends Request {
   dbUser?: { id: string; organization_id: string; email: string; name: string; role: string };
@@ -13,7 +14,7 @@ export async function requirePostgreSQLAuth(req: PostgreSQLAuthRequest, res: Res
   if (!pool) return res.status(503).json({ error: 'Database unavailable' });
 
   try {
-    const tokenHash = hashOneTimeToken(token);
+    const tokenHash = hashSessionToken(token);
     const result = await pool.query(
       `SELECT u.id, u.organization_id, u.email, u.name, u.role
        FROM auth_sessions s

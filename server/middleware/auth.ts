@@ -31,8 +31,11 @@ export class AuthorizationError extends Error {
   }
 }
 
+/**
+ * Identify API-relative health, callback, webhook, and tracking paths that bypass session auth.
+ */
 export function shouldBypassApiAuth(path: string): boolean {
-  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/');
+  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/') || path.startsWith('/communications/webhooks/') || path.startsWith('/communications/tracking/');
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {
@@ -322,7 +325,7 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
 async function listSessions(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
   const token=getSessionToken(req);
-  const currentHash=token?hashOneTimeToken(token):'';
+  const currentHash=token?hashSessionToken(token):'';
   const result=await pool.query(`SELECT id,user_agent,ip_address,created_at,last_seen_at,expires_at,mfa_verified_at,
     (token_hash=$2) AS current FROM auth_sessions
     WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>CURRENT_TIMESTAMP ORDER BY last_seen_at DESC`,
@@ -332,7 +335,7 @@ async function listSessions(req: AuthRequest, res: Response, pool: NonNullable<R
 
 async function revokeOtherSessions(req: AuthRequest,res: Response,pool: NonNullable<ReturnType<typeof getPgPool>>){
   if(!req.dbUser)return res.status(401).json({error:'Unauthorized'});
-  const token=getSessionToken(req); const currentHash=token?hashOneTimeToken(token):'';
+  const token=getSessionToken(req); const currentHash=token?hashSessionToken(token):'';
   await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND token_hash<>$2 AND revoked_at IS NULL',[req.dbUser.id,currentHash]);
   return res.json({revoked:true});
 }
@@ -376,7 +379,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
     const token=getSessionToken(req);
     if(!token)return res.status(401).json({error:'Unauthorized: Missing session'});
-    const tokenHash=hashOneTimeToken(token);
+    const tokenHash=hashSessionToken(token);
     const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
       FROM auth_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
@@ -412,6 +415,18 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     }
     if(req.path==='/organization/settings'&&(req.method==='GET'||req.method==='PATCH'))return organizationSettings(req,res,pool);
     if(req.path==='/organization/billing'&&req.method==='GET')return billingAndUsage(req,res,pool);
+    if(req.path==='/organization/billing/checkout'&&req.method==='POST'){
+      if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+      const plan=String(req.body?.plan||'') as 'starter'|'professional'|'enterprise';
+      if(!['starter','professional','enterprise'].includes(plan))return res.status(400).json({error:'Invalid billing plan'});
+      try{return res.json(await createCheckoutSession(pool,dbUser.organization_id,plan,dbUser.email));}
+      catch(error:any){return res.status(502).json({error:error.message||'Unable to create checkout session'});}
+    }
+    if(req.path==='/organization/billing/portal'&&req.method==='POST'){
+      if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+      try{return res.json(await createPortalSession(pool,dbUser.organization_id));}
+      catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
+    }
 
     canonicalizeOrganizationContext(req);
     return next();

@@ -806,7 +806,10 @@ export const MIGRATIONS: Migration[] = [
         ON appointments(organization_id, status);
     `,
   },
-  { version: 21, name: '021_create_file_assets', sql: \`
+  {
+    version: 21,
+    name: '021_create_file_assets',
+    sql: `
       CREATE TABLE IF NOT EXISTS file_assets (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -826,55 +829,185 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_file_assets_org_entity ON file_assets(organization_id, entity_type, entity_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_file_assets_org_category ON file_assets(organization_id, category, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_file_assets_search ON file_assets USING GIN (to_tsvector('simple', coalesce(original_name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(extracted_text,'')));
-\` },
-,
+    `,
+  },
   {
     version: 22,
-    name: '022_enforce_tenant_security_boundaries',
+    name: '022_create_workflow_communication_suppression',
     sql: `
-      CREATE TABLE IF NOT EXISTS public_ca_parcels (
-        id VARCHAR(128) PRIMARY KEY,
-        county_fips VARCHAR(5) NOT NULL,
-        county_name VARCHAR(120) NOT NULL,
-        apn VARCHAR(128) NOT NULL,
-        address VARCHAR(500),
-        city VARCHAR(160),
-        state VARCHAR(2) NOT NULL DEFAULT 'CA',
-        zip VARCHAR(20),
-        property_type VARCHAR(120),
-        units_count INTEGER,
-        square_feet INTEGER,
-        year_built INTEGER,
-        assessed_value NUMERIC(18,2),
-        parcel_geometry JSONB,
-        source_record_id VARCHAR(255),
-        source_url TEXT,
-        provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
-        source_updated_at TIMESTAMP WITH TIME ZONE,
+      CREATE TABLE IF NOT EXISTS communication_suppression (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','phone')),
+        destination VARCHAR(320) NOT NULL,
+        reason TEXT,
+        source VARCHAR(100),
+        expires_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, channel, destination)
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_suppression_lookup ON communication_suppression(organization_id, channel, destination);
+    `,
+  },
+  {
+    version: 23,
+    name: '023_create_workflow_communication_deliveries',
+    sql: `
+      CREATE TABLE IF NOT EXISTS workflow_communication_deliveries (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+        workflow_step_id VARCHAR(128),
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','phone')),
+        destination VARCHAR(320) NOT NULL,
+        idempotency_key VARCHAR(255) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','manual_review')),
+        provider_reference VARCHAR(255),
+        error TEXT,
+        request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        CONSTRAINT uq_public_ca_parcels_county_apn UNIQUE (county_fips, apn)
+        UNIQUE (organization_id, idempotency_key)
       );
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_apn ON public_ca_parcels(county_fips, apn);
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_address ON public_ca_parcels(state, county_name, city, address);
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_delivery_status ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
+  },
+  {
+    version: 24,
+    name: '024_create_stripe_webhook_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+        id VARCHAR(255) PRIMARY KEY,
+        event_type VARCHAR(120) NOT NULL,
+        payload JSONB NOT NULL,
+        received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_type_time
+        ON stripe_webhook_events(event_type, received_at DESC);
+    `,
+  },
 
-      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
-      RETURNS trigger
-      LANGUAGE plpgsql
-      AS $$
-      BEGIN
-        RAISE EXCEPTION 'audit_logs is append-only; UPDATE/DELETE is prohibited';
-      END;
-      $$;
-      DROP TRIGGER IF EXISTS audit_logs_immutable ON audit_logs;
-      CREATE TRIGGER audit_logs_immutable
-        BEFORE UPDATE OR DELETE ON audit_logs
-        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
-
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_call_id_global
-        ON call(telephony_call_id) WHERE telephony_call_id IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_session_id_global
-        ON call(telephony_session_id) WHERE telephony_session_id IS NOT NULL;
-    `
-  }
-];\n
+  {
+    version: 25,
+    name: '025_create_owner_enrichment',
+    sql: `
+      CREATE TABLE IF NOT EXISTS owner_enrichment_providers (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        provider_key VARCHAR(100) NOT NULL,
+        display_name VARCHAR(255) NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        priority INTEGER NOT NULL DEFAULT 100,
+        capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, provider_key)
+      );
+      CREATE TABLE IF NOT EXISTS owner_enrichment_jobs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        provider_key VARCHAR(100),
+        job_type VARCHAR(50) NOT NULL DEFAULT 'FULL_ENRICHMENT',
+        status VARCHAR(30) NOT NULL DEFAULT 'queued',
+        requested_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        records_found INTEGER NOT NULL DEFAULT 0,
+        records_added INTEGER NOT NULL DEFAULT 0,
+        records_updated INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        started_at TIMESTAMP WITH TIME ZONE,
+        completed_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_jobs_org_owner ON owner_enrichment_jobs(organization_id, owner_id, created_at DESC);
+      CREATE TABLE IF NOT EXISTS owner_source_records (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        enrichment_job_id VARCHAR(64) REFERENCES owner_enrichment_jobs(id) ON DELETE SET NULL,
+        source_type VARCHAR(100) NOT NULL,
+        provider_key VARCHAR(100),
+        external_record_id VARCHAR(255),
+        source_url TEXT,
+        raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        raw_hash VARCHAR(64) NOT NULL,
+        retrieved_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_source_records_org_owner ON owner_source_records(organization_id, owner_id, retrieved_at DESC);
+      CREATE TABLE IF NOT EXISTS owner_contact_points (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        type VARCHAR(20) NOT NULL,
+        value TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        contact_subtype VARCHAR(30),
+        is_primary BOOLEAN NOT NULL DEFAULT false,
+        is_verified BOOLEAN NOT NULL DEFAULT false,
+        confidence_score NUMERIC(5,4),
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, owner_id, type, normalized_value)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_contact_points_org_owner ON owner_contact_points(organization_id, owner_id, type);
+      CREATE TABLE IF NOT EXISTS owner_ownerships (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+        ownership_type VARCHAR(50) NOT NULL DEFAULT 'record_owner',
+        ownership_percentage NUMERIC(7,4),
+        start_date DATE,
+        end_date DATE,
+        recorded_date DATE,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 1,
+        UNIQUE(organization_id, owner_id, property_id, ownership_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_ownerships_org_owner ON owner_ownerships(organization_id, owner_id);
+      CREATE TABLE IF NOT EXISTS owner_relationships (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        related_entity_type VARCHAR(50) NOT NULL,
+        related_entity_id VARCHAR(64),
+        related_name VARCHAR(255) NOT NULL,
+        relationship_type VARCHAR(50) NOT NULL,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, owner_id, related_entity_type, related_name, relationship_type)
+      );
+      CREATE TABLE IF NOT EXISTS owner_lead_signals (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE CASCADE,
+        signal_type VARCHAR(80) NOT NULL,
+        signal_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        score NUMERIC(6,2) NOT NULL DEFAULT 0,
+        confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        observed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE,
+        UNIQUE(organization_id, owner_id, property_id, signal_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_owner_lead_signals_org_owner ON owner_lead_signals(organization_id, owner_id, score DESC);
+      CREATE TABLE IF NOT EXISTS owner_identity_matches (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        candidate_name VARCHAR(255) NOT NULL,
+        match_score NUMERIC(5,4) NOT NULL,
+        match_status VARCHAR(30) NOT NULL DEFAULT 'candidate',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `,
+  },
+];

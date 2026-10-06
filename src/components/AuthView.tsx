@@ -153,10 +153,10 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
                 <Mail className="h-4 w-4 text-slate-500" />
                 <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-transparent px-3 py-3 outline-none" autoComplete="email" required />
               </div>
-            </label>
+            </label>}
 
             {(mode === 'signin' || mode === 'signup') && (
-            <label className="block text-sm text-slate-300">
+              <label className="block text-sm text-slate-300">
               Password
               <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                 <KeyRound className="h-4 w-4 text-slate-500" />
