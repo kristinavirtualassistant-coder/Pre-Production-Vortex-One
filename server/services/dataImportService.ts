@@ -340,8 +340,14 @@ export class DataImportService {
       last_sale_price: normalizedRaw.last_sale_price || normalizedRaw.sale_price ? parseNum(normalizedRaw.last_sale_price || normalizedRaw.sale_price, 0) : undefined,
       source_provenance: normalizedRaw.source_provenance || 'Vortex One Validated Ingestion Pipeline',
       source_record_id: normalizedRaw.source_record_id || normalizedRaw.id || normalizedRaw.lead_id,
-      latitude: typeof normalizedRaw.latitude === 'number' ? normalizedRaw.latitude : parseFloat(String(normalizedRaw.latitude || '')) || undefined,
-      longitude: typeof normalizedRaw.longitude === 'number' ? normalizedRaw.longitude : parseFloat(String(normalizedRaw.longitude || '')) || undefined,
+      latitude: (() => {
+        const value = typeof normalizedRaw.latitude === 'number' ? normalizedRaw.latitude : Number.parseFloat(String(normalizedRaw.latitude ?? ''));
+        return Number.isFinite(value) && value >= -90 && value <= 90 ? value : undefined;
+      })(),
+      longitude: (() => {
+        const value = typeof normalizedRaw.longitude === 'number' ? normalizedRaw.longitude : Number.parseFloat(String(normalizedRaw.longitude ?? ''));
+        return Number.isFinite(value) && value >= -180 && value <= 180 ? value : undefined;
+      })(),
       owner: {
         name: ownerName,
         entity_type,
