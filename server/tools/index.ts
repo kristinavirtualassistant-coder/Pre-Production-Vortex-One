@@ -9,12 +9,13 @@ import { SuppressionService } from '../dialer/suppressionService';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { DataImportService } from '../services/dataImportService';
 import { SkipTraceService } from '../services/skipTraceService';
+import { getAgent } from '../agents/registry';
 
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, any>;
-  execute: (args: any, context: { organizationId: string; agentId: string }) => Promise<any>;
+  execute: (args: any, context: { organizationId: string; agentId: string; approvalId?: string }) => Promise<any>;
 }
 
 export const TOOLS: Record<string, ToolDefinition> = {
@@ -298,8 +299,26 @@ export async function executeTool(
   context: { organizationId: string; agentId: string }
 ): Promise<any> {
   const tool = TOOLS[toolName];
-  if (!tool) {
-    throw new Error(`Tool ${toolName} is not registered in the system.`);
+  if (!tool) throw new Error(`Tool ${toolName} is not registered in the system.`);
+
+  const agent = getAgent(context.agentId);
+  if (!agent || !agent.enabled) throw new Error('Agent is disabled or not registered.');
+  if (!agent.allowedTools.includes(toolName)) {
+    throw new Error(`Agent ${context.agentId} is not authorized to execute tool ${toolName}.`);
+  }
+
+  if (toolName === 'make_call') {
+    if (!context.approvalId) throw new Error('Human approval is required before an outbound call can execute.');
+    const pool = getPgPool();
+    if (!pool) throw new Error('PostgreSQL is required for outbound-call approval verification');
+    const approval = await pool.query(
+      `SELECT id FROM approvals
+       WHERE id = $1 AND organization_id = $2 AND status = 'approved'
+         AND action_type IN ('make_call', 'outbound_call', 'outbound_campaign_dispatch')
+       LIMIT 1`,
+      [context.approvalId, requireOrganizationId(context.organizationId)],
+    );
+    if (!approval.rowCount) throw new Error('The supplied human approval is missing, not approved, or belongs to another organization.');
   }
   return await tool.execute(args, context);
 }
