@@ -1001,3 +1001,9 @@ async function runAllTests() {
   });
 
   assert(laSearchResult.success === true, 'LA County Assessor search returned success');
+}
+
+runAllTests().catch((error) => {
+  console.error('Test suite failed:', error);
+  process.exitCode = 1;
+});
