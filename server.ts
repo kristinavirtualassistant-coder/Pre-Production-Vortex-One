@@ -17,7 +17,7 @@ import { executeSubAgent } from './server/agents/subAgents';
 import { generateSpeechTTS } from './server/gemini';
 import { AgentDefinition, Workflow, WorkflowStep, WorkflowRun, Task, Property, CallRecord } from './src/types';
 import { CampaignManager } from './server/dialer/campaignManager';
-import { SuppressionService } from './server/dialer/suppressionService';
+import { SuppressionService, normalizePhoneNumber } from './server/dialer/suppressionService';
 import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
 import { ManualDialService, ManualDialNotFoundError, ManualDialSuppressedError } from './server/dialer/manualDialService';
@@ -1524,12 +1524,30 @@ async function startServer() {
       }
 
       const maxResults = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
-      const coordinateCount = Array.isArray(polygon.coordinates?.[0]) ? polygon.coordinates[0].length : 0;
-      if (coordinateCount < 4 || coordinateCount > 1000) {
-        return res.status(400).json({ error: 'Polygon must contain between 3 and 999 vertices.' });
+      const rings = polygon.coordinates as unknown[];
+      const allPoints = rings.flatMap((ring: any) => Array.isArray(ring) ? ring : []);
+      const coordinateCount = allPoints.length;
+      if (rings.length === 0 || coordinateCount < 4 || coordinateCount > 1000) {
+        return res.status(400).json({ error: 'Polygon must contain between 3 and 999 total vertices.' });
+      }
+      for (const ring of rings) {
+        if (!Array.isArray(ring) || ring.length < 4 || ring.length > 1000) {
+          return res.status(400).json({ error: 'Each polygon ring must contain between 3 and 999 vertices.' });
+        }
+        for (const point of ring) {
+          if (!Array.isArray(point) || point.length < 2 || !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) ||
+              Number(point[0]) < -180 || Number(point[0]) > 180 || Number(point[1]) < -90 || Number(point[1]) > 90) {
+            return res.status(400).json({ error: 'Polygon coordinates must be valid longitude/latitude pairs.' });
+          }
+        }
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (Number(first[0]) !== Number(last[0]) || Number(first[1]) !== Number(last[1])) {
+          return res.status(400).json({ error: 'Each polygon ring must be closed.' });
+        }
       }
       const distinctPoints = new Set(
-        polygon.coordinates[0].map((point: any) => `${Number(point?.[0]).toFixed(7)},${Number(point?.[1]).toFixed(7)}`),
+        (rings[0] as any[]).map((point: any) => `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)}`),
       );
       if (distinctPoints.size < 3) {
         return res.status(400).json({ error: 'Polygon must contain at least three distinct points.' });
@@ -3088,10 +3106,21 @@ async function startServer() {
         timezone: req.body.timezone,
       });
 
-      // If contacts are provided in the creation payload, attach them
+      // Validate the complete contact set before creation can report success.
       let addedContacts = 0;
       if (req.body.contacts && Array.isArray(req.body.contacts) && req.body.contacts.length > 0) {
-        const contactResult = await CampaignManager.addContacts(orgId, camp.id, req.body.contacts);
+        const contacts = req.body.contacts;
+        const normalizedPhones = contacts.map((contact: any) => normalizePhoneNumber(contact?.phoneNumber || ''));
+        if (normalizedPhones.some((phone: string | null) => !phone)) {
+          return res.status(400).json({ error: 'Every campaign contact must include a valid phone number.' });
+        }
+        if (new Set(normalizedPhones).size !== normalizedPhones.length) {
+          return res.status(409).json({
+            error: 'Campaign contacts contain duplicate normalized phone numbers.',
+            code: 'CAMPAIGN_CONTACT_DUPLICATE_PHONE',
+          });
+        }
+        const contactResult = await CampaignManager.addContacts(orgId, camp.id, contacts);
         addedContacts = contactResult.added;
         if (addedContacts !== req.body.contacts.length) {
           return res.status(409).json({
