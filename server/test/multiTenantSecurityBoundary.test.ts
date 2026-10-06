@@ -38,6 +38,9 @@ mustContain(gemini, "{ skipCache: true }", 'Gemini TTS cache is disabled');
 mustContain(migrations, "prevent_audit_log_mutation", 'audit immutability trigger exists');
 mustContain(migrations, "BEFORE UPDATE OR DELETE ON audit_logs", 'audit immutability trigger blocks mutation');
 mustContain(migrations, "CREATE TABLE IF NOT EXISTS public_ca_parcels", 'global CA parcel table exists');
-mustNotContain(migrations.slice(migrations.indexOf("CREATE TABLE IF NOT EXISTS public_ca_parcels"), migrations.indexOf("CREATE TABLE IF NOT EXISTS public_ca_parcels") + 5000), "organization_id", 'global parcel table has no tenant organization_id');
+const parcelStart = migrations.indexOf("CREATE TABLE IF NOT EXISTS public_ca_parcels");
+const parcelEnd = migrations.indexOf("      );", parcelStart);
+const parcelDefinition = migrations.slice(parcelStart, parcelEnd);
+mustNotContain(parcelDefinition, "organization_id", 'global parcel table has no tenant organization_id');
 
 console.log('Multi-tenant security boundary tests passed.');
