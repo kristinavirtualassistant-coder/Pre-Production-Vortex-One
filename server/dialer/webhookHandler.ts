@@ -12,7 +12,7 @@ import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
-import { archiveRingCentralRecording } from '../services/fileStorageService';
+import { archiveRingCentralRecording, attachCallTranscript } from '../services/fileStorageService';
 
 
 export interface WebhookProcessResult {
@@ -147,6 +147,22 @@ export class WebhookHandler {
           payload: { ...normalized.rawPayload, normalizedStatus: normalized.status, telephonySessionId: normalized.telephonySessionId, partyId: normalized.ringcentralPartyId },
           occurredAt: normalized.timestamp,
         });
+
+        const transcriptCandidate =
+          normalized.rawPayload?.transcript ||
+          normalized.rawPayload?.transcription ||
+          normalized.rawPayload?.body?.transcript ||
+          normalized.rawPayload?.body?.transcription;
+        if (typeof transcriptCandidate === 'string' && transcriptCandidate.trim() && authoritativeCallId) {
+          attachCallTranscript({
+            organizationId,
+            callId: authoritativeCallId,
+            transcript: transcriptCandidate,
+            source: provider,
+          }).catch((transcriptError) => {
+            console.error('[Files] Call transcript attachment failed:', transcriptError);
+          });
+        }
 
         if (normalized.recordingUrl && authoritativeCallId) {
           archiveRingCentralRecording({
