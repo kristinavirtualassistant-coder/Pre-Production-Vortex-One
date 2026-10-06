@@ -4,6 +4,7 @@
  */
 
 import { MIGRATIONS } from '../db/migrations';
+import './multiTenantSecurityBoundary.test';
 import { getPgPool, inMemoryStore, seedInitialData, initializeDatabase } from '../db/db';
 import { CallStateMachine } from '../dialer/fsm';
 import { SuppressionService, normalizePhoneNumber, formatPhoneNumber } from '../dialer/suppressionService';
