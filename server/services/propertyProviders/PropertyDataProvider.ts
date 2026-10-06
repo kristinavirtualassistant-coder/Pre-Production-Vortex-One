@@ -559,6 +559,15 @@ export class UnifiedPropertyDataProvider {
               JSON.stringify([]),
             ]
           );
+
+          if (property.latitude != null && property.longitude != null) {
+            await pool.query(
+              `UPDATE properties
+               SET location = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+               WHERE id = $3 AND organization_id = $4`,
+              [property.longitude, property.latitude, property.id, orgId],
+            );
+          }
         } catch (dbErr: any) {
           if (process.env.NODE_ENV === 'production') throw dbErr;
           console.error('[PropertyDataProvider] PostgreSQL persistence error:', dbErr.message);
