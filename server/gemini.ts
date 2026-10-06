@@ -223,7 +223,8 @@ export async function generateSpeechTTS(
         console.warn('TTS Generation temporarily unavailable:', err.message || err);
         return null;
       }
-    }
+    },
+    { skipCache: true }
   );
 
   return result;
