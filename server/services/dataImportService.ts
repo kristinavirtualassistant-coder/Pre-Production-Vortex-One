@@ -56,6 +56,8 @@ export interface RawPropertyRecord {
   last_sale_price?: number;
   source_provenance?: string;
   source_record_id?: string;
+  latitude?: number;
+  longitude?: number;
   owner: RawOwnerInput;
 }
 
@@ -338,6 +340,8 @@ export class DataImportService {
       last_sale_price: normalizedRaw.last_sale_price || normalizedRaw.sale_price ? parseNum(normalizedRaw.last_sale_price || normalizedRaw.sale_price, 0) : undefined,
       source_provenance: normalizedRaw.source_provenance || 'Vortex One Validated Ingestion Pipeline',
       source_record_id: normalizedRaw.source_record_id || normalizedRaw.id || normalizedRaw.lead_id,
+      latitude: typeof normalizedRaw.latitude === 'number' ? normalizedRaw.latitude : parseFloat(String(normalizedRaw.latitude || '')) || undefined,
+      longitude: typeof normalizedRaw.longitude === 'number' ? normalizedRaw.longitude : parseFloat(String(normalizedRaw.longitude || '')) || undefined,
       owner: {
         name: ownerName,
         entity_type,
@@ -627,9 +631,9 @@ export class DataImportService {
                 property_type, units_count, square_feet, year_built, estimated_value,
                 assessed_tax_value, estimated_equity, mortgage_balance, is_absentee_owner,
                 is_corporate_owned, tax_delinquent, last_sale_date, last_sale_price,
-                provenance, created_at
+                provenance, latitude, longitude, created_at
               ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, CURRENT_TIMESTAMP
               ) ON CONFLICT (organization_id, apn) DO UPDATE SET
                 owner_id = EXCLUDED.owner_id,
                 address = EXCLUDED.address,
@@ -650,7 +654,14 @@ export class DataImportService {
                 tax_delinquent = EXCLUDED.tax_delinquent,
                 last_sale_date = EXCLUDED.last_sale_date,
                 last_sale_price = EXCLUDED.last_sale_price,
-                provenance = EXCLUDED.provenance`,
+                provenance = EXCLUDED.provenance,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude,
+                location = CASE
+                  WHEN EXCLUDED.latitude IS NOT NULL AND EXCLUDED.longitude IS NOT NULL
+                  THEN ST_SetSRID(ST_MakePoint(EXCLUDED.longitude, EXCLUDED.latitude), 4326)::geography
+                  ELSE properties.location
+                END`,
               [
                 targetProperty.id,
                 targetProperty.organization_id,
@@ -675,6 +686,8 @@ export class DataImportService {
                 targetProperty.last_sale_date ? new Date(targetProperty.last_sale_date) : null,
                 targetProperty.last_sale_price || null,
                 JSON.stringify(targetProperty.provenance),
+                targetProperty.latitude ?? null,
+                targetProperty.longitude ?? null,
               ]
             );
           } catch (pgPropErr: any) {
