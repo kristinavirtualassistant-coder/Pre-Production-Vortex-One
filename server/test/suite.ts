@@ -96,6 +96,7 @@ async function runAllTests() {
   assert(MIGRATIONS.some((migration) => migration.version === 17 && migration.name === '017_enforce_global_user_email_identity'), 'Global email identity migration 17 present', 'Expected global email identity migration 17 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 19 && migration.name === '019_production_auth_account_management'), 'Production auth migration 19 present', 'Expected production auth migration 19 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 20 && migration.name === '020_create_reporting_analytics_layer'), 'Reporting analytics migration 20 present', 'Expected reporting analytics migration 20 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 21 && migration.name === '021_create_file_assets'), 'File assets migration 21 present', 'Expected file assets migration 21 to be present');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
