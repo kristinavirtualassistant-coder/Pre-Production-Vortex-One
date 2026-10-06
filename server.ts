@@ -3089,11 +3089,22 @@ async function startServer() {
       });
 
       // If contacts are provided in the creation payload, attach them
+      let addedContacts = 0;
       if (req.body.contacts && Array.isArray(req.body.contacts) && req.body.contacts.length > 0) {
-        await CampaignManager.addContacts(orgId, camp.id, req.body.contacts);
+        const contactResult = await CampaignManager.addContacts(orgId, camp.id, req.body.contacts);
+        addedContacts = contactResult.added;
+        if (addedContacts !== req.body.contacts.length) {
+          return res.status(409).json({
+            error: 'Campaign created but not all requested contacts were attached.',
+            code: 'CAMPAIGN_CONTACT_ATTACHMENT_INCOMPLETE',
+            campaign: camp,
+            requestedContacts: req.body.contacts.length,
+            addedContacts,
+          });
+        }
       }
 
-      res.status(201).json(camp);
+      res.status(201).json({ ...camp, addedContacts });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
