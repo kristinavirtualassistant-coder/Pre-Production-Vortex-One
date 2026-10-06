@@ -3229,10 +3229,11 @@ async function startServer() {
 
       // Tenant identity comes from the durable call record, never from the webhook body.
       const tenantLookup = await pool.query(
-        "SELECT organization_id FROM call WHERE telephony_session_id = $1 OR telephony_call_id = $1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT DISTINCT organization_id FROM call WHERE telephony_session_id = $1 OR telephony_call_id = $1 LIMIT 2",
         [telephonyCallId],
       );
       if (!tenantLookup.rowCount) return res.status(404).json({ error: 'Call identity is not registered' });
+      if (tenantLookup.rowCount > 1) return res.status(409).json({ error: 'Provider call identity is ambiguous across organizations' });
 
       const orgId = requireOrganizationId(tenantLookup.rows[0].organization_id);
       const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
