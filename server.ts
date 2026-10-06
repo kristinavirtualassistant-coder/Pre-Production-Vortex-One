@@ -1565,8 +1565,12 @@ async function startServer() {
       }
 
       params.push(maxResults);
-      await pool.query('SET LOCAL statement_timeout = 5000');
-      const result = await pool.query(
+      const client = await pool.connect();
+      let result;
+      try {
+        await client.query('BEGIN');
+        await client.query('SET LOCAL statement_timeout = 5000');
+        result = await client.query(
         `SELECT
            p.id, p.organization_id, p.address, p.city, p.state, p.zip, p.county, p.apn,
            p.property_type, p.units_count, p.square_feet, p.year_built,
@@ -1594,7 +1598,14 @@ async function startServer() {
          ORDER BY p.estimated_equity DESC NULLS LAST
          LIMIT $${params.length}`,
         params,
-      );
+        );
+        await client.query('COMMIT');
+      } catch (queryError) {
+        await client.query('ROLLBACK');
+        throw queryError;
+      } finally {
+        client.release();
+      }
 
       return res.json({
         success: true,
