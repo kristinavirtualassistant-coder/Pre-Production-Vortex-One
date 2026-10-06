@@ -204,10 +204,10 @@ export async function generateAgentText(
         text: `[Vortex One Intelligence Synthesis]\nRequest analyzed: ${prompt.slice(0, 140)}...\nProcessed against property records, CRM data structures, and operational rules engine.`,
       };
     },
-    { skipCache: options.skipCache, forceRefresh: options.forceRefresh }
+    { skipCache: true, forceRefresh: options.forceRefresh }
   );
 
-  return { ...result, cached: isCached };
+  return { ...result, cached: false };
 }
 
 /**
