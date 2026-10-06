@@ -65,8 +65,8 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
         if (!normalizedEmail || !password) throw new Error('Email and password are required.');
         if (password.length < 12) throw new Error('Password must be at least 12 characters.');
         if (mode === 'signin') {
-          await signInWithEmail(normalizedEmail, password);
-          if (!mfaChallengeToken) { addToast('Signed in successfully.', 'success'); onSuccess?.(); }
+          const result = await signInWithEmail(normalizedEmail, password);
+          if (!result.mfaRequired) { addToast('Signed in successfully.', 'success'); onSuccess?.(); }
         } else {
           if (!name.trim() || (!organizationName.trim() && !inviteToken)) throw new Error('Name and organization are required.');
           await signUpWithEmail({ email:normalizedEmail, password, name:name.trim(), organizationName:organizationName.trim(), inviteToken:inviteToken || undefined });
@@ -147,7 +147,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
               </>
             )}
 
-            <label className="block text-sm text-slate-300">
+            {(mode === 'signin' || mode === 'signup' || mode === 'forgot') && <label className="block text-sm text-slate-300">
               Email
               <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                 <Mail className="h-4 w-4 text-slate-500" />
