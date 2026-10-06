@@ -23,6 +23,7 @@ import { AgentBuilderView } from './components/AgentBuilderView';
 import { DatabaseView } from './components/DatabaseView';
 import { GoogleDriveView } from './components/GoogleDriveView';
 import { PropertySearchView } from './components/PropertySearchView';
+import { NativeMapView } from './components/NativeMapView';
 import { OwnersView } from './components/OwnersView';
 import { PortfoliosView } from './components/PortfoliosView';
 import { OpportunitiesView } from './components/OpportunitiesView';
@@ -61,6 +62,7 @@ const VALID_VIEWS = [
   'home',
   'dashboard',
   'property_search',
+  'map',
   'properties',
   'owners',
   'portfolios',
@@ -672,6 +674,13 @@ export default function App() {
 
           {currentView === 'tasks' && (
             <TasksView tasks={tasks} onAddTask={handleAddTask} />
+          )}
+
+          {currentView === 'map' && (
+            <NativeMapView
+              onNavigate={handleNavigate}
+              onOpenInspector={handleOpenInspector}
+            />
           )}
 
           {currentView === 'property_search' && (
