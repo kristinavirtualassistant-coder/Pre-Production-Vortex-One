@@ -1528,7 +1528,7 @@ async function startServer() {
       const filters: string[] = [
         'p.organization_id = $1',
         'p.location IS NOT NULL',
-        'ST_Intersects(p.location::geometry, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326))',
+        'ST_Intersects(p.location, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)::geography)',
       ];
 
       const minEquity = Number(req.body?.minEquity);
