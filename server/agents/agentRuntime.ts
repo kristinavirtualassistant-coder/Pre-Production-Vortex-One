@@ -99,6 +99,19 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
   if (!agent.allowedTools.includes(toolName) && !agent.permissions.includes('all_tools')) {
     throw new Error(`Agent ${agent.id} is not permitted to use ${toolName}`);
   }
+  const requiredPermission: Record<string, string> = {
+    run_5_step_skip_trace: 'research_tools',
+    search_property: 'read_only',
+    search_owner: 'read_only',
+    score_lead: 'read_only',
+    create_crm_task: 'crm_read_write',
+    reconcile_crm_import: 'crm_read_write',
+    make_call: 'telephony_trigger',
+  };
+  const permission = requiredPermission[toolName];
+  if (permission && !agent.permissions.includes(permission) && !agent.permissions.includes('all_tools')) {
+    throw new Error(`Agent ${agent.id} lacks required permission ${permission} for ${toolName}`);
+  }
 }
 
 async function writeRunStep(pool: any, organizationId: string, runId: string, stepNo: number, status: string, input: any, output: any, error?: string, toolName?: string, latencyMs = 0) {
