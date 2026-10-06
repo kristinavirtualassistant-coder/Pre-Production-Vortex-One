@@ -83,7 +83,7 @@ async function accessToken(pool: Pool, row: any): Promise<string> {
   });
   const token = await response.json() as Record<string, any>;
   if (!response.ok || !token.access_token) {
-    await pool.query("UPDATE integration_connections SET status=''error'',updated_at=CURRENT_TIMESTAMP WHERE id=$1", [row.id]);
+    await pool.query("UPDATE integration_connections SET status='error',updated_at=CURRENT_TIMESTAMP WHERE id=$1", [row.id]);
     throw new Error(token.error_description || token.error || 'Provider token refresh failed');
   }
   const expiresAt = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : row.token_expires_at;
@@ -268,11 +268,11 @@ export async function sendEmailNow(pool: Pool, args: any) {
     const sent = args.provider === 'microsoft-365'
       ? await sendOutlook(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id})
       : await sendGmail(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id});
-    const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status=''sent'',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
+    const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status='sent',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
     await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2',[sent.externalThreadId,t.id]);
     return updated.rows[0];
   } catch (error: any) {
-    await pool.query("UPDATE communication_messages SET status=''failed'',error_message=$1 WHERE id=$2',[error.message || 'Email send failed"pending.id]);
+    await pool.query("UPDATE communication_messages SET status='failed',error_message=$1 WHERE id=$2',[error.message || 'Email send failed"pending.id]);
     throw error;
   }
 }
@@ -331,8 +331,8 @@ export async function handleTwilioInbound(pool: Pool, organizationId: string, re
   const t = await thread(pool,{organizationId,channel:'sms',provider:'twilio',contactKey:from,externalThreadId:body.MessageSid,subject:'SMS conversation',...links});
   const message = await record(pool,{organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'inbound',externalMessageId:body.MessageSid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:text,status:'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{twilio:body}});
   if (/^(stop|stopall|unsubscribe|cancel|end|quit|remove)$/i.test(text)) {
-    await pool.query("INSERT INTO communication_suppressions (id,organization_id,channel,contact_key,reason,source) VALUES ($1,$2,''sms'',$3,''STOP'',''twilio'') ON CONFLICT (organization_id,channel,contact_key) DO NOTHING", ['sup_' + randomUUID(),organizationId,from]);
-    await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''opted_out'',$4)", ['ce_' + randomUUID(),organizationId,message.id,JSON.stringify({source:'twilio'})]);
+    await pool.query("INSERT INTO communication_suppressions (id,organization_id,channel,contact_key,reason,source) VALUES ($1,$2,'sms',$3,'STOP','twilio') ON CONFLICT (organization_id,channel,contact_key) DO NOTHING", ['sup_' + randomUUID(),organizationId,from]);
+    await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,'opted_out',$4)", ['ce_' + randomUUID(),organizationId,message.id,JSON.stringify({source:'twilio'})]);
   }
 }
 
@@ -343,10 +343,10 @@ export async function handleTwilioStatus(pool: Pool, organizationId: string, req
   if (!sid) return;
   const status = String(body.MessageStatus || body.SmsStatus || '').toLowerCase();
   const mapped = status === 'delivered' ? 'delivered' : status === 'failed' || status === 'undelivered' ? 'failed' : status === 'read' ? 'read' : 'sent';
-  await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1=''failed'' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4", [mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
+  await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1='failed' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4", [mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
   if (mapped === 'delivered') {
     const message = await pool.query('SELECT id FROM communication_messages WHERE organization_id=$1 AND external_message_id=$2 LIMIT 1',[organizationId,sid]);
-    if (message.rowCount) await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''delivered'',$4)", ['ce_' + randomUUID(),organizationId,message.rows[0].id,JSON.stringify(body)]);
+    if (message.rowCount) await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,'delivered',$4)", ['ce_' + randomUUID(),organizationId,message.rows[0].id,JSON.stringify(body)]);
   }
 }
 
@@ -461,7 +461,7 @@ export async function recordTrackingEvent(pool: Pool, token: string, type:'opene
   if (!result.rowCount) return;
   const message=result.rows[0];
   await pool.query('INSERT INTO communication_events (id,organization_id,message_id,event_type,event_url) VALUES ($1,$2,$3,$4,$5)',['ce_' + randomUUID(),message.organization_id,message.id,type,url || null]);
-  await pool.query("UPDATE communication_messages SET status=CASE WHEN $1=''opened'' AND status=''sent'' THEN ''read'' WHEN $1=''clicked'' THEN ''read'' ELSE status END WHERE id=$2", [type,message.id]);
+  await pool.query("UPDATE communication_messages SET status=CASE WHEN $1='opened' AND status='sent' THEN 'read' WHEN $1='clicked' THEN 'read' ELSE status END WHERE id=$2", [type,message.id]);
 }
 
 export async function createSequence(pool: Pool, organizationId: string, userId: string, input:any) {
@@ -521,7 +521,7 @@ export async function runSequenceStep(pool: Pool, organizationId: string, enroll
   }
   const next=await pool.query('SELECT step_order,delay_minutes FROM communication_sequence_steps WHERE sequence_id=$1 AND step_order>$2 ORDER BY step_order ASC LIMIT 1',[row.sequence_id,row.step_order]);
   if (!next.rowCount) {
-    await pool.query("UPDATE communication_sequence_enrollments SET status=''completed'',next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2", [enrollmentId,organizationId]);
+    await pool.query("UPDATE communication_sequence_enrollments SET status='completed',next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2", [enrollmentId,organizationId]);
     return {done:true};
   }
   const nextAt=new Date(Date.now()+Number(next.rows[0].delay_minutes || 0)*60000);
