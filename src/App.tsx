@@ -654,6 +654,7 @@ export default function App() {
             <AgentMonitorView
               agents={agents}
               initialSelectedAgentId={selectedAgentId}
+              organizationId={getActiveOrgId()}
             />
           )}
 
