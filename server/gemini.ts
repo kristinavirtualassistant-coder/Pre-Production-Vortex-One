@@ -1,5 +1,6 @@
 import { GoogleGenAI, ThinkingLevel, Modality } from '@google/genai';
 import { taskCacheService } from './services/cacheService';
+import { getPgPool } from './db/db';
 
 // Lazy client initialization for resilience
 let geminiClient: GoogleGenAI | null = null;
@@ -131,6 +132,28 @@ export async function generateAgentText(
             });
 
             const text = response.text || '';
+            const usage = (response as any).usageMetadata || {};
+            const inputTokens = Number(usage.promptTokenCount || usage.inputTokenCount || 0);
+            const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || 0);
+            const totalTokens = Number(usage.totalTokenCount || inputTokens + outputTokens);
+            const analyticsPool = getPgPool();
+            if (analyticsPool) {
+              try {
+                await analyticsPool.query(
+                  `INSERT INTO analytics_ai_usage
+                    (id, organization_id, provider, model, operation, input_tokens, output_tokens, total_tokens, estimated_cost_usd, latency_ms, success, metadata)
+                   VALUES ($1,$2,'google', $3,'generateAgentText',$4,$5,$6,0,$7,true,$8::jsonb)`,
+                  [
+                    `aiu_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+                    process.env.VORTEX_ANALYTICS_ORGANIZATION_ID || process.env.DEFAULT_ORGANIZATION_ID || 'org_cmc_realty',
+                    currentModel, inputTokens, outputTokens, totalTokens, 0,
+                    JSON.stringify({ cached: false, requestedModel, hasSearch: Boolean(options.useSearch), hasMaps: Boolean(options.useMaps) }),
+                  ],
+                );
+              } catch (analyticsError) {
+                console.warn('AI analytics recording skipped:', (analyticsError as any)?.message || analyticsError);
+              }
+            }
             const searchSources: Array<{ uri: string; title: string }> = [];
 
             const chunks = (response.candidates?.[0] as any)?.groundingMetadata?.groundingChunks;
