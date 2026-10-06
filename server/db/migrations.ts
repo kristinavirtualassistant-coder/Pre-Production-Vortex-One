@@ -635,8 +635,8 @@ export const MIGRATIONS: Migration[] = [
   },
 
   {
-    version: 18,
-    name: '018_production_auth_account_management',
+    version: 19,
+    name: '019_production_auth_account_management',
     sql: `
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITH TIME ZONE;
@@ -726,8 +726,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 19,
-    name: '019_create_reporting_analytics_layer',
+    version: 20,
+    name: '020_create_reporting_analytics_layer',
     sql: `
       CREATE TABLE IF NOT EXISTS analytics_cost_events (
         id VARCHAR(64) PRIMARY KEY,
