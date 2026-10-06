@@ -1167,4 +1167,29 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_communication_sequence_enrollments_lead ON communication_sequence_enrollments(organization_id, lead_id, status);
     `,
   },
+  {
+    version: 27,
+    name: '027_create_file_processing_jobs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS file_processing_jobs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        file_id VARCHAR(64) NOT NULL REFERENCES file_assets(id) ON DELETE CASCADE,
+        job_type VARCHAR(40) NOT NULL CHECK (job_type IN ('recording_archive','transcript_extract','document_extract','malware_scan')),
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        locked_at TIMESTAMP WITH TIME ZONE,
+        last_error TEXT,
+        result JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (file_id, job_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_processing_jobs_ready ON file_processing_jobs(status, available_at);
+      CREATE INDEX IF NOT EXISTS idx_file_processing_jobs_org ON file_processing_jobs(organization_id, created_at DESC);
+    `,
+  },
+
 ];
