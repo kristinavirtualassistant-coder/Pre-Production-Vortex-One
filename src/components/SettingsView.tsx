@@ -45,6 +45,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [inviteRole, setInviteRole] = useState('member');
   const [inviteLink, setInviteLink] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [organizationName, setOrganizationName] = useState(activeTenant?.name || '');
+  const [billingEmail, setBillingEmail] = useState('');
+
+  React.useEffect(() => {
+    setOrganizationName(activeTenant?.name || '');
+  }, [activeTenant?.name]);
+
+  React.useEffect(() => {
+    fetch('/api/organization/settings', { credentials: 'include', headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.organization) {
+          setOrganizationName(data.organization.name || '');
+          setBillingEmail(data.organization.billing_email || '');
+        }
+      })
+      .catch(() => undefined);
+  }, [activeTenant?.id, getAuthHeaders]);
 
   React.useEffect(() => {
     fetch('/api/settings/smart-forwarding')
@@ -85,9 +103,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleSaveGeneral = (e: React.FormEvent) => {
+  const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
-    addToast('System settings successfully saved.', 'success');
+    try {
+      const response = await fetch('/api/organization/settings', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ name: organizationName.trim(), billing_email: billingEmail.trim(), timezone }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Unable to save organization settings');
+      addToast('Organization settings successfully saved.', 'success');
+    } catch (error: any) {
+      addToast(error.message || 'Unable to save organization settings', 'error');
+    }
   };
 
   return (
@@ -145,12 +175,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tenant Organization Name</label>
                 <input
                   type="text"
-                  disabled
-                  value={activeTenant.name}
+                  value={organizationName}
+                  onChange={(e) => setOrganizationName(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 cursor-not-allowed font-medium"
                 />
               </div>
               <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Billing email</label>
+                <input type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} placeholder="billing@company.com" className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700" />
+              </div>
+                            <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tenant ID</label>
                 <input
                   type="text"
