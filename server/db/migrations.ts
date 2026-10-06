@@ -830,4 +830,5 @@ export const MIGRATIONS: Migration[] = [
         AND longitude IS NOT NULL
         AND location IS NULL;
     `,
-\n
+  },
+];
