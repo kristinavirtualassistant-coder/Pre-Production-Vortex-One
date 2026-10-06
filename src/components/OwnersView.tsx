@@ -108,6 +108,14 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
     finally { setEnriching(false); }
   };
 
+  if (!activeOwner) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-slate-950 text-slate-400">
+        <div className="text-center"><Users className="w-8 h-8 mx-auto mb-3 text-slate-600" /><p className="text-sm">No property owners are available.</p></div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100">
       {/* Top Header */}
