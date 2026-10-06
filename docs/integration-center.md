@@ -60,3 +60,35 @@ Google: `APP_URL/api/integrations/oauth/callback/google-workspace`
 Microsoft: `APP_URL/api/integrations/oauth/callback/microsoft-365`
 
 Register the exact production and local redirect URIs in each provider console.
+
+
+## Unified Email + SMS
+
+Vortex One now exposes a single communications API/UI for email and SMS.
+
+### Email providers
+- Gmail uses `gmail.send` + `gmail.readonly`.
+- Microsoft 365 uses `Mail.Send` + `Mail.Read`.
+- Reconnect existing accounts after deploying the new scopes so the stored OAuth grant contains the mail permissions.
+- Email sync imports recent inbox messages and associates them to Lead/Owner/Property records when a matching contact address exists.
+- Sent HTML includes open/click tracking and an unsubscribe link.
+
+### SMS
+- Twilio credentials: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
+- Sync numbers with `POST /api/communications/numbers/sync`.
+- Configure the Twilio inbound webhook as `https://YOUR_APP/api/communications/webhooks/twilio/inbound`.
+- Configure the Twilio status callback as `https://YOUR_APP/api/communications/webhooks/twilio/status`.
+- Twilio signatures are validated in production; use HTTPS in production.
+- STOP/UNSUBSCRIBE/CANCEL/END/QUIT/REMOVE inbound messages create an SMS suppression record.
+
+### Communication API
+- `GET /api/communications/threads`
+- `GET /api/communications/threads/:id/messages`
+- `GET /api/communications/timeline?leadId=...`
+- `POST /api/communications/email/send`
+- `POST /api/communications/sms/send`
+- `POST /api/communications/email/sync`
+- `GET|POST /api/communications/templates`
+- `GET|POST /api/communications/sequences`
+- `POST /api/communications/sequences/:id/enroll`
+- `GET /api/communications/suppressions`
