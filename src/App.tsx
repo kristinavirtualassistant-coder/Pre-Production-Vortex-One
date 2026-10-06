@@ -29,7 +29,7 @@ import { OpportunitiesView } from './components/OpportunitiesView';
 import { ResearchQueueView } from './components/ResearchQueueView';
 import { ReportsView } from './components/ReportsView';
 import { CampaignsView } from './components/CampaignsView';
-import { AnalyticsView } from './components/AnalyticsView';
+import { ReportingAnalyticsView } from './components/ReportingAnalyticsView';
 import { SettingsView } from './components/SettingsView';
 import { IntegrationCenterView } from './components/IntegrationCenterView';
 import { ContextInspector } from './components/ContextInspector';
@@ -809,11 +809,9 @@ export default function App() {
           )}
 
           {currentView === 'analytics' && (
-            <AnalyticsView
-              leads={leads}
-              properties={properties}
-              agents={agents}
-              onNavigate={handleNavigate}
+            <ReportingAnalyticsView
+              getAuthHeaders={getAuthHeaders}
+              organizationId={getActiveOrgId()}
             />
           )}
 
