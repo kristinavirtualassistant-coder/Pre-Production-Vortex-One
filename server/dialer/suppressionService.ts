@@ -134,6 +134,13 @@ export class SuppressionService {
        WHERE organization_id = $1 AND (id = $2 OR phone_number = $2)`,
       [organizationId, idOrPhone],
     );
+    const normalized = normalizePhoneNumber(idOrPhone);
+    if (normalized) {
+      await pool.query(
+        `UPDATE communication_suppression SET expires_at=CURRENT_TIMESTAMP WHERE organization_id=$1 AND channel IN ('sms','phone') AND regexp_replace(destination, '[^0-9]', '', 'g')=$2`,
+        [organizationId, normalized],
+      );
+    }
     return (res.rowCount || 0) > 0;
   }
 }
