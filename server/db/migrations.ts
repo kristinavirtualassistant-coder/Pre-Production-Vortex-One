@@ -886,4 +886,52 @@ export const MIGRATIONS: Migration[] = [
         ON stripe_webhook_events(event_type, received_at DESC);
     `,
   },
+,
+  {
+    version: 22,
+    name: '022_enforce_tenant_security_boundaries',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public_ca_parcels (
+        id VARCHAR(128) PRIMARY KEY,
+        county_fips VARCHAR(5) NOT NULL,
+        county_name VARCHAR(120) NOT NULL,
+        apn VARCHAR(128) NOT NULL,
+        address VARCHAR(500),
+        city VARCHAR(160),
+        state VARCHAR(2) NOT NULL DEFAULT 'CA',
+        zip VARCHAR(20),
+        property_type VARCHAR(120),
+        units_count INTEGER,
+        square_feet INTEGER,
+        year_built INTEGER,
+        assessed_value NUMERIC(18,2),
+        parcel_geometry JSONB,
+        source_record_id VARCHAR(255),
+        source_url TEXT,
+        provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source_updated_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        CONSTRAINT uq_public_ca_parcels_county_apn UNIQUE (county_fips, apn)
+      );
+      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_apn ON public_ca_parcels(county_fips, apn);
+      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_address ON public_ca_parcels(state, county_name, city, address);
+
+      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_logs is append-only; UPDATE/DELETE is prohibited';
+      END;
+      $$;
+      DROP TRIGGER IF EXISTS audit_logs_immutable ON audit_logs;
+      CREATE TRIGGER audit_logs_immutable
+        BEFORE UPDATE OR DELETE ON audit_logs
+        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+
+      CREATE INDEX IF NOT EXISTS idx_call_telephony_call_id_global
+        ON call(telephony_call_id) WHERE telephony_call_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_call_telephony_session_id_global
+        ON call(telephony_session_id) WHERE telephony_session_id IS NOT NULL;
+    `
+  }
 ];
