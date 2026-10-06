@@ -38,6 +38,9 @@ import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows,
 import { queueEmailOutreach } from './server/services/emailOutreachService';
 import { createRateLimiter } from './server/middleware/rateLimit';
 import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns, abortWorkflowRun } from './server/services/workflowRunService';
+import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
+import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
+import { getAllAgents, getAgent } from './server/agents/registry';
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
@@ -4172,6 +4175,158 @@ ${transcript}`;
     }
   });
 
+
+
+  // Real AI Agent Runtime
+  app.get('/api/ai-agents', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI agents' });
+      const result = await pool.query(
+        'SELECT * FROM agent_configs WHERE organization_id=$1 ORDER BY name ASC',
+        [orgId],
+      );
+      const configured = result.rows.map((row: any) => ({
+        id: row.id, name: row.name, role: row.role, description: row.description,
+        primaryResponsibility: row.primary_responsibility, systemInstructions: row.system_instructions,
+        allowedTools: row.allowed_tools || [], allowedData: row.allowed_data || [],
+        model: row.model, provider: row.provider || null, temperature: Number(row.temperature ?? 0.2),
+        maxTokens: row.max_tokens || 4096, maxRetries: row.max_retries ?? 3,
+        memoryEnabled: row.memory_enabled !== false, permissions: row.permissions || [],
+        parentAgentId: row.parent_agent_id || null, enabled: row.enabled,
+        capabilities: row.capabilities || [],
+      }));
+      res.json({ agents: configured, defaults: getAllAgents() });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to list AI agents' });
+    }
+  });
+
+  app.post('/api/ai-agents', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const body = req.body || {};
+      if (!body.id || !body.name || !body.role || !body.model) {
+        return res.status(400).json({ error: 'id, name, role, and model are required' });
+      }
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI agents' });
+      const result = await pool.query(
+        `INSERT INTO agent_configs
+          (id, organization_id, name, role, description, primary_responsibility, system_instructions,
+           allowed_tools, allowed_data, model, temperature, max_tokens, permissions, parent_agent_id,
+           enabled, capabilities, provider, max_retries, memory_enabled)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19)
+         ON CONFLICT (id) DO UPDATE SET
+           name=EXCLUDED.name, role=EXCLUDED.role, description=EXCLUDED.description,
+           primary_responsibility=EXCLUDED.primary_responsibility, system_instructions=EXCLUDED.system_instructions,
+           allowed_tools=EXCLUDED.allowed_tools, allowed_data=EXCLUDED.allowed_data, model=EXCLUDED.model,
+           temperature=EXCLUDED.temperature, max_tokens=EXCLUDED.max_tokens, permissions=EXCLUDED.permissions,
+           parent_agent_id=EXCLUDED.parent_agent_id, enabled=EXCLUDED.enabled, capabilities=EXCLUDED.capabilities,
+           provider=EXCLUDED.provider, max_retries=EXCLUDED.max_retries, memory_enabled=EXCLUDED.memory_enabled,
+           updated_at=CURRENT_TIMESTAMP
+         WHERE agent_configs.organization_id=$2
+         RETURNING *`,
+        [
+          body.id, orgId, body.name, body.role, body.description || '', body.primaryResponsibility || '',
+          body.systemInstructions || '', JSON.stringify(body.allowedTools || []), JSON.stringify(body.allowedData || []),
+          body.model, Number(body.temperature ?? 0.2), Number(body.maxTokens ?? 4096),
+          JSON.stringify(body.permissions || ['read_only']), body.parentAgentId || null, body.enabled !== false,
+          JSON.stringify(body.capabilities || []), body.provider || null, Number(body.maxRetries ?? 3), body.memoryEnabled !== false,
+        ],
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to save AI agent' });
+    }
+  });
+
+  app.post('/api/ai-agents/:agentId/runs', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const objective = String(req.body?.objective || '').trim();
+      if (!objective) return res.status(400).json({ error: 'objective is required' });
+      const result = await executeAgentRun({
+        organizationId: orgId,
+        userId: (req as AuthRequest).dbUser?.id,
+        agentId: req.params.agentId,
+        objective,
+        context: req.body?.context || {},
+        maxAttempts: req.body?.maxAttempts,
+      });
+      res.status(result.status === 'failed' ? 502 : 200).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Agent execution failed' });
+    }
+  });
+
+  app.get('/api/ai-agent-runs', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const runs = await listAgentRuns(orgId, Number(req.query.limit) || 50);
+      res.json(runs);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to list agent runs' });
+    }
+  });
+
+  app.get('/api/ai-agent-runs/:runId', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const run = await getAgentRun(orgId, req.params.runId);
+      if (!run) return res.status(404).json({ error: 'Agent run not found' });
+      res.json(run);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to load agent run' });
+    }
+  });
+
+  app.post('/api/ai-agent-runs/:runId/approve', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const approvalId = String(req.body?.approvalId || '').trim();
+      const decision = String(req.body?.decision || '').trim().toLowerCase();
+      if (!approvalId || !['approve','reject'].includes(decision)) {
+        return res.status(400).json({ error: 'approvalId and decision=approve|reject are required' });
+      }
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI approvals' });
+      const approval = await decideApproval(pool, orgId, approvalId, decision, (req as AuthRequest).dbUser?.id);
+      if (!approval) return res.status(404).json({ error: 'Approval not found' });
+      if (decision === 'reject') {
+        await pool.query('UPDATE agent_runs SET status=\'failed\', error=\'Human approval rejected\', completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2', [req.params.runId, orgId]);
+        return res.json({ approval, status: 'rejected' });
+      }
+      const result = await continueApprovedAgentRun(orgId, req.params.runId, approvalId, (req as AuthRequest).dbUser?.id);
+      res.json({ approval, result });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to process agent approval' });
+    }
+  });
+
+  app.get('/api/ai-agents/:agentId/memory', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      res.json(await listAgentMemories(orgId, req.params.agentId, Number(req.query.limit) || 100));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to load agent memory' });
+    }
+  });
+
+  app.post('/api/ai-agents/:agentId/memory', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const memoryKey = String(req.body?.memoryKey || '').trim();
+      const content = String(req.body?.content || '').trim();
+      if (!memoryKey || !content) return res.status(400).json({ error: 'memoryKey and content are required' });
+      res.status(201).json(await upsertAgentMemory(orgId, req.params.agentId, {
+        memoryKey, content, importance: req.body?.importance, metadata: req.body?.metadata,
+      }));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to save agent memory' });
+    }
+  });
 
   // --- Vite Middleware / Static Serving ---
   if (process.env.NODE_ENV !== 'production') {
