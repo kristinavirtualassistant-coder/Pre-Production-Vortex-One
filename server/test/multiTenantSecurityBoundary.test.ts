@@ -5,6 +5,7 @@ const server = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf
 const migrations = fs.readFileSync(new URL('../db/migrations.ts', import.meta.url), 'utf8');
 const gemini = fs.readFileSync(new URL('../gemini.ts', import.meta.url), 'utf8');
 const tools = fs.readFileSync(new URL('../tools/index.ts', import.meta.url), 'utf8');
+const rateLimit = fs.readFileSync(new URL('../middleware/rateLimit.ts', import.meta.url), 'utf8');
 
 function mustContain(source: string, text: string, label: string) {
   assert.ok(source.includes(text), label);
@@ -26,6 +27,7 @@ mustContain(gemini, '{ skipCache: true, forceRefresh: options.forceRefresh }', '
 mustContain(gemini, '{ skipCache: true }', 'Gemini TTS caching is disabled');
 
 mustContain(tools, 'agent.allowedTools.includes(toolName)', 'agent tool allow-list is enforced');
+mustContain(rateLimit, 'org:${tenantId}:ip:${clientKey}', 'authenticated rate limits are tenant-scoped');
 mustContain(tools, "if (toolName === 'make_call')", 'outbound call approval gate exists');
 mustContain(tools, "status = 'approved'", 'outbound call requires approved status');
 mustContain(tools, 'organization_id = $2', 'approval lookup is tenant-scoped');
