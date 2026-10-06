@@ -241,49 +241,32 @@ async function startServer() {
 
   // --- Task Cache & Saved Answers Management APIs ---
   app.get('/api/cache/stats', (req, res) => {
-    try {
-      res.setHeader('Content-Type', 'application/json');
-      res.json(taskCacheService.getStats());
-    } catch (err: any) {
-      console.error('Error getting cache stats:', err);
-      res.status(500).json({ error: err?.message || 'Failed to get cache stats' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    res.setHeader('Content-Type', 'application/json');
+    res.json(taskCacheService.getStats());
   });
 
   app.get('/api/cache/entries', (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const category = req.query.category as string | undefined;
-      res.setHeader('Content-Type', 'application/json');
-      res.json(taskCacheService.getEntries(limit, category));
-    } catch (err: any) {
-      console.error('Error getting cache entries:', err);
-      res.status(500).json({ error: err?.message || 'Failed to get cache entries' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit || '100'), 10) || 100, 1), 100);
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    res.setHeader('Content-Type', 'application/json');
+    res.json(taskCacheService.getEntries(limit, category));
   });
 
   app.post('/api/cache/clear', requireRole(['admin', 'executive']), (req, res) => {
-    try {
-      const { category } = req.body || {};
-      const count = taskCacheService.clear(category);
-      res.setHeader('Content-Type', 'application/json');
-      res.json({ success: true, clearedEntriesCount: count, categoryCleared: category || 'all' });
-    } catch (err: any) {
-      console.error('Error clearing cache:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to clear cache' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const { category } = req.body || {};
+    const count = taskCacheService.clear(typeof category === 'string' ? category : undefined);
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ success: true, clearedEntriesCount: count, categoryCleared: category || 'all' });
   });
 
   app.delete('/api/cache/entries/:key', requireRole(['admin', 'executive']), (req, res) => {
-    try {
-      const key = req.params.key;
-      const deleted = taskCacheService.delete(key);
-      res.setHeader('Content-Type', 'application/json');
-      res.json({ success: deleted, key });
-    } catch (err: any) {
-      console.error('Error deleting cache entry:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to delete cache entry' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const deleted = taskCacheService.delete(req.params.key);
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ success: deleted, key: req.params.key });
   });
 
   // Master Orchestration Dispatch
@@ -307,7 +290,7 @@ async function startServer() {
     }
   });
 
-  // Agent Registry APIs
+  // Agent definitions are platform-global today. They are read-only for tenants.
   app.get('/api/agents', (req, res) => {
     res.json(getAllAgents());
   });
@@ -319,6 +302,7 @@ async function startServer() {
   });
 
   app.post('/api/agents', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global agent registry mutation is disabled in production.' });
     const body: AgentDefinition = req.body;
     if (!body.id || !body.name || !body.role) {
       return res.status(400).json({ error: 'Missing required agent fields (id, name, role)' });
@@ -338,6 +322,7 @@ async function startServer() {
   });
 
   app.put('/api/agents/:id', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global agent registry mutation is disabled in production.' });
     const updated = updateAgent(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Agent not found' });
     res.json(updated);
@@ -3232,9 +3217,24 @@ async function startServer() {
     }
 
     try {
-      const orgId = requireOrganizationId(
-        (req.body?.organizationId as string) || (req.body?.organization_id as string),
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for webhook tenant resolution' });
+
+      const body = req.body?.body || req.body;
+      const telephonyCallId = String(
+        body?.telephonyCallId || body?.callId || body?.sessionId ||
+        req.body?.telephonyCallId || req.body?.callId || req.body?.sessionId || ''
+      ).trim();
+      if (!telephonyCallId) return res.status(400).json({ error: 'Provider call identity is required' });
+
+      // Tenant identity comes from the durable call record, never from the webhook body.
+      const tenantLookup = await pool.query(
+        "SELECT organization_id FROM call WHERE telephony_session_id = $1 OR telephony_call_id = $1 ORDER BY created_at DESC LIMIT 1",
+        [telephonyCallId],
       );
+      if (!tenantLookup.rowCount) return res.status(404).json({ error: 'Call identity is not registered' });
+
+      const orgId = requireOrganizationId(tenantLookup.rows[0].organization_id);
       const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
       if (result.status === 'error') return res.status(400).json(result);
       return res.status(200).json(result);
