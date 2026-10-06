@@ -500,8 +500,13 @@ export async function createSequence(pool: Pool, organizationId: string, userId:
 }
 
 export async function enrollSequence(pool: Pool, organizationId: string, userId: string, sequenceId: string, leadId: string) {
+  const ownership=await pool.query(
+    "SELECT s.id AS sequence_id,l.id AS lead_id FROM communication_sequences s CROSS JOIN leads l WHERE s.id=$1 AND s.organization_id=$3 AND l.id=$2 AND l.organization_id=$3 LIMIT 1",
+    [sequenceId,leadId,organizationId],
+  );
+  if(!ownership.rowCount) throw new Error('Sequence or lead does not belong to this organization');
   const first=await pool.query('SELECT step_order,delay_minutes FROM communication_sequence_steps WHERE sequence_id=$1 ORDER BY step_order ASC LIMIT 1',[sequenceId]);
-  if (!first.rowCount) throw new Error('Sequence has no steps');
+  if(!first.rowCount) throw new Error('Sequence has no steps');
   const delay=Number(first.rows[0].delay_minutes || 0);
   const nextAt=new Date(Date.now()+delay*60000);
   const id='enroll_' + randomUUID();
@@ -510,6 +515,10 @@ export async function enrollSequence(pool: Pool, organizationId: string, userId:
     [id,organizationId,sequenceId,leadId,first.rows[0].step_order,nextAt.toISOString(),userId],
   );
   const row=await pool.query('SELECT id FROM communication_sequence_enrollments WHERE organization_id=$1 AND sequence_id=$2 AND lead_id=$3',[organizationId,sequenceId,leadId]);
+  await pool.query(
+    "UPDATE jobs SET status='cancelled',locked_at=NULL,locked_by=NULL,last_error='Superseded by sequence re-enrollment' WHERE organization_id=$1 AND job_type=$2 AND status='queued' AND payload->>'enrollmentId'=$3",
+    [organizationId,COMMUNICATION_JOB_TYPES.SEQUENCE_STEP,row.rows[0].id],
+  );
   await queueCommunicationJob(pool,organizationId,COMMUNICATION_JOB_TYPES.SEQUENCE_STEP,{enrollmentId:row.rows[0].id},nextAt);
   return row.rows[0].id;
 }
