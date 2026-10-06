@@ -4304,17 +4304,3 @@ ${transcript}`;
   return app;
 }
 
-export async function startServer() {
-  const app = await createApp();
-  const PORT = Number(process.env.PORT || 8080);
-  return app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
-  });
-}
-
-if (typeof require !== 'undefined' && require.main === module) {
-  startServer().catch((err) => {
-    console.error('Vortex One startup failed:', err);
-    process.exit(1);
-  });
-}
