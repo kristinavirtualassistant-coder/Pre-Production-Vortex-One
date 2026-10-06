@@ -31,8 +31,11 @@ export class AuthorizationError extends Error {
   }
 }
 
+/**
+ * Identify API-relative health, callback, webhook, and tracking paths that bypass session auth.
+ */
 export function shouldBypassApiAuth(path: string): boolean {
-  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/');
+  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/') || path.startsWith('/communications/webhooks/') || path.startsWith('/communications/tracking/');
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {

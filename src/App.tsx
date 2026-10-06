@@ -33,6 +33,7 @@ import { ReportingAnalyticsView } from './components/ReportingAnalyticsView';
 import { FilesDocumentsView } from './components/FilesDocumentsView';
 import { SettingsView } from './components/SettingsView';
 import { IntegrationCenterView } from './components/IntegrationCenterView';
+import { CommunicationsView } from './components/CommunicationsView';
 import { ContextInspector } from './components/ContextInspector';
 import { CommandPalette } from './components/CommandPalette';
 import { EasyHelpModal } from './components/EasyHelpModal';
@@ -67,6 +68,7 @@ const VALID_VIEWS = [
   'leads',
   'dialer',
   'campaigns',
+  'communications',
   'tasks',
   'research_queue',
   'activity',
@@ -103,6 +105,10 @@ function getViewFromUrl(): string {
   return 'home';
 }
 
+/**
+ * Render the authenticated workspace and active view, coordinating tenant data, navigation,
+ * and shared dialogs across CRM, communications, and other tools.
+ */
 export default function App() {
   const { user, userProfile, activeTenant, loading: authLoading, getAuthHeaders, getAccessToken } = useAuth();
 
@@ -791,6 +797,14 @@ export default function App() {
               getAuthHeaders={getAuthHeaders}
               organizationId={getActiveOrgId()}
               onRefresh={() => fetchAllData(getActiveOrgId())}
+            />
+          )}
+
+          {currentView === 'communications' && (
+            <CommunicationsView
+              getAuthHeaders={getAuthHeaders}
+              organizationId={getActiveOrgId()}
+              selectedLeadId={selectedLeadId}
             />
           )}
 
