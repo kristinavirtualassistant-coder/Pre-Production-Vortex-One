@@ -1566,7 +1566,7 @@ async function startServer() {
 
       params.push(maxResults);
       const client = await pool.connect();
-      let result;
+      let result: any;
       try {
         await client.query('BEGIN');
         await client.query('SET LOCAL statement_timeout = 5000');
