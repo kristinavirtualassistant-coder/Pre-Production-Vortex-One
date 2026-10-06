@@ -6,6 +6,7 @@
 import { MIGRATIONS } from '../db/migrations';
 import './multiTenantSecurityBoundary.test';
 import { getPgPool, inMemoryStore, seedInitialData, initializeDatabase } from '../db/db';
+import './multiTenantSecurityBoundary.test';
 import { CallStateMachine } from '../dialer/fsm';
 import { SuppressionService, normalizePhoneNumber, formatPhoneNumber } from '../dialer/suppressionService';
 import { getTelephonyAdapter, RingCentralTelephonyAdapter } from '../dialer/telephonyAdapter';

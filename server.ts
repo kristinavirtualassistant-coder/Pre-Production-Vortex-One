@@ -22,7 +22,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest, shouldBypassApiAuth } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
@@ -123,28 +123,19 @@ async function startServer() {
     res.json(taskCacheService.getEntries(limit, category));
   });
 
-  app.post('/api/cache/clear', (req, res) => {
-    try {
-      const { category } = req.body || {};
-      const count = taskCacheService.clear(category);
-      res.setHeader('Content-Type', 'application/json');
-      res.json({ success: true, clearedEntriesCount: count, categoryCleared: category || 'all' });
-    } catch (err: any) {
-      console.error('Error clearing cache:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to clear cache' });
-    }
+  app.post('/api/cache/clear', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const { category } = req.body || {};
+    const count = taskCacheService.clear(typeof category === 'string' ? category : undefined);
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ success: true, clearedEntriesCount: count, categoryCleared: category || 'all' });
   });
 
-  app.delete('/api/cache/entries/:key', (req, res) => {
-    try {
-      const key = req.params.key;
-      const deleted = taskCacheService.delete(key);
-      res.setHeader('Content-Type', 'application/json');
-      res.json({ success: deleted, key });
-    } catch (err: any) {
-      console.error('Error deleting cache entry:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to delete cache entry' });
-    }
+  app.delete('/api/cache/entries/:key', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const deleted = taskCacheService.delete(req.params.key);
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ success: deleted, key: req.params.key });
   });
 
   // Master Orchestration Dispatch
@@ -179,7 +170,8 @@ async function startServer() {
     res.json(agent);
   });
 
-  app.post('/api/agents', (req, res) => {
+  app.post('/api/agents', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global agent registry mutation is disabled in production.' });
     const body: AgentDefinition = req.body;
     if (!body.id || !body.name || !body.role) {
       return res.status(400).json({ error: 'Missing required agent fields (id, name, role)' });
@@ -198,7 +190,8 @@ async function startServer() {
     res.status(201).json(created);
   });
 
-  app.put('/api/agents/:id', (req, res) => {
+  app.put('/api/agents/:id', requireRole(['admin', 'executive']), (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Global agent registry mutation is disabled in production.' });
     const updated = updateAgent(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Agent not found' });
     res.json(updated);

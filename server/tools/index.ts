@@ -15,7 +15,7 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, any>;
-  execute: (args: any, context: { organizationId: string; agentId: string }) => Promise<any>;
+  execute: (args: any, context: { organizationId: string; agentId: string; approvalId?: string }) => Promise<any>;
 }
 
 export const TOOLS: Record<string, ToolDefinition> = {

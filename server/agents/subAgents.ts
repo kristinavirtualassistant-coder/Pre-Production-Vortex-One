@@ -71,7 +71,7 @@ Analyze the domain, formulate initial hypotheses, identify missing information, 
         county,
         min_equity: minEquity,
         absentee_only: absenteeOnly,
-      }, { organizationId: context.organizationId, agentId });
+      }, { organizationId: context.organizationId, agentId, approvalId: task.input.approval_id });
 
       const totalValuation = propData.properties.reduce((sum: number, p: any) => sum + (p.estimated_value || 0), 0);
       const totalEquity = propData.properties.reduce((sum: number, p: any) => sum + (p.estimated_equity || 0), 0);
