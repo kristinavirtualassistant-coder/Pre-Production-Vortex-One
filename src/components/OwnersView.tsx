@@ -37,6 +37,10 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOwnerId, setSelectedOwnerId] = useState<string>('');
+  const [owner360, setOwner360] = useState<any>(null);
+  const [owner360Loading, setOwner360Loading] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [owner360Error, setOwner360Error] = useState<string | null>(null);
 
   // Owner summaries are derived only from authoritative property records.
   const owners = React.useMemo(() => {
@@ -76,6 +80,33 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
   );
 
   const activeOwner = owners.find((o) => o.id === selectedOwnerId) || owners[0];
+
+  React.useEffect(() => {
+    if (!activeOwner?.id) { setOwner360(null); return; }
+    let cancelled = false;
+    setOwner360Loading(true); setOwner360Error(null);
+    fetch('/api/owner-enrichment/' + encodeURIComponent(activeOwner.id))
+      .then(async (res) => { const data = await res.json(); if (!res.ok) throw new Error(data?.error || 'Owner profile unavailable'); return data; })
+      .then((data) => { if (!cancelled) setOwner360(data); })
+      .catch((err) => { if (!cancelled) setOwner360Error(err.message); })
+      .finally(() => { if (!cancelled) setOwner360Loading(false); });
+    return () => { cancelled = true; };
+  }, [activeOwner?.id]);
+
+  const runOwnerEnrichment = async () => {
+    if (!activeOwner?.id) return;
+    setEnriching(true); setOwner360Error(null);
+    try {
+      const response = await fetch('/api/owner-enrichment/' + encodeURIComponent(activeOwner.id) + '/enrich', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'public_records' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || 'Owner enrichment failed');
+      const refreshed = await fetch('/api/owner-enrichment/' + encodeURIComponent(activeOwner.id));
+      if (refreshed.ok) setOwner360(await refreshed.json()); else setOwner360(data);
+    } catch (err: any) { setOwner360Error(err.message || 'Owner enrichment failed'); }
+    finally { setEnriching(false); }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100">
@@ -187,6 +218,14 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
                   Create Lead
                 </button>
                 <button
+                  onClick={runOwnerEnrichment}
+                  disabled={enriching || owner360Loading}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-md cursor-pointer transition"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{enriching ? 'Enriching...' : 'Enrich Owner'}</span>
+                </button>
+                <button
                   onClick={() => onOpenInspector(activeOwner)}
                   className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 cursor-pointer transition"
                 >
@@ -217,7 +256,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
               </div>
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
                 <span className="text-[10px] uppercase font-mono text-slate-500 block">Target Opportunities</span>
-                <span className="text-xl font-bold font-mono text-amber-400">3 Signals</span>
+                <span className="text-xl font-bold font-mono text-amber-400">{owner360?.signals?.length ?? 0} Signals</span>
               </div>
             </div>
           </div>
@@ -237,18 +276,18 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
               </div>
 
               <div className="space-y-2">
-                {activeOwner.phone_numbers.map((phone, idx) => (
+                {(owner360?.contacts || []).filter((c: any) => c.type === 'PHONE').map((phone: any, idx: number) => (
                   <div
                     key={idx}
                     className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
                   >
                     <div>
-                      <span className="font-mono text-slate-100 font-bold">{phone.number}</span>
-                      <span className="text-[10px] text-slate-400 uppercase ml-2">({phone.type})</span>
+                      <span className="font-mono text-slate-100 font-bold">{phone.value || phone.number}</span>
+                      <span className="text-[10px] text-slate-400 uppercase ml-2">({phone.contact_subtype || phone.type || 'phone'})</span>
                     </div>
                     <button
                       onClick={() =>
-                        onInitiateCall(activeOwner.name, phone.number, activeOwner.mailing_address)
+                        onInitiateCall(activeOwner.name, phone.value || phone.number, activeOwner.mailing_address)
                       }
                       className="px-2.5 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-semibold text-xs border border-cyan-800 cursor-pointer"
                     >
@@ -257,7 +296,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
                   </div>
                 ))}
 
-                {activeOwner.email_addresses.map((email, idx) => (
+                {(owner360?.contacts || []).filter((c: any) => c.type === 'EMAIL').map((email: any, idx: number) => (
                   <div
                     key={idx}
                     className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
@@ -266,7 +305,7 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
                       <Mail className="w-3.5 h-3.5 text-slate-400" />
                       <span className="text-slate-200">{email.email}</span>
                     </div>
-                    <span className="text-[10px] text-slate-400">95% Confidence</span>
+                    <span className="text-[10px] text-slate-400">{Math.round(Number(email.confidence_score ?? 0.95) * 100)}% Confidence</span>
                   </div>
                 ))}
               </div>
@@ -290,6 +329,22 @@ export const OwnersView: React.FC<OwnersViewProps> = ({
             </div>
           </div>
 
+
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-1.5"><Sparkles className="w-4 h-4 text-amber-400" /><span>Owner Intelligence Signals</span></h3>
+              {owner360Loading && <span className="text-[10px] text-slate-500">Loading...</span>}
+            </div>
+            {owner360Error && <div className="text-xs text-rose-300 bg-rose-950/30 border border-rose-900 rounded-lg p-2">{owner360Error}</div>}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {(owner360?.signals || []).slice(0, 8).map((signal: any) => (
+                <div key={signal.id || signal.signal_type} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                  <div><div className="text-[10px] font-bold text-slate-200">{String(signal.signal_type || '').replaceAll('_',' ')}</div><div className="text-[10px] text-slate-500">{signal.signal_value?.ratio ? String(Math.round(signal.signal_value.ratio * 100)) + '% equity ratio' : 'Source-backed signal'}</div></div>
+                  <span className="font-mono text-amber-400 text-xs">{Number(signal.score || 0).toFixed(0)} pts</span>
+                </div>
+              ))}
+            </div>
+          </div>
           {/* Associated Portfolio Properties Table (Section 10) */}
           <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
