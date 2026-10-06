@@ -22,6 +22,10 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+/**
+ * Return OAuth endpoints, required client credentials, and identity/mail scopes
+ * for the selected Google Workspace or Microsoft 365 provider.
+ */
 function getProviderConfig(provider: OAuthProvider): ProviderConfig {
   if (provider === 'google-workspace') {
     return {

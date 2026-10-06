@@ -7,6 +7,10 @@ import {
   sendSmsNow,
 } from '../services/communicationsService';
 
+/**
+ * Claim and process one email, SMS, or sequence job for the organization.
+ * Record completion or failure with a retry delay; return false only when no job was claimed.
+ */
 export async function processCommunicationJob(pool: Pool, organizationId: string, workerId: string): Promise<boolean> {
   const job = await claimNextJob(pool, organizationId, workerId, [
     COMMUNICATION_JOB_TYPES.EMAIL_SEND,
@@ -54,6 +58,10 @@ export async function processCommunicationJob(pool: Pool, organizationId: string
   }
 }
 
+/**
+ * Process at most 25 communication jobs per organization and return the number handled,
+ * including jobs whose processing failed.
+ */
 export async function runCommunicationWorkerOnce(pool: Pool, organizationIds: string[]) {
   let processed=0;
   for (const organizationId of organizationIds) {

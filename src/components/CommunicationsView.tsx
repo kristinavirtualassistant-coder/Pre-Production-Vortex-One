@@ -11,11 +11,18 @@ type Thread = any;
 type Message = any;
 type Template = any;
 
+/**
+ * Combine authentication headers with the optional organization context header.
+ */
 const headersFor = (getAuthHeaders:Props['getAuthHeaders'], organizationId?:string) => ({
   ...getAuthHeaders(),
   ...(organizationId ? {'x-organization-id':organizationId} : {}),
 });
 
+/**
+ * Render the organization inbox, message composer, sequences, and suppression registry.
+ * Use the selected lead as the initial and post-send CRM link for composed messages.
+ */
 export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organizationId,selectedLeadId}) => {
   const [tab,setTab]=useState<'inbox'|'compose'|'sequences'|'suppression'>('inbox');
   const [channel,setChannel]=useState<'email'|'sms'>('email');
@@ -35,6 +42,9 @@ export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organization
   const [loading,setLoading]=useState(false);
   const [notice,setNotice]=useState('');
 
+  /**
+   * Fetch JSON with authentication and organization headers, throwing on HTTP errors.
+   */
   const api=async (path:string, init:RequestInit={}) => {
     const response=await fetch(path,{...init,headers:{...headersFor(getAuthHeaders,organizationId),...(init.headers || {})}});
     const data=await response.json().catch(()=>({}));
@@ -42,6 +52,10 @@ export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organization
     return data;
   };
 
+  /**
+   * Refresh channel threads and templates plus organization communication settings.
+   * Keep successful responses when another request fails and show the first failure notice.
+   */
   const load=async()=>{
     setLoading(true);
     try {
@@ -67,12 +81,19 @@ export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organization
   useEffect(()=>{ load(); },[channel,organizationId]);
   useEffect(()=>{ if(selectedLeadId) setLeadId(selectedLeadId); },[selectedLeadId]);
 
+  /**
+   * Select a conversation and load its messages, displaying a notice if loading fails.
+   */
   const openThread=async(id:string)=>{
     setSelectedThread(id);
     try { const data=await api('/api/communications/threads/' + encodeURIComponent(id) + '/messages'); setMessages(data.messages || []); }
     catch(e:any){ setNotice(e.message); }
   };
 
+  /**
+   * Queue the composed email or SMS and, on success, clear the draft and refresh the inbox.
+   * Display validation or request errors through the notice state.
+   */
   const send=async()=>{
     if(!to.trim() || !body.trim()) { setNotice('Recipient and message are required.'); return; }
     setLoading(true);
@@ -90,11 +111,17 @@ export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organization
     finally { setLoading(false); }
   };
 
+  /**
+   * Import messages from the selected email provider and refresh the view with a count notice.
+   */
   const syncEmail=async()=>{
     try { const data=await api('/api/communications/email/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider})}); setNotice('Imported ' + (data.imported || 0) + ' email messages.'); await load(); }
     catch(e:any){ setNotice(e.message); }
   };
 
+  /**
+   * Select a template and copy its subject and body into the composer when found.
+   */
   const chooseTemplate=(id:string)=>{
     setTemplateId(id);
     const t=templates.find(x=>x.id===id);

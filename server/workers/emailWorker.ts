@@ -2,6 +2,11 @@ import { getPgPool } from '../db/db';
 import { processEmailJob } from '../services/emailWorker';
 import { runCommunicationWorkerOnce } from './communicationWorker';
 
+/**
+ * Process up to ten outreach jobs and 25 communication jobs per selected organization.
+ * Use the configured organization or discover organizations with due or stale jobs,
+ * and return the total number handled; require PostgreSQL.
+ */
 export async function runEmailWorkerOnce(): Promise<number> {
   const pool = getPgPool();
   if (!pool) throw new Error('PostgreSQL is required for email worker execution');

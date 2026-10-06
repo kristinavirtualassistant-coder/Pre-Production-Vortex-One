@@ -15,16 +15,26 @@ export const COMMUNICATION_JOB_TYPES = {
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const PHONE_RE = /^\+?[1-9]\d{7,14}$/;
 
+/**
+ * Return a trimmed environment setting, throwing when it is empty or missing.
+ */
 function env(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(name + ' is not configured');
   return value;
 }
 
+/**
+ * Trim and lowercase an email address for storage and comparison.
+ */
 export function normalizeEmail(value: string): string {
   return String(value || '').trim().toLowerCase();
 }
 
+/**
+ * Strip phone formatting and add a leading plus, using +1 for ten-digit numbers.
+ * This normalizes the input without validating the resulting phone number.
+ */
 export function normalizePhone(value: string): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -34,10 +44,17 @@ export function normalizePhone(value: string): string {
   return '+' + digits;
 }
 
+/**
+ * Encode a username and password as the credential portion of HTTP Basic auth.
+ */
 function basicAuth(user: string, password: string): string {
   return Buffer.from(user + ':' + password).toString('base64');
 }
 
+/**
+ * Fetch a provider response as JSON, falling back to raw text when parsing fails.
+ * Throw a provider error for unsuccessful HTTP responses.
+ */
 async function requestJson(url: string, init: RequestInit = {}): Promise<any> {
   const response = await fetch(url, {
     ...init,
@@ -52,6 +69,10 @@ async function requestJson(url: string, init: RequestInit = {}): Promise<any> {
   return data;
 }
 
+/**
+ * Find a connected email account for the given organization, user, and provider.
+ * Throw when no matching connection exists.
+ */
 async function connection(pool: Pool, organizationId: string, userId: string, provider: EmailProvider) {
   const result = await pool.query(
     "SELECT * FROM integration_connections WHERE organization_id=$1 AND user_id=$2 AND provider=$3 AND status='connected' LIMIT 1",
@@ -63,6 +84,10 @@ async function connection(pool: Pool, organizationId: string, userId: string, pr
   return result.rows[0];
 }
 
+/**
+ * Decrypt an access token, refreshing and persisting it when near expiry.
+ * Use the existing token when no refresh token is available; mark failed refreshes as errors.
+ */
 async function accessToken(pool: Pool, row: any): Promise<string> {
   const expires = row.token_expires_at ? new Date(row.token_expires_at).getTime() : 0;
   if (expires > Date.now() + 120000) return decryptSecret(row.access_token);
@@ -94,24 +119,40 @@ async function accessToken(pool: Pool, row: any): Promise<string> {
   return String(token.access_token);
 }
 
+/**
+ * Encode UTF-8 text as unpadded URL-safe Base64 for Gmail message payloads.
+ */
 function b64url(value: string): string {
   return Buffer.from(value).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
+/**
+ * Escape ampersands, angle brackets, and quotes for HTML text.
+ */
 function escapeHtml(value: string): string {
   return String(value || '').replace(/[&<>"']/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string,string>)[c] || c;
   });
 }
 
+/**
+ * Return the configured integration key or the local fallback for tracking signatures.
+ */
 function trackingSecret(): string {
   return process.env.INTEGRATION_ENCRYPTION_KEY || 'vortex-one-local-tracking-secret';
 }
 
+/**
+ * Sign a tracking token and destination URL together using HMAC-SHA256.
+ */
 function trackingSignature(token: string, url: string): string {
   return createHmac('sha256', trackingSecret()).update(token + '\n' + url).digest('base64url');
 }
 
+/**
+ * Convert plain text to HTML as needed and rewrite HTTP links for signed click tracking.
+ * Append an unsubscribe link and an open-tracking pixel.
+ */
 function trackedHtml(body: string, token: string): string {
   const base = (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '') + '/api/communications/tracking';
   const source = /<[^>]+>/.test(body) ? body : escapeHtml(body).replace(/\r?\n/g, '<br>');
@@ -122,6 +163,10 @@ function trackedHtml(body: string, token: string): string {
   return links + '<p style="font-size:11px;color:#64748b"><a href="' + base + '/unsubscribe/' + encodeURIComponent(token) + '">Unsubscribe</a></p><img src="' + base + '/open/' + encodeURIComponent(token) + '.gif" width="1" height="1" alt="" style="display:none" />';
 }
 
+/**
+ * Build HTML email headers and content with optional reply references.
+ * Remove line breaks from the subject before including it in the headers.
+ */
 function mime(from: string, to: string, subject: string, html: string, messageId: string, inReplyTo?: string): string {
   return [
     'From: ' + from,
@@ -138,6 +183,10 @@ function mime(from: string, to: string, subject: string, html: string, messageId
   ].filter(Boolean).join('\r\n');
 }
 
+/**
+ * Resolve lead, owner, and property links from supplied IDs or a contact address.
+ * Lookups are scoped to the organization; a supplied lead must exist there.
+ */
 async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: string; ownerId?: string; propertyId?: string; channel: CommunicationChannel; contactKey: string }) {
   let leadId = args.leadId || null;
   let ownerId = args.ownerId || null;
@@ -186,6 +235,10 @@ async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: 
   return { leadId, ownerId, propertyId };
 }
 
+/**
+ * Throw if the normalized recipient has a channel-specific or all-channel suppression
+ * within the organization.
+ */
 export async function assertNotSuppressed(pool: Pool, organizationId: string, channel: CommunicationChannel, contactKey: string) {
   const key = channel === 'email' ? normalizeEmail(contactKey) : normalizePhone(contactKey);
   const result = await pool.query(
@@ -195,6 +248,10 @@ export async function assertNotSuppressed(pool: Pool, organizationId: string, ch
   if (result.rowCount) throw new Error(channel.toUpperCase() + ' recipient is suppressed: ' + result.rows[0].reason);
 }
 
+/**
+ * Find and update an organization conversation by external thread ID or contact key,
+ * or create a new thread with the supplied CRM links.
+ */
 async function thread(pool: Pool, args: any) {
   const key = args.channel === 'email' ? normalizeEmail(args.contactKey) : normalizePhone(args.contactKey);
   const existing = await pool.query(
@@ -215,6 +272,10 @@ async function thread(pool: Pool, args: any) {
   return inserted.rows[0];
 }
 
+/**
+ * Insert a communication message and update its thread timestamp on success.
+ * On a uniqueness conflict, look up the existing message by provider and external ID.
+ */
 async function record(pool: Pool, args: any) {
   const result = await pool.query(
     "INSERT INTO communication_messages (id,organization_id,thread_id,channel,provider,direction,external_message_id,from_address,to_address,subject,body,html_body,status,tracking_token,idempotency_key,lead_id,owner_id,property_id,created_by,sent_at,received_at,metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,CASE WHEN $6='outbound' AND $13 IN ('sent','delivered','read','replied') THEN CURRENT_TIMESTAMP ELSE NULL END,CASE WHEN $6='inbound' THEN CURRENT_TIMESTAMP ELSE NULL END,$20) ON CONFLICT DO NOTHING RETURNING *",
@@ -228,6 +289,10 @@ async function record(pool: Pool, args: any) {
   return existing.rows[0];
 }
 
+/**
+ * Send tracked HTML through the user's connected Gmail account.
+ * Return provider message and thread IDs with the sender account address.
+ */
 async function sendGmail(pool: Pool, organizationId: string, userId: string, args: any) {
   const row = await connection(pool, organizationId, userId, 'google-workspace');
   const token = await accessToken(pool, row);
@@ -241,6 +306,10 @@ async function sendGmail(pool: Pool, organizationId: string, userId: string, arg
   return { externalMessageId:data.id, externalThreadId:data.threadId || args.externalThreadId || null, accountEmail:row.account_email, provider:'gmail' };
 }
 
+/**
+ * Create and send a tracked HTML draft through the user's connected Outlook account.
+ * Return the draft ID, conversation ID, and sender account address.
+ */
 async function sendOutlook(pool: Pool, organizationId: string, userId: string, args: any) {
   const row = await connection(pool, organizationId, userId, 'microsoft-365');
   const token = await accessToken(pool, row);
@@ -260,6 +329,11 @@ async function sendOutlook(pool: Pool, organizationId: string, userId: string, a
   return { externalMessageId:draft.id, externalThreadId:draft.conversationId || args.externalThreadId || null, accountEmail:row.account_email, provider:'outlook' };
 }
 
+/**
+ * Validate the recipient and suppressions, link CRM records, and send a tracked email.
+ * Reuse successfully sent records for the idempotency key and reject queued records with
+ * a previous provider attempt; persist the send result or failure and return the message.
+ */
 export async function sendEmailNow(pool: Pool, args: any) {
   const to = normalizeEmail(args.to);
   if (!EMAIL_RE.test(to)) throw new Error('A valid recipient email is required');
@@ -296,10 +370,17 @@ export async function sendEmailNow(pool: Pool, args: any) {
   }
 }
 
+/**
+ * Load the required Twilio account SID and authentication token from the environment.
+ */
 async function twilio() {
   return { sid:env('TWILIO_ACCOUNT_SID'), token:env('TWILIO_AUTH_TOKEN') };
 }
 
+/**
+ * Fetch up to 100 Twilio numbers and upsert them for the supplied organization.
+ * In production, require and apply the configured phone-number allowlist.
+ */
 export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   const cfg = await twilio();
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/IncomingPhoneNumbers.json?PageSize=100',{headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token)}});
@@ -319,6 +400,10 @@ export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   return numbers;
 }
 
+/**
+ * Validate the recipient and suppressions, send an SMS through Twilio, and record it.
+ * Return an existing message when the organization and idempotency key already match.
+ */
 export async function sendSmsNow(pool: Pool, args: any) {
   const to = normalizePhone(args.to);
   if (!PHONE_RE.test(to)) throw new Error('A valid E.164 phone number is required');
@@ -340,11 +425,19 @@ export async function sendSmsNow(pool: Pool, args: any) {
   return record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'outbound',externalMessageId:data.sid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:args.body,status:data.status === 'delivered' ? 'delivered' : 'sent',idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId,metadata:{twilio_status:data.status}});
 }
 
+/**
+ * Compare a Twilio webhook signature with the HMAC-SHA1 of its URL and sorted parameters.
+ */
 function validTwilio(reqUrl: string, params: Record<string,string>, signature: string, token: string): boolean {
   const payload = reqUrl + Object.keys(params).sort().map((key)=>key + params[key]).join('');
   return createHmac('sha1',token).update(payload).digest('base64') === signature;
 }
 
+/**
+ * Verify an inbound Twilio callback and record it for the destination number's organization.
+ * Require exactly one active organization mapping and record suppressions for STOP keywords.
+ * Unsigned callbacks are allowed only with the explicit development override.
+ */
 export async function handleTwilioInbound(pool: Pool, reqUrl: string, body: Record<string,string>, signature?: string) {
   const cfg = await twilio();
   const localUnsigned = process.env.NODE_ENV === 'development' && process.env.ALLOW_UNSIGNED_TWILIO_WEBHOOKS === 'true';
@@ -370,6 +463,10 @@ export async function handleTwilioInbound(pool: Pool, reqUrl: string, body: Reco
   }
 }
 
+/**
+ * Verify a Twilio status callback and update the uniquely mapped message's status.
+ * Record delivery events; unsigned callbacks require the explicit development override.
+ */
 export async function handleTwilioStatus(pool: Pool, reqUrl: string, body: Record<string,string>, signature?: string) {
   const cfg = await twilio();
   const localUnsigned = process.env.NODE_ENV === 'development' && process.env.ALLOW_UNSIGNED_TWILIO_WEBHOOKS === 'true';
@@ -390,16 +487,26 @@ export async function handleTwilioStatus(pool: Pool, reqUrl: string, body: Recor
   }
 }
 
+/**
+ * Return the first case-insensitive email header match, or an empty string.
+ */
 function header(headers:any[], name:string):string {
   return String((headers || []).find((h:any)=>String(h.name).toLowerCase() === name.toLowerCase())?.value || '');
 }
 
+/**
+ * Decode a Gmail MIME part body, recursively selecting the first nonempty child body.
+ */
 function gmailBody(part:any):string {
   if (part?.body?.data) return Buffer.from(String(part.body.data).replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');
   if (Array.isArray(part?.parts)) return part.parts.map(gmailBody).find(Boolean) || '';
   return '';
 }
 
+/**
+ * Fetch up to 25 Gmail messages from the last seven days and record them as inbound.
+ * Link CRM records, classify likely bounces, and count messages returned by persistence.
+ */
 async function syncGmail(pool: Pool, organizationId: string, userId: string) {
   const row = await connection(pool,organizationId,userId,'google-workspace');
   const token = await accessToken(pool,row);
@@ -423,6 +530,10 @@ async function syncGmail(pool: Pool, organizationId: string, userId: string) {
   return imported;
 }
 
+/**
+ * Fetch the latest 25 Outlook inbox messages and record them as inbound.
+ * Link CRM records, classify likely bounces, and count messages returned by persistence.
+ */
 async function syncOutlook(pool: Pool, organizationId: string, userId: string) {
   const row = await connection(pool,organizationId,userId,'microsoft-365');
   const token = await accessToken(pool,row);
@@ -444,16 +555,27 @@ async function syncOutlook(pool: Pool, organizationId: string, userId: string) {
   return imported;
 }
 
+/**
+ * Import messages from the selected connected email provider and return the processed count.
+ */
 export async function syncEmail(pool: Pool, organizationId: string, userId: string, provider: EmailProvider) {
   return provider === 'microsoft-365' ? syncOutlook(pool,organizationId,userId) : syncGmail(pool,organizationId,userId);
 }
 
+/**
+ * Enqueue an organization communication job with three allowed attempts.
+ * Optionally set its availability time and return the job ID.
+ */
 export async function queueCommunicationJob(pool: Pool, organizationId: string, jobType: string, payload: Record<string,unknown>, availableAt?: Date) {
   const jobId = await enqueueJob(pool,organizationId,jobType,payload,3);
   if (availableAt) await pool.query('UPDATE jobs SET available_at=$1 WHERE id=$2 AND organization_id=$3',[availableAt.toISOString(),jobId,organizationId]);
   return jobId;
 }
 
+/**
+ * Normalize a contact key and upsert its organization/channel suppression reason and source.
+ * Use email normalization for email, and phone normalization for other channels.
+ */
 export async function suppress(pool: Pool, organizationId: string, channel: string, contactKey: string, reason: string, source: string) {
   const key = channel === 'email' ? normalizeEmail(contactKey) : normalizePhone(contactKey);
   await pool.query(
@@ -463,6 +585,10 @@ export async function suppress(pool: Pool, organizationId: string, channel: stri
   return {channel,contactKey:key,reason,source};
 }
 
+/**
+ * Return up to 250 organization threads, optionally filtered by channel,
+ * with message counts ordered by most recent activity.
+ */
 export async function listThreads(pool: Pool, organizationId: string, channel?: CommunicationChannel) {
   const params:any[]=[organizationId];
   const where=['organization_id=$1'];
@@ -474,6 +600,10 @@ export async function listThreads(pool: Pool, organizationId: string, channel?: 
   return result.rows;
 }
 
+/**
+ * Return a thread's messages in creation order, requiring both messages and thread
+ * to belong to the supplied organization.
+ */
 export async function listThreadMessages(pool: Pool, organizationId: string, threadId: string) {
   const result=await pool.query(
     'SELECT m.*,t.contact_key,t.subject AS thread_subject FROM communication_messages m JOIN communication_threads t ON t.id=m.thread_id WHERE m.organization_id=$1 AND t.organization_id=$1 AND t.id=$2 ORDER BY m.created_at ASC',
@@ -482,6 +612,10 @@ export async function listThreadMessages(pool: Pool, organizationId: string, thr
   return result.rows;
 }
 
+/**
+ * Return recent organization messages filtered by lead, owner, or property IDs.
+ * Default to 100 results and clamp the requested limit to between 1 and 250.
+ */
 export async function listTimeline(pool: Pool, organizationId: string, filters: any) {
   const params:any[]=[organizationId];
   const where=['m.organization_id=$1'];
@@ -496,6 +630,10 @@ export async function listTimeline(pool: Pool, organizationId: string, filters: 
   return result.rows;
 }
 
+/**
+ * Record an open or click event for a known tracking token and update read status.
+ * For known tokens, require a signed HTTP(S) destination for clicks; ignore unknown tokens.
+ */
 export async function recordTrackingEvent(pool: Pool, token: string, type:'opened'|'clicked', url?:string, signature?:string) {
   const result=await pool.query('SELECT id,organization_id FROM communication_messages WHERE tracking_token=$1 LIMIT 1',[token]);
   if (!result.rowCount) return;
@@ -507,6 +645,10 @@ export async function recordTrackingEvent(pool: Pool, token: string, type:'opene
   await pool.query("UPDATE communication_messages SET status=CASE WHEN $1='opened' AND status='sent' THEN 'read' WHEN $1='clicked' THEN 'read' ELSE status END WHERE id=$2", [type,message.id]);
 }
 
+/**
+ * Create a sequence and its ordered steps in one transaction, returning its ID.
+ * Roll back all inserts if any step fails.
+ */
 export async function createSequence(pool: Pool, organizationId: string, userId: string, input:any) {
   const client=await pool.connect();
   try {
@@ -524,6 +666,10 @@ export async function createSequence(pool: Pool, organizationId: string, userId:
   } finally { client.release(); }
 }
 
+/**
+ * Verify that the sequence and lead belong to the organization, then enroll or restart the lead.
+ * Replace queued sequence jobs with the first delayed step and return the enrollment ID.
+ */
 export async function enrollSequence(pool: Pool, organizationId: string, userId: string, sequenceId: string, leadId: string) {
   const ownership=await pool.query(
     "SELECT s.id AS sequence_id,l.id AS lead_id FROM communication_sequences s CROSS JOIN leads l WHERE s.id=$1 AND s.organization_id=$3 AND l.id=$2 AND l.organization_id=$3 LIMIT 1",
@@ -548,6 +694,10 @@ export async function enrollSequence(pool: Pool, organizationId: string, userId:
   return row.rows[0].id;
 }
 
+/**
+ * Send the active enrollment's current template through its email or SMS channel.
+ * Complete the enrollment or schedule its next delayed step and return its progress.
+ */
 export async function runSequenceStep(pool: Pool, organizationId: string, enrollmentId: string) {
   const result=await pool.query(
     "SELECT e.*,s.channel,s.template_id,s.step_order,l.owner_id,l.primary_property_id,o.name AS owner_name,o.email_addresses,o.phone_numbers FROM communication_sequence_enrollments e JOIN communication_sequence_steps s ON s.sequence_id=e.sequence_id AND s.step_order=e.current_step_order JOIN leads l ON l.id=e.lead_id AND l.organization_id=e.organization_id LEFT JOIN property_owners o ON o.id=l.owner_id AND o.organization_id=l.organization_id WHERE e.id=$1 AND e.organization_id=$2 AND e.status='active' LIMIT 1",
@@ -558,6 +708,9 @@ export async function runSequenceStep(pool: Pool, organizationId: string, enroll
   const tpl=await pool.query('SELECT id,channel,subject,body FROM outreach_templates WHERE id=$1 AND organization_id=$2 LIMIT 1',[row.template_id,organizationId]);
   if (!tpl.rowCount) throw new Error('Sequence template not found');
   const context:any={owner_name:row.owner_name || 'Property Owner',first_name:String(row.owner_name || 'Property Owner').split(' ')[0]};
+  /**
+   * Substitute known owner-context template variables, preserving unknown placeholders.
+   */
   const render=(value:string)=>String(value || '').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g,(_m,k)=>context[k] || _m);
   const email=Array.isArray(row.email_addresses) ? row.email_addresses.find((x:any)=>EMAIL_RE.test(String(x?.email || '')))?.email : '';
   const phone=Array.isArray(row.phone_numbers) ? row.phone_numbers.find((x:any)=>PHONE_RE.test(normalizePhone(String(x?.number || ''))) && !x?.dnc_status)?.number : '';

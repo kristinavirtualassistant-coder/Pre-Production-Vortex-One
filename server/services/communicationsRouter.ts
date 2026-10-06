@@ -22,6 +22,9 @@ import {
 
 const router = Router();
 
+/**
+ * Return the PostgreSQL pool, or send a 503 response and return null when unavailable.
+ */
 function poolOrFail(res: Response) {
   const pool = getPgPool();
   if (!pool) {
@@ -31,6 +34,9 @@ function poolOrFail(res: Response) {
   return pool;
 }
 
+/**
+ * Return the authenticated user's organization ID, throwing when none is associated.
+ */
 function org(req: AuthRequest): string {
   if (!req.dbUser?.organization_id) throw new Error('No organization associated with authenticated user');
   return req.dbUser.organization_id;

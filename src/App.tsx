@@ -105,6 +105,10 @@ function getViewFromUrl(): string {
   return 'home';
 }
 
+/**
+ * Render the authenticated workspace and active view, coordinating tenant data, navigation,
+ * and shared dialogs across CRM, communications, and other tools.
+ */
 export default function App() {
   const { user, userProfile, activeTenant, loading: authLoading, getAuthHeaders, getAccessToken } = useAuth();
 
