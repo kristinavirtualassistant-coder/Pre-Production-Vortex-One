@@ -43,8 +43,11 @@ export interface AgentDefinition {
   allowedTools: string[];
   allowedData: string[];
   model: string;
+  provider?: 'gemini' | 'openai' | 'anthropic';
   temperature: number;
   maxTokens?: number;
+  maxRetries?: number;
+  memoryEnabled?: boolean;
   permissions: string[];
   parentAgentId: string | null;
   enabled: boolean;
