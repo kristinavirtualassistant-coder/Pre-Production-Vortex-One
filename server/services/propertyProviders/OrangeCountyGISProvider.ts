@@ -171,6 +171,7 @@ export class OrangeCountyGISProvider implements IPropertyDataProvider {
         outFields: '*',
         returnGeometry: 'true',
         resultRecordCount: limit.toString(),
+        outSR: '4326',
         f: 'json',
       });
 
