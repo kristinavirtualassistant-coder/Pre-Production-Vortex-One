@@ -138,7 +138,7 @@ export const AgentBuilderView: React.FC<AgentBuilderViewProps> = ({ onRegisterAg
             <select value={provider} onChange={(e) => {
               const p = e.target.value as 'gemini' | 'openai' | 'anthropic';
               setProvider(p);
-              setModel(p === 'openai' ? 'gpt-6-luna' : p === 'anthropic' ? 'claude-sonnet-4-5' : 'gemini-3.5-flash');
+              setModel(p === 'openai' ? 'gpt-6-luna' : p === 'anthropic' ? 'claude-sonnet-4-5' : 'gemini-3.8-flash');
             }} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900">
               <option value="gemini">Google Gemini</option>
               <option value="openai">OpenAI</option>
