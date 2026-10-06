@@ -1,4 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react';
+              {drawing && draftPath.map((point, index) => (
+                <Marker key={`draft-${index}`} position={point} />
+              ))}import React, { useCallback, useMemo, useState } from 'react';
 import { APIProvider, Map, Marker, Polygon } from '@vis.gl/react-google-maps';
 import {
   Building2,
@@ -399,12 +401,7 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
                       setSelectedProperty(property);
                       toggleSelection(property.id);
                     }}
-                  >
-                    <button
-                      type="button"
-                      className={`w-3 h-3 rounded-full border-2 border-white shadow-md ${selectedIds.includes(property.id) ? 'bg-cyan-400 scale-125' : property.has_lead ? 'bg-amber-400' : 'bg-slate-700'}`}
-                    />
-                  </Marker>
+                  />
                 );
               })}
 
