@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { getPgPool } from '../db/db';
 import { requireOrganizationId } from './organizationContext';
+import { recordCostEvent } from './analyticsService';
 
 export type EnrichmentCapability =
   | 'OWNER_IDENTITY'
@@ -368,7 +369,19 @@ export class OwnerEnrichmentService {
     );
 
     try {
+      const enrichmentStartedAt = Date.now();
       const result = await provider.enrich(pool, { ...request, organizationId: orgId });
+      await recordCostEvent(pool, {
+        organizationId: orgId,
+        id: `cost_enrich_${jobId}`,
+        category: 'owner_enrichment',
+        provider: provider.name,
+        quantity: 1,
+        totalCostUsd: 0,
+        referenceType: 'owner_enrichment_job',
+        referenceId: jobId,
+        metadata: { status: result.status, durationMs: Date.now() - enrichmentStartedAt, records: result.records.length },
+      });
       const sourceId = id('src');
       await pool.query(
         `INSERT INTO owner_source_records
