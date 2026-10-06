@@ -806,7 +806,10 @@ export const MIGRATIONS: Migration[] = [
         ON appointments(organization_id, status);
     `,
   },
-  { version: 21, name: '021_create_file_assets', sql: \`
+  {
+    version: 21,
+    name: '021_create_file_assets',
+    sql: `
       CREATE TABLE IF NOT EXISTS file_assets (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -826,5 +829,6 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_file_assets_org_entity ON file_assets(organization_id, entity_type, entity_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_file_assets_org_category ON file_assets(organization_id, category, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_file_assets_search ON file_assets USING GIN (to_tsvector('simple', coalesce(original_name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(extracted_text,'')));
-\` },
-];\n
+    `,
+  },
+];
