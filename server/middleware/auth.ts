@@ -362,62 +362,63 @@ async function billingAndUsage(req: AuthRequest,res: Response,pool: NonNullable<
 }
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const pool = getPgPool();
-  if (!pool) return res.status(503).json({ error: 'Database unavailable' });
-
-  try {
+  const pool=getPgPool();
+  if(!pool)return res.status(503).json({error:'Database unavailable'});
+  try{
     await ensurePostgreSQLAuthSchema(pool);
 
-    if (req.path === '/auth/login' && req.method === 'POST') return handleLogin(req, res, pool);
-    if (req.path === '/auth/signup' && req.method === 'POST') return handleSignup(req, res, pool);
-    if (req.path === '/tenant/invites' && req.method === 'POST') {
-      return createTenantInvite(req, res, pool);
-    }
-    if (req.path === '/auth/logout' && req.method === 'POST') {
-      const authorization = req.headers.authorization;
-      if (authorization?.startsWith('Bearer ')) {
-        await pool.query('DELETE FROM auth_sessions WHERE token_hash = $1', [hashSessionToken(authorization.slice(7))]);
-      }
+    if(req.path==='/auth/login'&&req.method==='POST')return handleLogin(req,res,pool);
+    if(req.path==='/auth/signup'&&req.method==='POST')return handleSignup(req,res,pool);
+    if(req.path==='/auth/verify-email'&&req.method==='POST')return handleVerifyEmail(req,res,pool);
+    if(req.path==='/auth/password-reset/request'&&req.method==='POST')return handleRequestPasswordReset(req,res,pool);
+    if(req.path==='/auth/password-reset/confirm'&&req.method==='POST')return handleResetPassword(req,res,pool);
+    if(req.path==='/auth/mfa/verify'&&req.method==='POST')return handleMfaVerify(req,res,pool);
+
+    const token=getSessionToken(req);
+    if(!token)return res.status(401).json({error:'Unauthorized: Missing session'});
+    const tokenHash=hashOneTimeToken(token);
+    const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
+      FROM auth_sessions s JOIN users u ON u.id=s.user_id
+      WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
+        AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash]);
+    const dbUser=rows[0];
+    if(!dbUser)return res.status(401).json({error:'Unauthorized: Invalid or expired session'});
+    req.dbUser=dbUser;
+    req.user={uid:dbUser.id,email:dbUser.email,name:dbUser.name,role:dbUser.role};
+    await pool.query('UPDATE auth_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
+
+    if(req.path==='/auth/logout'&&req.method==='POST'){
+      await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
+      clearSessionCookie(res);
       return res.status(204).send();
     }
-
-    const authorization = req.headers.authorization;
-    if (!authorization?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    if(req.path==='/auth/me'&&req.method==='GET'){
+      const user=(await pool.query(`SELECT u.id,u.email,u.name,u.role,u.created_at,u.last_login_at,u.email_verified_at,u.mfa_enabled,
+        o.id AS organization_id,o.name AS organization_name,o.slug AS organization_slug,o.billing_email,o.timezone,o.settings
+        FROM users u JOIN organizations o ON o.id=u.organization_id WHERE u.id=$1`,[dbUser.id])).rows[0];
+      return res.json({user});
     }
+    if(req.path==='/auth/sessions'&&req.method==='GET')return listSessions(req,res,pool);
+    if(req.path==='/auth/sessions/revoke-others'&&req.method==='POST')return revokeOtherSessions(req,res,pool);
+    if(req.path==='/auth/mfa/setup'&&req.method==='POST')return handleMfaSetup(req,res,pool);
+    if(req.path==='/auth/mfa/enable'&&req.method==='POST')return handleMfaEnable(req,res,pool);
+    if(req.path==='/auth/mfa/disable'&&req.method==='POST')return handleMfaDisable(req,res,pool);
+    if(req.path==='/tenant/invites'&&req.method==='POST')return createTenantInvite(req,res,pool);
+    if(req.path==='/tenant/invites'&&req.method==='GET'){
+      if(!['admin','executive','manager'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+      const invites=(await pool.query(`SELECT id,email,role,expires_at,accepted_at,created_at FROM organization_invites
+        WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 100`,[dbUser.organization_id])).rows;
+      return res.json({invites});
+    }
+    if(req.path==='/organization/settings'&&(req.method==='GET'||req.method==='PATCH'))return organizationSettings(req,res,pool);
+    if(req.path==='/organization/billing'&&req.method==='GET')return billingAndUsage(req,res,pool);
 
-    const tokenHash = hashSessionToken(authorization.slice('Bearer '.length));
-    const { rows } = await pool.query(
-      `SELECT u.id, u.organization_id, u.email, u.name, u.role
-       FROM auth_sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = $1
-         AND s.expires_at > CURRENT_TIMESTAMP
-         AND u.disabled_at IS NULL
-       LIMIT 1`,
-      [tokenHash],
-    );
-
-    const dbUser = rows[0];
-    if (!dbUser) return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
-
-    req.dbUser = dbUser;
-    req.user = { uid: dbUser.id, email: dbUser.email, name: dbUser.name, role: dbUser.role };
-    await pool.query('UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = $1', [tokenHash]);
     canonicalizeOrganizationContext(req);
     return next();
-  } catch (error: any) {
-    if (error instanceof AuthorizationError) return res.status(error.statusCode).json({ error: error.message });
-    if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT') {
-      console.error('PostgreSQL authentication connection error:', error);
-      return res.status(503).json({
-        error: 'Authentication database unavailable',
-        code: 'AUTH_DATABASE_UNAVAILABLE',
-        detail: `Unable to connect to PostgreSQL at ${process.env.SQL_HOST || process.env.DB_HOST || 'configured host'}:${process.env.SQL_PORT || process.env.DB_PORT || '5432'}.`,
-      });
-    }
-    console.error('PostgreSQL authentication error:', error);
-    return res.status(500).json({ error: 'Authentication service unavailable' });
+  }catch(error:any){
+    if(error instanceof AuthorizationError)return res.status(error.statusCode).json({error:error.message});
+    console.error('PostgreSQL authentication error:',error);
+    return res.status(500).json({error:'Authentication service unavailable'});
   }
 };
 
