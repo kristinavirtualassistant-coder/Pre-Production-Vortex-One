@@ -43,7 +43,7 @@ import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
 
-async function startServer() {
+export async function createApp() {
   const app = express();
   const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
@@ -4301,9 +4301,20 @@ ${transcript}`;
     }
   });
 
-  app.listen(PORT, '0.0.0.0', () => {
+  return app;
+}
+
+export async function startServer() {
+  const app = await createApp();
+  const PORT = Number(process.env.PORT || 8080);
+  return app.listen(PORT, '0.0.0.0', () => {
     console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+if (typeof require !== 'undefined' && require.main === module) {
+  startServer().catch((err) => {
+    console.error('Vortex One startup failed:', err);
+    process.exit(1);
+  });
+}
