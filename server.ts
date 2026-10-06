@@ -41,6 +41,7 @@ import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns,
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
+import communicationsRouter from './server/services/communicationsRouter';
 
 async function startServer() {
   const app = express();
@@ -159,6 +160,8 @@ async function startServer() {
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
   });
+
+  app.use('/api/communications', communicationsRouter);
 
   // --- Integration Center ---
   app.get('/api/integrations', async (req, res) => {
