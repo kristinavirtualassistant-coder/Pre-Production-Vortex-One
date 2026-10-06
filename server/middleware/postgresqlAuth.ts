@@ -1,25 +1,26 @@
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
-import { hashSessionToken } from '../services/postgresqlAuth';
+import { getSessionToken, hashOneTimeToken } from '../services/accountSecurity';
 
 export interface PostgreSQLAuthRequest extends Request {
   dbUser?: { id: string; organization_id: string; email: string; name: string; role: string };
 }
 
 export async function requirePostgreSQLAuth(req: PostgreSQLAuthRequest, res: Response, next: NextFunction) {
-  const authorization = req.headers.authorization;
-  if (!authorization?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized: Missing token' });
+  const token = getSessionToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized: Missing session' });
   const pool = getPgPool();
   if (!pool) return res.status(503).json({ error: 'Database unavailable' });
 
   try {
-    const tokenHash = hashSessionToken(authorization.slice(7));
+    const tokenHash = hashOneTimeToken(token);
     const result = await pool.query(
       `SELECT u.id, u.organization_id, u.email, u.name, u.role
        FROM auth_sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = $1
          AND s.expires_at > CURRENT_TIMESTAMP
+         AND s.revoked_at IS NULL
          AND u.disabled_at IS NULL
        LIMIT 1`,
       [tokenHash],
