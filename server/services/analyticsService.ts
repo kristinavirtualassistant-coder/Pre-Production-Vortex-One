@@ -128,6 +128,8 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
           (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND stage='won') AS won_leads,
           (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND stage='lost') AS lost_leads,
           (SELECT COUNT(*) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_added,
+          (SELECT COALESCE(SUM(estimated_value),0) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_value_usd,
+          (SELECT COALESCE(SUM(estimated_equity),0) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_equity_usd,
           (SELECT COUNT(*) FROM property_owners WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS owners_added
         `,
         [organizationId, start, end],
@@ -271,7 +273,10 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
     overview: {
       leads, contacts: n(o.contacts), calls, connectedCalls: connected, appointments,
       completedAppointments: n(o.completed_appointments), wonLeads: won, lostLeads: n(o.lost_leads),
-      propertiesAdded: n(o.properties_added), ownersAdded: n(o.owners_added),
+      propertiesAdded: n(o.properties_added),
+      propertyValueUsd: n(o.properties_value_usd),
+      propertyEquityUsd: n(o.properties_equity_usd),
+      ownersAdded: n(o.owners_added),
       contactRate: leads ? connected / leads * 100 : 0,
       appointmentRate: leads ? appointments / leads * 100 : 0,
       winRate: leads ? won / leads * 100 : 0,
