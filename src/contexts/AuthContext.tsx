@@ -49,7 +49,7 @@ interface AuthContextType {
   mfaChallengeToken: string | null;
   verificationRequired: boolean;
   signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, pass: string) => Promise<void>;
+  signInWithEmail: (email: string, pass: string) => Promise<{ mfaRequired?: boolean }>;
   verifyMfa: (code: string) => Promise<void>;
   signUpWithEmail: (params: SignUpParams) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
@@ -151,9 +151,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       if (data.mfaRequired && data.challengeToken) {
         setMfaChallengeToken(data.challengeToken);
-        return;
+        return { mfaRequired: true };
       }
       applyUser(data);
+      return { mfaRequired: false };
     } catch (err: any) {
       setError(err?.message || 'Sign-in failed');
       throw err;
