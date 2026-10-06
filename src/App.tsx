@@ -532,7 +532,7 @@ export default function App() {
   const handleRegisterAgent = async (newAgent: AgentDefinition) => {
     const orgId = getActiveOrgId();
     try {
-      const res = await fetch('/api/agents', {
+      const res = await fetch('/api/ai-agents', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
