@@ -296,7 +296,7 @@ export const TOOLS: Record<string, ToolDefinition> = {
 export async function executeTool(
   toolName: string,
   args: any,
-  context: { organizationId: string; agentId: string }
+  context: { organizationId: string; agentId: string; approvalId?: string }
 ): Promise<any> {
   const tool = TOOLS[toolName];
   if (!tool) throw new Error(`Tool ${toolName} is not registered in the system.`);
@@ -313,12 +313,15 @@ export async function executeTool(
     if (!pool) throw new Error('PostgreSQL is required for outbound-call approval verification');
     const approval = await pool.query(
       `SELECT id FROM approvals
-       WHERE id = $1 AND organization_id = $2 AND status = 'approved'
+       WHERE id = $1
+         AND organization_id = $2
+         AND status = 'approved'
          AND action_type IN ('make_call', 'outbound_call', 'outbound_campaign_dispatch')
        LIMIT 1`,
       [context.approvalId, requireOrganizationId(context.organizationId)],
     );
     if (!approval.rowCount) throw new Error('The supplied human approval is missing, not approved, or belongs to another organization.');
   }
+
   return await tool.execute(args, context);
 }

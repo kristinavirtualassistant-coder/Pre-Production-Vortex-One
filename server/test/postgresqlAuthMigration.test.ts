@@ -3,8 +3,8 @@ import { POSTGRESQL_AUTH_MIGRATION } from '../db/postgresqlAuthMigration';
 
 const migration13 = POSTGRESQL_AUTH_MIGRATION;
 
-assert.equal(migration13.version, 13);
-assert.equal(migration13.name, '013_create_tenant_invitation_schema');
+assert.equal(migration13.version, 19);
+assert.equal(migration13.name, '019_auth_bootstrap_compatibility');
 
 const sql = migration13.sql;
 assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash/i);
@@ -24,4 +24,4 @@ assert.match(sql, /REFERENCES webhook_endpoints\(id\) ON DELETE CASCADE/i);
 assert.match(sql, /CREATE TABLE IF NOT EXISTS voicemail_library/i);
 assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_voicemail_library_org/i);
 
-console.log('PostgreSQL tenant invitation/auth migration 13 checks passed');
+console.log('PostgreSQL tenant invitation/auth migration 19 checks passed');

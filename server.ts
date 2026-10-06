@@ -14,7 +14,7 @@ import { executeSubAgent } from './server/agents/subAgents';
 import { generateSpeechTTS } from './server/gemini';
 import { AgentDefinition, Workflow, WorkflowStep, WorkflowRun, Task, Property, CallRecord } from './src/types';
 import { CampaignManager } from './server/dialer/campaignManager';
-import { SuppressionService } from './server/dialer/suppressionService';
+import { SuppressionService, normalizePhoneNumber } from './server/dialer/suppressionService';
 import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
 import { ManualDialService, ManualDialNotFoundError, ManualDialSuppressedError } from './server/dialer/manualDialService';
@@ -53,7 +53,7 @@ async function startServer() {
     if (isProduction) throw err;
   }
 
-  // --- API Routes ---
+  // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
@@ -1254,6 +1254,132 @@ async function startServer() {
       return res.json(result.rows);
     } catch (err: any) {
       return res.status(503).json({ error: 'Production properties are temporarily unavailable', code: 'PROPERTY_DATABASE_ERROR' });
+    }
+  });
+
+  // Native Property Intelligence map search. Spatial filtering is tenant-scoped and database-backed.
+  app.post('/api/map/search', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Native map search requires PostgreSQL/PostGIS', code: 'MAP_DATABASE_UNAVAILABLE' });
+
+      const polygon = req.body?.polygon;
+      if (!polygon || polygon.type !== 'Polygon' || !Array.isArray(polygon.coordinates) || polygon.coordinates.length === 0) {
+        return res.status(400).json({ error: 'A GeoJSON Polygon is required' });
+      }
+
+      const maxResults = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
+      const rings = polygon.coordinates as unknown[];
+      const allPoints = rings.flatMap((ring: any) => Array.isArray(ring) ? ring : []);
+      const coordinateCount = allPoints.length;
+      if (rings.length === 0 || coordinateCount < 4 || coordinateCount > 1000) {
+        return res.status(400).json({ error: 'Polygon must contain between 3 and 999 total vertices.' });
+      }
+      for (const ring of rings) {
+        if (!Array.isArray(ring) || ring.length < 4 || ring.length > 1000) {
+          return res.status(400).json({ error: 'Each polygon ring must contain between 3 and 999 vertices.' });
+        }
+        for (const point of ring) {
+          if (!Array.isArray(point) || point.length < 2 || !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) ||
+              Number(point[0]) < -180 || Number(point[0]) > 180 || Number(point[1]) < -90 || Number(point[1]) > 90) {
+            return res.status(400).json({ error: 'Polygon coordinates must be valid longitude/latitude pairs.' });
+          }
+        }
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (Number(first[0]) !== Number(last[0]) || Number(first[1]) !== Number(last[1])) {
+          return res.status(400).json({ error: 'Each polygon ring must be closed.' });
+        }
+      }
+      const distinctPoints = new Set(
+        (rings[0] as any[]).map((point: any) => `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)}`),
+      );
+      if (distinctPoints.size < 3) {
+        return res.status(400).json({ error: 'Polygon must contain at least three distinct points.' });
+      }
+      const params: any[] = [orgId, JSON.stringify(polygon)];
+      const filters: string[] = [
+        'p.organization_id = $1',
+        'p.location IS NOT NULL',
+        'ST_Intersects(p.location, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)::geography)',
+      ];
+
+      const minEquity = Number(req.body?.minEquity);
+      const maxEquity = Number(req.body?.maxEquity);
+      const absenteeOnly = req.body?.absenteeOnly === true;
+      const corporateOnly = req.body?.corporateOnly === true;
+      const taxDelinquentOnly = req.body?.taxDelinquentOnly === true;
+      const propertyType = typeof req.body?.propertyType === 'string' ? req.body.propertyType.trim() : '';
+
+      if (Number.isFinite(minEquity)) {
+        params.push(minEquity);
+        filters.push(`p.estimated_equity >= $${params.length}`);
+      }
+      if (Number.isFinite(maxEquity)) {
+        params.push(maxEquity);
+        filters.push(`p.estimated_equity <= $${params.length}`);
+      }
+      if (absenteeOnly) filters.push('p.is_absentee_owner = TRUE');
+      if (corporateOnly) filters.push('p.is_corporate_owned = TRUE');
+      if (taxDelinquentOnly) filters.push('p.tax_delinquent = TRUE');
+      if (propertyType && propertyType !== 'All') {
+        params.push(propertyType);
+        filters.push(`p.property_type = $${params.length}`);
+      }
+
+      params.push(maxResults);
+      const client = await pool.connect();
+      let result: any;
+      try {
+        await client.query('BEGIN');
+        await client.query('SET LOCAL statement_timeout = 5000');
+        result = await client.query(
+        `SELECT
+           p.id, p.organization_id, p.address, p.city, p.state, p.zip, p.county, p.apn,
+           p.property_type, p.units_count, p.square_feet, p.year_built,
+           p.estimated_value, p.assessed_tax_value, p.estimated_equity, p.mortgage_balance,
+           p.is_absentee_owner, p.is_corporate_owned, p.tax_delinquent,
+           p.last_sale_date, p.last_sale_price, p.latitude, p.longitude,
+           p.parcel_geometry, p.map_signals, p.hazard_flags, p.tags,
+           o.id AS owner_id, o.name AS owner_name, o.entity_type AS owner_entity_type,
+           o.mailing_address AS owner_mailing_address, o.mailing_city AS owner_mailing_city,
+           o.mailing_state AS owner_mailing_state, o.mailing_zip AS owner_mailing_zip,
+           o.phone_numbers AS owner_phone_numbers, o.email_addresses AS owner_email_addresses,
+           EXISTS (
+             SELECT 1 FROM leads l
+             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
+           ) AS has_lead,
+           (
+             SELECT l.id FROM leads l
+             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
+             ORDER BY l.created_at DESC LIMIT 1
+           ) AS lead_id
+         FROM properties p
+         LEFT JOIN property_owners o
+           ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE ${filters.join(' AND ')}
+         ORDER BY p.estimated_equity DESC NULLS LAST
+         LIMIT $${params.length}`,
+        params,
+        );
+        await client.query('COMMIT');
+      } catch (queryError) {
+        await client.query('ROLLBACK');
+        throw queryError;
+      } finally {
+        client.release();
+      }
+
+      return res.json({
+        success: true,
+        count: result.rows.length,
+        properties: result.rows,
+        spatialFilter: polygon,
+      });
+    } catch (err: any) {
+      console.error('[native-map-search] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Native map search failed', code: 'MAP_SEARCH_FAILED' });
     }
   });
 
@@ -2706,6 +2832,23 @@ async function startServer() {
   app.post('/api/campaigns', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const contacts = req.body.contacts && Array.isArray(req.body.contacts) ? req.body.contacts : [];
+
+      // Validate the complete contact set before creating the campaign so invalid
+      // or duplicate phones cannot leave an orphaned outbound campaign.
+      if (contacts.length > 0) {
+        const normalizedPhones = contacts.map((contact: any) => normalizePhoneNumber(contact?.phoneNumber || ''));
+        if (normalizedPhones.some((phone: string | null) => !phone)) {
+          return res.status(400).json({ error: 'Every campaign contact must include a valid phone number.' });
+        }
+        if (new Set(normalizedPhones).size !== normalizedPhones.length) {
+          return res.status(409).json({
+            error: 'Campaign contacts contain duplicate normalized phone numbers.',
+            code: 'CAMPAIGN_CONTACT_DUPLICATE_PHONE',
+          });
+        }
+      }
+
       const camp = await CampaignManager.createCampaign({
         organizationId: orgId,
         name: req.body.name || 'Targeted Multi-Family Outreach Campaign',
@@ -2718,12 +2861,22 @@ async function startServer() {
         timezone: req.body.timezone,
       });
 
-      // If contacts are provided in the creation payload, attach them
-      if (req.body.contacts && Array.isArray(req.body.contacts) && req.body.contacts.length > 0) {
-        await CampaignManager.addContacts(orgId, camp.id, req.body.contacts);
+      let addedContacts = 0;
+      if (contacts.length > 0) {
+        const contactResult = await CampaignManager.addContacts(orgId, camp.id, contacts);
+        addedContacts = contactResult.added;
+        if (addedContacts !== req.body.contacts.length) {
+          return res.status(409).json({
+            error: 'Campaign created but not all requested contacts were attached.',
+            code: 'CAMPAIGN_CONTACT_ATTACHMENT_INCOMPLETE',
+            campaign: camp,
+            requestedContacts: req.body.contacts.length,
+            addedContacts,
+          });
+        }
       }
 
-      res.status(201).json(camp);
+      res.status(201).json({ ...camp, addedContacts });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
