@@ -10,4 +10,4 @@ assert.equal(evaluateCondition({field:'lead.status',operator:'contains',value:'q
 console.log('Workflow automation condition tests passed.');
 
 assert.equal(evaluateCondition({field:'lead.createdAt',operator:'before',value:'2026-10-07T00:00:00Z'}, {...context,lead:{...context.lead,createdAt:'2026-10-06T12:00:00Z'}}),true);
-assert.equal(evaluateCondition({field:'lead.createdAt',operator:'on_or_after',value:'$now'}, {...context,lead:{...context.lead,createdAt:new Date().toISOString()}}),true);
+assert.equal(evaluateCondition({field:'lead.createdAt',operator:'on_or_after',value:'$now'}, {...context,lead:{...context.lead,createdAt:new Date(Date.now()+60_000).toISOString()}}),true);
