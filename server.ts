@@ -1511,6 +1511,92 @@ async function startServer() {
     }
   });
 
+  // Native Property Intelligence map search. Spatial filtering is tenant-scoped and database-backed.
+  app.post('/api/map/search', async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Native map search requires PostgreSQL/PostGIS', code: 'MAP_DATABASE_UNAVAILABLE' });
+
+      const polygon = req.body?.polygon;
+      if (!polygon || polygon.type !== 'Polygon' || !Array.isArray(polygon.coordinates) || polygon.coordinates.length === 0) {
+        return res.status(400).json({ error: 'A GeoJSON Polygon is required' });
+      }
+
+      const maxResults = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
+      const params: any[] = [orgId, JSON.stringify(polygon)];
+      const filters: string[] = [
+        'p.organization_id = $1',
+        'p.location IS NOT NULL',
+        'ST_Intersects(p.location::geometry, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326))',
+      ];
+
+      const minEquity = Number(req.body?.minEquity);
+      const maxEquity = Number(req.body?.maxEquity);
+      const absenteeOnly = req.body?.absenteeOnly === true;
+      const corporateOnly = req.body?.corporateOnly === true;
+      const taxDelinquentOnly = req.body?.taxDelinquentOnly === true;
+      const propertyType = typeof req.body?.propertyType === 'string' ? req.body.propertyType.trim() : '';
+
+      if (Number.isFinite(minEquity)) {
+        params.push(minEquity);
+        filters.push(`p.estimated_equity >= $${params.length}`);
+      }
+      if (Number.isFinite(maxEquity)) {
+        params.push(maxEquity);
+        filters.push(`p.estimated_equity <= $${params.length}`);
+      }
+      if (absenteeOnly) filters.push('p.is_absentee_owner = TRUE');
+      if (corporateOnly) filters.push('p.is_corporate_owned = TRUE');
+      if (taxDelinquentOnly) filters.push('p.tax_delinquent = TRUE');
+      if (propertyType && propertyType !== 'All') {
+        params.push(propertyType);
+        filters.push(`p.property_type = $${params.length}`);
+      }
+
+      params.push(maxResults);
+      const result = await pool.query(
+        `SELECT
+           p.id, p.organization_id, p.address, p.city, p.state, p.zip, p.county, p.apn,
+           p.property_type, p.units_count, p.square_feet, p.year_built,
+           p.estimated_value, p.assessed_tax_value, p.estimated_equity, p.mortgage_balance,
+           p.is_absentee_owner, p.is_corporate_owned, p.tax_delinquent,
+           p.last_sale_date, p.last_sale_price, p.latitude, p.longitude,
+           p.parcel_geometry, p.map_signals, p.hazard_flags, p.tags,
+           o.id AS owner_id, o.name AS owner_name, o.entity_type AS owner_entity_type,
+           o.mailing_address AS owner_mailing_address, o.mailing_city AS owner_mailing_city,
+           o.mailing_state AS owner_mailing_state, o.mailing_zip AS owner_mailing_zip,
+           o.phone_numbers AS owner_phone_numbers, o.email_addresses AS owner_email_addresses,
+           EXISTS (
+             SELECT 1 FROM leads l
+             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
+           ) AS has_lead,
+           (
+             SELECT l.id FROM leads l
+             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
+             ORDER BY l.created_at DESC LIMIT 1
+           ) AS lead_id
+         FROM properties p
+         LEFT JOIN property_owners o
+           ON o.id = p.owner_id AND o.organization_id = p.organization_id
+         WHERE ${filters.join(' AND ')}
+         ORDER BY p.estimated_equity DESC NULLS LAST
+         LIMIT $${params.length}`,
+        params,
+      );
+
+      return res.json({
+        success: true,
+        count: result.rows.length,
+        properties: result.rows,
+        spatialFilter: polygon,
+      });
+    } catch (err: any) {
+      console.error('[native-map-search] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Native map search failed', code: 'MAP_SEARCH_FAILED' });
+    }
+  });
+
   // Bulk Apply / Remove Tags on Selected Properties
   app.post('/api/properties/bulk-tags', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
