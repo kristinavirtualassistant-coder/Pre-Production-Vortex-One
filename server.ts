@@ -110,25 +110,17 @@ async function startServer() {
 
   // --- Task Cache & Saved Answers Management APIs ---
   app.get('/api/cache/stats', (req, res) => {
-    try {
-      res.setHeader('Content-Type', 'application/json');
-      res.json(taskCacheService.getStats());
-    } catch (err: any) {
-      console.error('Error getting cache stats:', err);
-      res.status(500).json({ error: err?.message || 'Failed to get cache stats' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    res.setHeader('Content-Type', 'application/json');
+    res.json(taskCacheService.getStats());
   });
 
   app.get('/api/cache/entries', (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const category = req.query.category as string | undefined;
-      res.setHeader('Content-Type', 'application/json');
-      res.json(taskCacheService.getEntries(limit, category));
-    } catch (err: any) {
-      console.error('Error getting cache entries:', err);
-      res.status(500).json({ error: err?.message || 'Failed to get cache entries' });
-    }
+    if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
+    const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit || '100'), 10) || 100, 1), 100);
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    res.setHeader('Content-Type', 'application/json');
+    res.json(taskCacheService.getEntries(limit, category));
   });
 
   app.post('/api/cache/clear', (req, res) => {
@@ -176,7 +168,7 @@ async function startServer() {
     }
   });
 
-  // Agent Registry APIs
+  // Agent definitions are platform-global today. They are read-only for tenants.
   app.get('/api/agents', (req, res) => {
     res.json(getAllAgents());
   });
@@ -1122,7 +1114,7 @@ async function startServer() {
         ownerName: ownerName ? String(ownerName) : undefined,
         organizationId,
         preferredProvider: preferredProvider as any,
-        persist: persist !== 'false',
+        persist: persist === 'true',
         limit: limit ? Number(limit) : 10,
       });
       res.json(results);
@@ -3206,9 +3198,24 @@ async function startServer() {
     }
 
     try {
-      const orgId = requireOrganizationId(
-        (req.body?.organizationId as string) || (req.body?.organization_id as string),
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for webhook tenant resolution' });
+
+      const body = req.body?.body || req.body;
+      const telephonyCallId = String(
+        body?.telephonyCallId || body?.callId || body?.sessionId ||
+        req.body?.telephonyCallId || req.body?.callId || req.body?.sessionId || ''
+      ).trim();
+      if (!telephonyCallId) return res.status(400).json({ error: 'Provider call identity is required' });
+
+      const tenantLookup = await pool.query(
+        "SELECT DISTINCT organization_id FROM call WHERE telephony_session_id = $1 OR telephony_call_id = $1 LIMIT 2",
+        [telephonyCallId],
       );
+      if (!tenantLookup.rowCount) return res.status(404).json({ error: 'Call identity is not registered' });
+      if (tenantLookup.rowCount > 1) return res.status(409).json({ error: 'Provider call identity is ambiguous across organizations' });
+
+      const orgId = requireOrganizationId(tenantLookup.rows[0].organization_id);
       const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
       if (result.status === 'error') return res.status(400).json(result);
       return res.status(200).json(result);
@@ -3661,8 +3668,9 @@ ${transcript}`;
         return res.status(404).json({ error: 'Imported file record not found' });
       }
 
-      const filePath = path.join(orgDir, targetMeta.fileName);
-      if (!fs.existsSync(filePath)) {
+      const resolvedOrgDir = path.resolve(orgDir);
+      const filePath = path.resolve(orgDir, String(targetMeta.fileName || ''));
+      if (!filePath.startsWith(resolvedOrgDir + path.sep) || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Physical file not found on disk' });
       }
 
@@ -3694,7 +3702,9 @@ ${transcript}`;
           const metaPath = path.join(orgDir, mf);
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
           if (meta.id === fileId || meta.fileName === fileId) {
-            const dataFilePath = path.join(orgDir, meta.fileName);
+            const resolvedOrgDir = path.resolve(orgDir);
+            const dataFilePath = path.resolve(orgDir, String(meta.fileName || ''));
+            if (!dataFilePath.startsWith(resolvedOrgDir + path.sep)) continue;
             if (fs.existsSync(dataFilePath)) fs.unlinkSync(dataFilePath);
             if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
             found = true;
