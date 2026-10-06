@@ -41,7 +41,8 @@ import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns,
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, runWorkflowWorkerOnce, logWorkflowEvent } from './server/services/workflowAutomationService';
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
-import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';\nimport { analyticsRouter } from './server/routes/analytics';
+import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
+import { createFilesRouter } from './server/routes/files';\nimport { analyticsRouter } from './server/routes/analytics';
 
 async function startServer() {
   const app = express();
@@ -170,6 +171,8 @@ async function startServer() {
     }
     return requireAuth(req, res, next);
   });
+
+  app.use('/api/files', createFilesRouter());
 
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
