@@ -214,6 +214,9 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
       });
       const campaign = await campaignResponse.json();
       if (!campaignResponse.ok) throw new Error(campaign.error || 'Campaign creation failed');
+      if (Number(campaign?.addedContacts ?? campaign?.contactsAdded ?? campaign?.campaign?.total_contacts ?? 0) < contacts.length) {
+        throw new Error('Campaign was created but not all selected contacts were attached. No dialing was started.');
+      }
 
       addToast(`Campaign created with ${contacts.length} contacts.`, 'success');
       onNavigate('campaigns');
