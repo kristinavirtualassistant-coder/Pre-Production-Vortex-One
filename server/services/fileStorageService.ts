@@ -173,16 +173,5 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
   );
   return result.rows[0];
 
-  /*
-    Legacy insert intentionally unreachable; kept out of execution path.
-  */
-  `INSERT INTO file_assets
-      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
-     VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,$7,$8,$9::jsonb,'ready')
-     ON CONFLICT (organization_id,storage_bucket,storage_path) DO UPDATE
-       SET status='ready',mime_type=EXCLUDED.mime_type,size_bytes=EXCLUDED.size_bytes,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP,deleted_at=NULL
-     RETURNING id,storage_path,status`,
-    [fileId,organizationId,callId,`call-recording-${safeRecordingId}.${extension}`,getFileStorageBucket(),storagePath,contentType,sizeBytes||0,JSON.stringify(metadata)],
-  );
-  return result.rows[0];
+
 }
