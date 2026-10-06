@@ -40,6 +40,7 @@ import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
 import './schedulerTriggerContract.test';
 import './workflowRunService.test';
+import './accountSecurity.test';
 
 let passedTests = 0;
 let failedTests = 0;
