@@ -189,10 +189,10 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
           : undefined;
         if (phone) {
           contacts.push({
-            lead_id: leadId,
-            contact_name: property.owner_name || 'Property Owner',
-            phone_number: phone,
-            property_address: property.address,
+            leadId,
+            contactName: property.owner_name || 'Property Owner',
+            phoneNumber: phone,
+            propertyAddress: property.address,
           });
         }
       }
