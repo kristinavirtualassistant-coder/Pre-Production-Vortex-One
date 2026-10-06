@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
-import { createSessionToken, hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
+import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
+import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 
 export interface AuthRequest extends Request {
   user?: {
