@@ -130,18 +130,6 @@ export const AgentBuilderView: React.FC<AgentBuilderViewProps> = ({ onRegisterAg
               <option value="analytics">Analytics &amp; Math</option>
             </select>
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-1">Gemini AI Model</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 focus:outline-none focus:border-cyan-600 font-mono"
-            >
-              <option value="gemini-3.5-flash">gemini-3.5-flash (Fast &amp; Accurate)</option>
-              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Complex Reasoning)</option>
-              <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Ultra-Low Latency)</option>
-            </select>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
