@@ -15,6 +15,7 @@ import { WebhookHandler } from '../dialer/webhookHandler';
 import { DataImportService, RawPropertyRecord } from '../services/dataImportService';
 import { UnifiedPropertyDataProvider, buildPropertySearchCachePayload, validateAndClassifyResult } from '../services/propertyProviders/PropertyDataProvider';
 import { OrangeCountyGISProvider, normalizeOrangeCountyParcel } from '../services/propertyProviders/OrangeCountyGISProvider';
+import { estimateAiCostUsd } from '../services/analyticsService';
 import { LosAngelesCountyGISProvider } from '../services/propertyProviders/LosAngelesCountyGISProvider';
 import { SanDiegoCountyGISProvider } from '../services/propertyProviders/SanDiegoCountyGISProvider';
 import { RiversideCountyGISProvider } from '../services/propertyProviders/RiversideCountyGISProvider';
@@ -124,7 +125,7 @@ async function runAllTests() {
   assert(dialerSql.includes('CREATE TABLE IF NOT EXISTS suppression_record'), 'Suppression record table defined');
   assert(dialerSql.includes('CREATE TABLE IF NOT EXISTS processed_events'), 'Processed events table defined');
 
-  // Test Group 2: Tenant Isolation & Foreign Key Integrity
+  // Test Group 1b: Analytics Pricing\n  console.log('\\n[Group 1b: Analytics Pricing]');\n  const flashCost = estimateAiCostUsd({ model: 'gemini-3.7-flash', inputTokens: 1_000_000, outputTokens: 1_000_000 });\n  assert(flashCost === 4.5, 'Gemini 3.7 Flash pricing estimate is correct', \`Expected 4.5, got ${flashCost}\`);\n  const liteCost = estimateAiCostUsd({ model: 'gemini-3.1-flash-lite', inputTokens: 1_000_000, outputTokens: 1_000_000 });\n  assert(liteCost === 1.75, 'Gemini 3.1 Flash-Lite pricing estimate is correct', \`Expected 1.75, got ${liteCost}\`);\n  assert(estimateAiCostUsd({ model: 'unknown-model', inputTokens: 1_000_000, outputTokens: 1_000_000 }) === null, 'Unknown AI model does not fabricate a cost');\n\n  // Test Group 2: Tenant Isolation & Foreign Key Integrity
   console.log('\n[Group 2: Tenant Isolation & Foreign Key Integrity]');
   const tenantCacheA = buildPropertySearchCachePayload({ address: '123 MAIN ST', city: 'Costa Mesa', organizationId: 'org-a' });
   const tenantCacheB = buildPropertySearchCachePayload({ address: '123 MAIN ST', city: 'Costa Mesa', organizationId: 'org-b' });
