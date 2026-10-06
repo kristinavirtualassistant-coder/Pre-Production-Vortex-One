@@ -1524,6 +1524,16 @@ async function startServer() {
       }
 
       const maxResults = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
+      const coordinateCount = Array.isArray(polygon.coordinates?.[0]) ? polygon.coordinates[0].length : 0;
+      if (coordinateCount < 4 || coordinateCount > 1000) {
+        return res.status(400).json({ error: 'Polygon must contain between 3 and 999 vertices.' });
+      }
+      const distinctPoints = new Set(
+        polygon.coordinates[0].map((point: any) => `${Number(point?.[0]).toFixed(7)},${Number(point?.[1]).toFixed(7)}`),
+      );
+      if (distinctPoints.size < 3) {
+        return res.status(400).json({ error: 'Polygon must contain at least three distinct points.' });
+      }
       const params: any[] = [orgId, JSON.stringify(polygon)];
       const filters: string[] = [
         'p.organization_id = $1',
