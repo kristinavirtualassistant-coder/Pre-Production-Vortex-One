@@ -142,12 +142,12 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
     'x-upsert':'false',
   });
   if(contentLength) uploadHeaders.set('Content-Length',contentLength);
-  const uploadResponse=await fetch(`${storageBase}/object/${getFileStorageBucket()}/${storagePath}`,{
+  const uploadResponse=await fetch(`${storageBase}/object/${getFileStorageBucket()}/${storagePath}`,({
     method:'POST',
     headers:uploadHeaders,
     body:sourceResponse.body as any,
-    duplex:'half' as any,
-  });
+    duplex:'half',
+  } as any));
   if(!uploadResponse.ok){
     const body=await uploadResponse.text().catch(()=> '');
     throw new Error(`Private storage upload failed (${uploadResponse.status}): ${body.slice(0,300)}`);
