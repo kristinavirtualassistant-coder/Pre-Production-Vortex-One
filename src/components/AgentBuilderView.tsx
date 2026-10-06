@@ -22,7 +22,10 @@ export const AgentBuilderView: React.FC<AgentBuilderViewProps> = ({ onRegisterAg
   const [description, setDescription] = useState('Specialist in analyzing commercial triple-net (NNN) leases and lease rollover schedules.');
   const [responsibility, setResponsibility] = useState('Extract lease expiration dates, calculate escalation clauses, and audit tenant credit.');
   const [instructions, setInstructions] = useState('You are Sub-Agent 10 (Commercial Lease Specialist). Analyze lease agreements and retain provenance.');
+  const [provider, setProvider] = useState<'gemini' | 'openai' | 'anthropic'>('gemini');
   const [model, setModel] = useState('gemini-3.5-flash');
+  const [allowedTools, setAllowedTools] = useState<string[]>(['search_property', 'search_owner', 'score_lead', 'create_crm_task']);
+  const [permissions, setPermissions] = useState<string[]>(['read_only']);
   const [isRegistering, setIsRegistering] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -38,11 +41,17 @@ export const AgentBuilderView: React.FC<AgentBuilderViewProps> = ({ onRegisterAg
       description,
       primaryResponsibility: responsibility,
       systemInstructions: instructions,
-      allowedTools: ['search_property', 'analyze_data'],
+      allowedTools,
+      provider,
+
       allowedData: ['properties', 'commercial_leases'],
       model,
       temperature: 0.1,
-      permissions: ['read_only', 'lease_analysis'],
+      maxTokens: 4096,
+      maxRetries: 3,
+      memoryEnabled: true,
+      permissions,
+
       parentAgentId: 'agent_1',
       enabled: true,
       capabilities: ['commercial_leases', 'nnn_analysis', 'lease_rollover'],
@@ -121,17 +130,49 @@ export const AgentBuilderView: React.FC<AgentBuilderViewProps> = ({ onRegisterAg
               <option value="analytics">Analytics &amp; Math</option>
             </select>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-1">Gemini AI Model</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 focus:outline-none focus:border-cyan-600 font-mono"
-            >
-              <option value="gemini-3.5-flash">gemini-3.5-flash (Fast &amp; Accurate)</option>
-              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Complex Reasoning)</option>
-              <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Ultra-Low Latency)</option>
+            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-1">AI Provider</label>
+            <select value={provider} onChange={(e) => {
+              const p = e.target.value as 'gemini' | 'openai' | 'anthropic';
+              setProvider(p);
+              setModel(p === 'openai' ? 'gpt-6-luna' : p === 'anthropic' ? 'claude-sonnet-4-5' : 'gemini-3.8-flash');
+            }} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900">
+              <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic Claude</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-1">Model</label>
+            <input value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 font-mono" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-2">Authorized Tools</label>
+            <div className="grid grid-cols-2 gap-2">
+              {['search_property','search_owner','run_5_step_skip_trace','score_lead','create_crm_task','make_call','generate_speech_brief','verify_result'].map((tool) => (
+                <label key={tool} className="flex items-center gap-2 text-[10px] text-slate-700">
+                  <input type="checkbox" checked={allowedTools.includes(tool)} onChange={(e) => setAllowedTools((v) => e.target.checked ? [...new Set([...v, tool])] : v.filter((x) => x !== tool))} />
+                  <span className="font-mono">{tool}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase text-slate-700 mb-2">Permissions</label>
+            <div className="space-y-2">
+              {['read_only','crm_read_write','research_tools','telephony_trigger','auto_execute_external'].map((permission) => (
+                <label key={permission} className="flex items-center gap-2 text-[10px] text-slate-700">
+                  <input type="checkbox" checked={permissions.includes(permission)} onChange={(e) => setPermissions((v) => e.target.checked ? [...new Set([...v, permission])] : v.filter((x) => x !== permission))} />
+                  <span className="font-mono">{permission}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
 
