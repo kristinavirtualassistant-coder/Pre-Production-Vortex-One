@@ -155,6 +155,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
               </div>
             </label>
 
+            {(mode === 'signin' || mode === 'signup') && (
             <label className="block text-sm text-slate-300">
               Password
               <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
@@ -166,6 +167,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
               </div>
               <span className="mt-1 block text-xs text-slate-500">Minimum 12 characters.</span>
             </label>
+            )}
 
             {mode === 'mfa' && <label className="block text-sm text-slate-300">Authenticator or backup code<input inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
             {mode === 'reset' && <label className="block text-sm text-slate-300">New password<input type="password" autoComplete="new-password" value={recoveryPassword} onChange={(e) => setRecoveryPassword(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
