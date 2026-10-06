@@ -284,7 +284,13 @@ async function twilio() {
 export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   const cfg = await twilio();
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/IncomingPhoneNumbers.json?PageSize=100',{headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token)}});
-  const numbers = (data.incoming_phone_numbers || []).map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
+  const allowed = String(process.env.TWILIO_ALLOWED_NUMBERS || '').split(',').map((v)=>normalizePhone(v)).filter(Boolean);
+  const remoteNumbers = (data.incoming_phone_numbers || []).filter((n:any)=>{
+    const normalized=normalizePhone(n.phone_number);
+    return process.env.NODE_ENV !== 'production' || allowed.includes(normalized);
+  });
+  if(process.env.NODE_ENV === 'production' && !allowed.length) throw new Error('TWILIO_ALLOWED_NUMBERS must map Twilio numbers to an organization in production');
+  const numbers = remoteNumbers.map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
   for (const n of numbers) {
     await pool.query(
       "INSERT INTO messaging_numbers (id,organization_id,provider,phone_number,friendly_name,capabilities,status,metadata) VALUES ($1,$2,'twilio',$3,$4,$5,'active',$6) ON CONFLICT (organization_id,provider,phone_number) DO UPDATE SET friendly_name=EXCLUDED.friendly_name,capabilities=EXCLUDED.capabilities,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP",
