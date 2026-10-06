@@ -148,6 +148,10 @@ export async function handleStripeEvent(pool: Pool, event: any) {
   return { ignored: true, reason: event.type };
 }
 
+export async function recordUsage(pool: Pool, organizationId: string, metric: string, increment = 1) {
+  return enforceUsageLimit(pool, organizationId, metric, increment);
+}
+
 export async function enforceUsageLimit(pool: Pool, organizationId: string, metric: string, increment = 1) {
   const billing = await getOrganizationBilling(pool, organizationId);
   const limits = billing?.limits || planLimits(billing?.plan || 'free');
