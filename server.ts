@@ -34,7 +34,7 @@ import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows,
 import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 import { analyticsRouter } from './server/routes/analytics';
 import communicationsRouter from './server/services/communicationsRouter';
-import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, runWorkflowSchedulerOnce } from './server/services/workflowAutomationService';
+import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 
 async function startServer() {
