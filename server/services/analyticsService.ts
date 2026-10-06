@@ -177,12 +177,14 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
           COUNT(DISTINCT ds.id)::int AS sessions,
           COALESCE(SUM(ds.calls_placed),0)::int AS calls_placed,
           COALESCE(SUM(ds.contacts_reached),0)::int AS contacts_reached,
-          COALESCE(SUM(ce.total_cost_usd),0)::numeric AS cost_usd
+          COALESCE((
+            SELECT SUM(ace.total_cost_usd) FROM analytics_cost_events ace
+            WHERE ace.organization_id=u.organization_id AND ace.user_id=u.id
+              AND ace.occurred_at >= $2 AND ace.occurred_at < $3
+          ),0)::numeric AS cost_usd
          FROM users u
          LEFT JOIN dialing_session ds ON ds.organization_id=u.organization_id AND ds.agent_user_id=u.id
            AND ds.started_at >= $2 AND ds.started_at < $3
-         LEFT JOIN analytics_cost_events ce ON ce.organization_id=u.organization_id AND ce.user_id=u.id
-           AND ce.occurred_at >= $2 AND ce.occurred_at < $3
          WHERE u.organization_id=$1
          GROUP BY u.id ORDER BY calls_placed DESC, u.name`,
         [organizationId, start, end],
