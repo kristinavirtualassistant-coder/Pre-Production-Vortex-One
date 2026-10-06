@@ -806,4 +806,25 @@ export const MIGRATIONS: Migration[] = [
         ON appointments(organization_id, status);
     `,
   },
+  { version: 21, name: '021_create_file_assets', sql: \`
+      CREATE TABLE IF NOT EXISTS file_assets (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        entity_type VARCHAR(50), entity_id VARCHAR(64), category VARCHAR(50) NOT NULL,
+        original_name VARCHAR(512) NOT NULL, storage_bucket VARCHAR(255) NOT NULL,
+        storage_path VARCHAR(1024) NOT NULL, mime_type VARCHAR(255) NOT NULL,
+        size_bytes BIGINT NOT NULL DEFAULT 0, checksum_sha256 VARCHAR(64), description TEXT,
+        extracted_text TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending', uploaded_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE,
+        CONSTRAINT uq_file_assets_org_storage UNIQUE (organization_id, storage_bucket, storage_path),
+        CONSTRAINT ck_file_assets_status CHECK (status IN ('pending','ready','failed','deleted')),
+        CONSTRAINT ck_file_assets_category CHECK (category IN ('property_document','owner_document','contract','photo','call_recording','call_transcript','import','export','other'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_created ON file_assets(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_entity ON file_assets(organization_id, entity_type, entity_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_org_category ON file_assets(organization_id, category, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_file_assets_search ON file_assets USING GIN (to_tsvector('simple', coalesce(original_name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(extracted_text,'')));
+\` },
 ];\n
