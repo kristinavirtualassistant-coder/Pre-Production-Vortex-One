@@ -29,7 +29,8 @@ import { OpportunitiesView } from './components/OpportunitiesView';
 import { ResearchQueueView } from './components/ResearchQueueView';
 import { ReportsView } from './components/ReportsView';
 import { CampaignsView } from './components/CampaignsView';
-import { AnalyticsView } from './components/AnalyticsView';
+import { ReportingAnalyticsView } from './components/ReportingAnalyticsView';
+import { FilesDocumentsView } from './components/FilesDocumentsView';
 import { SettingsView } from './components/SettingsView';
 import { IntegrationCenterView } from './components/IntegrationCenterView';
 import { CommunicationsView } from './components/CommunicationsView';
@@ -41,7 +42,7 @@ import { TaskCacheModal } from './components/TaskCacheModal';
 import { CreateLeadModal } from './components/CreateLeadModal';
 import { SyncStatusFooter } from './components/SyncStatusFooter';
 import { PRIMARY_NAV_SECTIONS } from './components/Sidebar';
-import { Layers, Menu, X, Home, Search, Target, PhoneCall, Grid } from 'lucide-react';
+import { Layers, Menu, X, Home, Search, Target, PhoneCall, Grid, Archive } from 'lucide-react';
 import {
   AgentDefinition,
   Property,
@@ -81,6 +82,7 @@ const VALID_VIEWS = [
   'agents',
   'workflows',
   'drive',
+  'files',
   'privacy',
   'terms',
   'agent_builder',
@@ -534,7 +536,7 @@ export default function App() {
   const handleRegisterAgent = async (newAgent: AgentDefinition) => {
     const orgId = getActiveOrgId();
     try {
-      const res = await fetch('/api/agents', {
+      const res = await fetch('/api/ai-agents', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -656,6 +658,7 @@ export default function App() {
             <AgentMonitorView
               agents={agents}
               initialSelectedAgentId={selectedAgentId}
+              organizationId={getActiveOrgId()}
             />
           )}
 
@@ -819,12 +822,14 @@ export default function App() {
           )}
 
           {currentView === 'analytics' && (
-            <AnalyticsView
-              leads={leads}
-              properties={properties}
-              agents={agents}
-              onNavigate={handleNavigate}
+            <ReportingAnalyticsView
+              getAuthHeaders={getAuthHeaders}
+              organizationId={getActiveOrgId()}
             />
+          )}
+
+          {currentView === 'files' && (
+            <FilesDocumentsView getAuthHeaders={getAuthHeaders} organizationId={getActiveOrgId()} />
           )}
 
           {currentView === 'integrations' && <IntegrationCenterView />}
@@ -941,7 +946,14 @@ export default function App() {
           <span>Dialer</span>
         </button>
 
-        <button
+           <button
+          onClick={() => handleNavigate('files')}
+          className={`flex flex-col items-center py-1 px-2 rounded-lg text-[10px] font-semibold transition cursor-pointer ${currentView === 'files' ? 'text-cyan-700' : 'text-slate-500 hover:text-slate-800'}`}
+        >
+          <Archive className="w-5 h-5 mb-0.5" />
+          <span>Files</span>
+        </button>
+     <button
           onClick={() => setIsMobileNavOpen(true)}
           className="flex flex-col items-center py-1 px-2 rounded-lg text-[10px] font-semibold text-slate-500 hover:text-slate-800 transition cursor-pointer"
         >

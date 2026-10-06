@@ -43,8 +43,11 @@ export interface AgentDefinition {
   allowedTools: string[];
   allowedData: string[];
   model: string;
+  provider?: 'gemini' | 'openai' | 'anthropic';
   temperature: number;
   maxTokens?: number;
+  maxRetries?: number;
+  memoryEnabled?: boolean;
   permissions: string[];
   parentAgentId: string | null;
   enabled: boolean;
@@ -118,6 +121,11 @@ export interface WorkflowStep {
   requiresApproval?: boolean;
   condition?: string;
   retryCount?: number;
+  action_type?: 'email' | 'sms' | 'phone' | 'webhook' | 'ai_agent' | 'wait' | 'noop';
+  action?: 'email' | 'sms' | 'phone' | 'webhook' | 'ai_agent' | 'wait' | 'noop';
+  input_mapping?: Record<string, any>;
+  delay_seconds?: number;
+  input?: Record<string, any>;
 }
 
 export interface Workflow {
@@ -822,3 +830,23 @@ export interface AutomatedPipelineResult {
 
 
 
+
+export interface WorkflowSchedule {
+  id: string;
+  organization_id: string;
+  workflow_id: string;
+  workflow_version_id: string;
+  name: string;
+  schedule_type: 'once' | 'interval' | 'cron';
+  run_at?: string;
+  interval_seconds?: number;
+  cron_expression?: string;
+  timezone: string;
+  status: 'active' | 'paused' | 'completed' | 'failed';
+  next_run_at?: string;
+  last_run_at?: string;
+  last_error?: string;
+  trigger_payload?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
