@@ -153,7 +153,6 @@ export class WebhookHandler {
             organizationId,
             callId: authoritativeCallId,
             recordingUrl: normalized.recordingUrl,
-            contactName: updatedCall?.contact_name,
           }).catch((archiveError) => {
             console.error('[Files] RingCentral call recording archive failed:', archiveError);
           });
