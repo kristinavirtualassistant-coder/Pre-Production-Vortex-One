@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { decryptSecret, encryptSecret } from './integrationOAuth';
 import { enqueueJob } from './jobService';
+import { recordCostEvent } from './analyticsService';
 
 export type CommunicationChannel = 'email' | 'sms';
 export type EmailProvider = 'google-workspace' | 'microsoft-365';
@@ -362,6 +363,20 @@ export async function sendEmailNow(pool: Pool, args: any) {
       ? await sendOutlook(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id})
       : await sendGmail(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id});
     const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status='sent',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
+    const emailUnitCostUsd = Math.max(0, Number(process.env.ANALYTICS_EMAIL_UNIT_COST_USD || 0));
+    await recordCostEvent(pool, {
+      organizationId: args.organizationId,
+      id: 'cost_email_' + pending.id,
+      userId: args.userId,
+      category: 'email',
+      provider: providerName,
+      quantity: 1,
+      unitCostUsd: emailUnitCostUsd,
+      totalCostUsd: emailUnitCostUsd,
+      referenceType: 'communication_message',
+      referenceId: pending.id,
+      metadata: { externalMessageId: sent.externalMessageId, pricingConfigured: emailUnitCostUsd > 0 },
+    });
     await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2',[sent.externalThreadId,t.id]);
     return updated.rows[0];
   } catch (error: any) {
@@ -422,7 +437,22 @@ export async function sendSmsNow(pool: Pool, args: any) {
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/Messages.json',{
     method:'POST',headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token),'Content-Type':'application/x-www-form-urlencoded'},body:form,
   });
-  return record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'outbound',externalMessageId:data.sid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:args.body,status:data.status === 'delivered' ? 'delivered' : 'sent',idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId,metadata:{twilio_status:data.status}});
+  const message = await record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'outbound',externalMessageId:data.sid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:args.body,status:data.status === 'delivered' ? 'delivered' : 'sent',idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId,metadata:{twilio_status:data.status}});
+  const smsUnitCostUsd = Math.max(0, Number(process.env.ANALYTICS_SMS_UNIT_COST_USD || 0));
+  await recordCostEvent(pool, {
+    organizationId: args.organizationId,
+    id: 'cost_sms_' + message.id,
+    userId: args.userId,
+    category: 'sms',
+    provider: 'twilio',
+    quantity: 1,
+    unitCostUsd: smsUnitCostUsd,
+    totalCostUsd: smsUnitCostUsd,
+    referenceType: 'communication_message',
+    referenceId: message.id,
+    metadata: { externalMessageId: data.sid, pricingConfigured: smsUnitCostUsd > 0 },
+  });
+  return message;
 }
 
 /**
