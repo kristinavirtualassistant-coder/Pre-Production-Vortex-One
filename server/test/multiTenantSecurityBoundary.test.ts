@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const server = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
 const migrations = fs.readFileSync(new URL('../db/migrations.ts', import.meta.url), 'utf8');
 const gemini = fs.readFileSync(new URL('../gemini.ts', import.meta.url), 'utf8');
+const tools = fs.readFileSync(new URL('../tools/index.ts', import.meta.url), 'utf8');
 
 function mustContain(source: string, text: string, label: string) {
   assert.ok(source.includes(text), label);
@@ -33,6 +34,12 @@ mustContain(server, "dataFilePath.startsWith(resolvedOrgDir + path.sep)", 'delet
 // AI output is not shared through the process-global cache.
 mustContain(gemini, "{ skipCache: true, forceRefresh: options.forceRefresh }", 'Gemini text cache is disabled');
 mustContain(gemini, "{ skipCache: true }", 'Gemini TTS cache is disabled');
+
+// Agent execution must honor the declared tool allow-list and human approval gate.
+mustContain(tools, "if (!agent.allowedTools.includes(toolName))", 'agent allowedTools are enforced at execution time');
+mustContain(tools, "if (toolName === 'make_call')", 'outbound calls have a dedicated approval gate');
+mustContain(tools, "status = 'approved'", 'outbound call approval must be approved');
+mustContain(tools, "organization_id = $2", 'approval lookup is tenant-scoped');
 
 // Database-level audit history is append-only.
 mustContain(migrations, "prevent_audit_log_mutation", 'audit immutability trigger exists');
