@@ -37,7 +37,7 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
     tokenEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     clientId: requiredEnv('MICROSOFT_INTEGRATION_CLIENT_ID'),
     clientSecret: requiredEnv('MICROSOFT_INTEGRATION_CLIENT_SECRET'),
-    scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Mail.Read', 'Mail.Send'],
+    scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send'],
   };
 }
 
