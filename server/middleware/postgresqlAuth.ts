@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
-import { getSessionToken, hashSessionToken } from '../services/accountSecurity';
+import { getSessionToken } from '../services/accountSecurity';
+import { hashSessionToken } from '../services/postgresqlAuth';
 
 export interface PostgreSQLAuthRequest extends Request {
   dbUser?: { id: string; organization_id: string; email: string; name: string; role: string };
