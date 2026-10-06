@@ -109,7 +109,10 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
     make_call: 'telephony_trigger',
   };
   const permission = requiredPermission[toolName];
-  if (permission && !agent.permissions.includes(permission) && !agent.permissions.includes('all_tools')) {
+  const hasPermission = permission === 'read_only'
+    ? agent.permissions.includes('read_only') || agent.permissions.includes('crm_read_write') || agent.permissions.includes('research_tools') || agent.permissions.includes('all_tools')
+    : !permission || agent.permissions.includes(permission) || agent.permissions.includes('all_tools');
+  if (permission && !hasPermission) {
     throw new Error(`Agent ${agent.id} lacks required permission ${permission} for ${toolName}`);
   }
 }
