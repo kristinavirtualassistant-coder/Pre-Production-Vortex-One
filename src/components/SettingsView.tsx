@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { AccountSecurityPanel } from './AccountSecurityPanel';
 import { useToast } from '../contexts/ToastContext';
 import { DatabaseStatus } from '../types';
 
@@ -325,45 +326,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {activeTab === 'security' && (
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-sm font-bold text-slate-900">Database &amp; Data Security</h3>
-              {onRefreshDb && (
-                <button
-                  type="button"
-                  onClick={() => onRefreshDb()}
-                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium flex items-center space-x-1.5 transition cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Verify Connection</span>
-                </button>
-              )}
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Account Security</h3>
+              <p className="text-[11px] text-slate-500 mt-1">MFA, active sessions, recovery controls, and subscription usage.</p>
             </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">PostgreSQL Engine</span>
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                  {dbStatus?.connected ? 'Connected' : 'Active Local / Memory Mode'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-600">
-                Strict multi-tenant row-level isolation via organization_id indexing. Foreign keys and cascade protections active.
-              </p>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => onNavigate('database')}
-                className="text-xs font-semibold text-cyan-700 hover:text-cyan-900 flex items-center space-x-1 cursor-pointer"
-              >
-                <span>Inspect Database Schema Tables &rarr;</span>
-              </button>
-            </div>
+            {onRefreshDb && <button type="button" onClick={() => onRefreshDb()} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium flex items-center gap-1.5"><RefreshCw className="w-3.5 h-3.5" /> Verify database</button>}
           </div>
+          <AccountSecurityPanel />
         </div>
-      )}
+      )}}
     </div>
   );
 };
