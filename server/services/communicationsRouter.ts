@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Router, type Response } from 'express';
 import { getPgPool } from '../db/db';
 import { requireRole, type AuthRequest } from '../middleware/auth';
@@ -209,7 +210,7 @@ router.post('/templates', requireRole(['admin','executive','manager']), async (r
   if(!body.name || !['email','sms'].includes(body.channel) || !body.body) return res.status(400).json({error:'name, channel and body are required'});
   try {
     const variables=Array.from(new Set(String((body.subject || '') + ' ' + body.body).match(/{{\s*([a-zA-Z0-9_]+)\s*}}/g) || [])).map((v:string)=>v.replace(/[{}\s]/g,''));
-    const result=await pool.query('INSERT INTO outreach_templates (id,organization_id,name,description,channel,category,subject,body,variables,tags,is_default,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',['tpl_' + crypto.randomUUID(),org(req),String(body.name).trim(),body.description || null,body.channel,body.category || 'custom',body.channel === 'email' ? (body.subject || '') : null,String(body.body),JSON.stringify(variables),JSON.stringify(Array.isArray(body.tags)?body.tags:[]),Boolean(body.is_default),req.dbUser!.id]);
+    const result=await pool.query('INSERT INTO outreach_templates (id,organization_id,name,description,channel,category,subject,body,variables,tags,is_default,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',['tpl_' + randomUUID(),org(req),String(body.name).trim(),body.description || null,body.channel,body.category || 'custom',body.channel === 'email' ? (body.subject || '') : null,String(body.body),JSON.stringify(variables),JSON.stringify(Array.isArray(body.tags)?body.tags:[]),Boolean(body.is_default),req.dbUser!.id]);
     res.status(201).json(result.rows[0]);
   } catch(e:any) { res.status(400).json({error:e.message || 'Failed to create template'}); }
 });
