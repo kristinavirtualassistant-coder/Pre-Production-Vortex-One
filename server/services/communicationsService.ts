@@ -104,13 +104,22 @@ function escapeHtml(value: string): string {
   });
 }
 
+function trackingSecret(): string {
+  return process.env.INTEGRATION_ENCRYPTION_KEY || 'vortex-one-local-tracking-secret';
+}
+
+function trackingSignature(token: string, url: string): string {
+  return createHmac('sha256', trackingSecret()).update(token + '\n' + url).digest('base64url');
+}
+
 function trackedHtml(body: string, token: string): string {
-  const base = (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '') + '/api/communications/track';
+  const base = (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '') + '/api/communications/tracking';
   const source = /<[^>]+>/.test(body) ? body : escapeHtml(body).replace(/\r?\n/g, '<br>');
   const links = source.replace(/href=["'](https?:\/\/[^"']+)["']/gi, function (_m, url) {
-    return 'href="' + base + '/click/' + encodeURIComponent(token) + '?url=' + encodeURIComponent(url) + '"';
+    const sig = trackingSignature(token, url);
+    return 'href="' + base + '/click/' + encodeURIComponent(token) + '?url=' + encodeURIComponent(url) + '&sig=' + encodeURIComponent(sig) + '"';
   });
-  return links + '<img src="' + base + '/open/' + encodeURIComponent(token) + '.gif" width="1" height="1" alt="" style="display:none" />';
+  return links + '<p style="font-size:11px;color:#64748b"><a href="' + base + '/unsubscribe/' + encodeURIComponent(token) + '">Unsubscribe</a></p><img src="' + base + '/open/' + encodeURIComponent(token) + '.gif" width="1" height="1" alt="" style="display:none" />';
 }
 
 function mime(from: string, to: string, subject: string, html: string, messageId: string, inReplyTo?: string): string {
