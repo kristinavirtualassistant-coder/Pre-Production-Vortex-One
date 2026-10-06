@@ -21,8 +21,9 @@ export function createRateLimiter(options: RateLimitOptions) {
 
   return async (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
+    const tenantId = (req as Request & { dbUser?: { organization_id?: string } }).dbUser?.organization_id;
     const clientKey = req.ip || req.socket.remoteAddress || 'unknown';
-    const key = `${keyPrefix}:${clientKey}`;
+    const key = tenantId ? `${keyPrefix}:org:${tenantId}:ip:${clientKey}` : `${keyPrefix}:ip:${clientKey}`;
     const pool = getPgPool();
 
     if (pool) {
