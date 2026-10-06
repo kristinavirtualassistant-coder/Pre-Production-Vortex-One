@@ -633,4 +633,96 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_jobs_workflow_due ON jobs(job_type, status, available_at);
     `,
   },
-];
+
+  {
+    version: 18,
+    name: '018_production_auth_account_management',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_backup_codes JSONB DEFAULT '[]'::jsonb NOT NULL;
+
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS user_agent VARCHAR(500);
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS ip_address INET;
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS device_label VARCHAR(255);
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS mfa_verified_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_active_user
+        ON auth_sessions(user_id, last_seen_at DESC)
+        WHERE revoked_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS email_verification_tokens (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        used_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_verification_user
+        ON email_verification_tokens(user_id, expires_at DESC);
+
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        used_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_password_reset_user
+        ON password_reset_tokens(user_id, expires_at DESC);
+
+      CREATE TABLE IF NOT EXISTS auth_mfa_challenges (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        challenge_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        attempts INTEGER DEFAULT 0 NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user
+        ON auth_mfa_challenges(user_id, expires_at DESC);
+
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS billing_email VARCHAR(320);
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS timezone VARCHAR(100) DEFAULT 'America/Los_Angeles' NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS organization_billing (
+        organization_id VARCHAR(64) PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+        plan VARCHAR(40) NOT NULL DEFAULT 'free',
+        subscription_status VARCHAR(40) NOT NULL DEFAULT 'active',
+        billing_customer_id VARCHAR(255),
+        billing_subscription_id VARCHAR(255),
+        trial_ends_at TIMESTAMP WITH TIME ZONE,
+        current_period_start TIMESTAMP WITH TIME ZONE,
+        current_period_end TIMESTAMP WITH TIME ZONE,
+        cancel_at_period_end BOOLEAN DEFAULT false NOT NULL,
+        limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS organization_usage (
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        period_start DATE NOT NULL,
+        metric VARCHAR(80) NOT NULL,
+        used BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        PRIMARY KEY (organization_id, period_start, metric)
+      );
+      CREATE INDEX IF NOT EXISTS idx_organization_usage_period
+        ON organization_usage(organization_id, period_start DESC);
+
+      INSERT INTO organization_billing (organization_id, plan, subscription_status, limits)
+      SELECT id, 'free', 'active',
+        '{"users":5,"calls_month":250,"emails_month":500,"sms_month":100,"ai_actions_month":250,"properties":10000}'::jsonb
+      FROM organizations
+      ON CONFLICT (organization_id) DO NOTHING;
+
+      UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at)
+      WHERE email_verified_at IS NULL;
+    `,
+  },
+];\n
