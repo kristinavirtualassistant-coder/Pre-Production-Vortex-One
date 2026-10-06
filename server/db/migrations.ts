@@ -616,4 +616,144 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
 
+  {
+    version: 18,
+    name: '018_create_unified_communications',
+    sql: `
+      ALTER TABLE outreach_templates DROP CONSTRAINT IF EXISTS outreach_templates_channel_check;
+      ALTER TABLE outreach_templates ADD CONSTRAINT outreach_templates_channel_check
+        CHECK (channel IN ('email','sms','call_script'));
+      ALTER TABLE outreach_templates ALTER COLUMN subject DROP NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS communication_threads (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')),
+        provider VARCHAR(50) NOT NULL,
+        contact_key VARCHAR(320) NOT NULL,
+        external_thread_id VARCHAR(255),
+        subject TEXT,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','archived')),
+        last_message_at TIMESTAMP WITH TIME ZONE,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, channel, provider, external_thread_id),
+        UNIQUE (organization_id, channel, contact_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_threads_org_last ON communication_threads(organization_id,last_message_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_comm_threads_org_lead ON communication_threads(organization_id,lead_id,last_message_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_comm_threads_org_owner ON communication_threads(organization_id,owner_id,last_message_at DESC);
+
+      CREATE TABLE IF NOT EXISTS communication_messages (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        thread_id VARCHAR(64) NOT NULL REFERENCES communication_threads(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')),
+        provider VARCHAR(50) NOT NULL,
+        direction VARCHAR(20) NOT NULL CHECK (direction IN ('inbound','outbound')),
+        external_message_id VARCHAR(255),
+        from_address VARCHAR(320),
+        to_address VARCHAR(320),
+        subject TEXT,
+        body TEXT NOT NULL,
+        html_body TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','delivered','read','replied','failed','bounced','received')),
+        error_message TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        tracking_token VARCHAR(128),
+        idempotency_key VARCHAR(255),
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL,
+        owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        sent_at TIMESTAMP WITH TIME ZONE,
+        received_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id,provider,external_message_id),
+        UNIQUE (organization_id,idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_messages_thread_created ON communication_messages(thread_id,created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_comm_messages_org_status ON communication_messages(organization_id,status,created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_comm_messages_tracking ON communication_messages(tracking_token) WHERE tracking_token IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS communication_events (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        message_id VARCHAR(64) REFERENCES communication_messages(id) ON DELETE CASCADE,
+        event_type VARCHAR(40) NOT NULL CHECK (event_type IN ('delivered','opened','clicked','bounced','complained','unsubscribed','opted_out')),
+        event_url TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_events_message ON communication_events(message_id,occurred_at DESC);
+
+      CREATE TABLE IF NOT EXISTS communication_suppressions (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','voice','all')),
+        contact_key VARCHAR(320) NOT NULL,
+        reason VARCHAR(100) NOT NULL,
+        source VARCHAR(100) NOT NULL DEFAULT 'user',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id,channel,contact_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_suppressions_lookup ON communication_suppressions(organization_id,channel,contact_key);
+
+      CREATE TABLE IF NOT EXISTS messaging_numbers (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        provider VARCHAR(50) NOT NULL,
+        phone_number VARCHAR(32) NOT NULL,
+        friendly_name VARCHAR(255),
+        capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id,provider,phone_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS communication_sequences (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','paused','archived')),
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS communication_sequence_steps (
+        id VARCHAR(64) PRIMARY KEY,
+        sequence_id VARCHAR(64) NOT NULL REFERENCES communication_sequences(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')),
+        template_id VARCHAR(64) REFERENCES outreach_templates(id) ON DELETE SET NULL,
+        delay_minutes INTEGER NOT NULL DEFAULT 0 CHECK (delay_minutes >= 0),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (sequence_id,step_order)
+      );
+
+      CREATE TABLE IF NOT EXISTS communication_sequence_enrollments (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        sequence_id VARCHAR(64) NOT NULL REFERENCES communication_sequences(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        status VARCHAR(30) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','completed','cancelled')),
+        current_step_order INTEGER NOT NULL DEFAULT 1,
+        next_run_at TIMESTAMP WITH TIME ZONE,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (sequence_id,lead_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_sequence_due ON communication_sequence_enrollments(organization_id,status,next_run_at);
+    `,
+  },
+
 ];
