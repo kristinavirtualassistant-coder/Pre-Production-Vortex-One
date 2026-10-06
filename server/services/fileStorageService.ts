@@ -104,6 +104,19 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
   );
   if(existing.rowCount) return existing.rows[0];
 
+  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
+  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
+  const fileId=`file_callrec_${safeRecordingId}`;
+  const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId};
+
+  await pool.query(
+    `INSERT INTO file_assets
+      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
+     VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,'audio/mpeg',0,$7::jsonb,'pending')
+     ON CONFLICT (id) DO UPDATE SET metadata=EXCLUDED.metadata,status='pending',deleted_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+    [fileId,organizationId,callId,`call-recording-${safeRecordingId}.mp3`,getFileStorageBucket(),buildStoragePath(organizationId,'call',callId,fileId,'call-recording.mp3'),JSON.stringify(metadata)],
+  );
+
   const {SDK}=await import('@ringcentral/sdk');
   const clientId=process.env.RINGCENTRAL_CLIENT_ID?.trim();
   const clientSecret=process.env.RINGCENTRAL_CLIENT_SECRET?.trim()||'';
@@ -129,9 +142,6 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
   const sizeBytes=contentLength?Number(contentLength):0;
   if(sizeBytes>0) validateFileRequest({originalName:'call-recording.mp3',mimeType:contentType,sizeBytes,category:'call_recording'});
 
-  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
-  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
-  const fileId=`file_callrec_${safeRecordingId}`;
   const extension=contentType.includes('wav')?'wav':contentType.includes('mp4')?'mp4':contentType.includes('ogg')?'ogg':'mp3';
   const storagePath=buildStoragePath(organizationId,'call',callId,fileId,`call-recording.${extension}`);
   const {url:storageBase,key}=config();
@@ -153,9 +163,20 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
     throw new Error(`Private storage upload failed (${uploadResponse.status}): ${body.slice(0,300)}`);
   }
 
-  const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId,archived_at:new Date().toISOString()};
+  const finalMetadata={...metadata,archived_at:new Date().toISOString()};
   const result=await pool.query(
-    `INSERT INTO file_assets
+    `UPDATE file_assets
+       SET original_name=$2,storage_path=$3,mime_type=$4,size_bytes=$5,metadata=$6::jsonb,status='ready',updated_at=CURRENT_TIMESTAMP,deleted_at=NULL
+       WHERE id=$1 AND organization_id=$7
+       RETURNING id,storage_path,status`,
+    [fileId,`call-recording-${safeRecordingId}.${extension}`,storagePath,contentType,sizeBytes||0,JSON.stringify(finalMetadata),organizationId],
+  );
+  return result.rows[0];
+
+  /*
+    Legacy insert intentionally unreachable; kept out of execution path.
+  */
+  `INSERT INTO file_assets
       (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
      VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,$7,$8,$9::jsonb,'ready')
      ON CONFLICT (organization_id,storage_bucket,storage_path) DO UPDATE
