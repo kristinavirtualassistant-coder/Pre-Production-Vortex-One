@@ -210,7 +210,7 @@ router.get('/tracking/click/:token', async (req,res) => {
       return res.status(400).send('Invalid tracking link');
     }
   }
-  res.redirect(safe);
+  return res.status(503).send('Communications unavailable');
 });
 
 router.post('/webhooks/twilio/inbound', async (req,res) => {
