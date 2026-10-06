@@ -872,4 +872,18 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_workflow_communication_delivery_status ON workflow_communication_deliveries(organization_id, status, updated_at);
     `,
   },
+  {
+    version: 24,
+    name: '024_create_stripe_webhook_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+        id VARCHAR(255) PRIMARY KEY,
+        event_type VARCHAR(120) NOT NULL,
+        payload JSONB NOT NULL,
+        received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_type_time
+        ON stripe_webhook_events(event_type, received_at DESC);
+    `,
+  },
 ];
