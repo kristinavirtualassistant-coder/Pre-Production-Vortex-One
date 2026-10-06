@@ -53,7 +53,7 @@ async function startServer() {
     if (isProduction) throw err;
   }
 
-  // --- API Routes ---
+  // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
