@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { VisualWorkflowBuilder } from './VisualWorkflowBuilder';
+import { WorkflowAutomationPanel } from './WorkflowAutomationPanel';
 import {
   GitBranch,
   Play,
@@ -1029,6 +1030,8 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({ onRunWorkflow }) =
           </div>
         </div>
       </div>
+
+      <WorkflowAutomationPanel workflow={activeWorkflow} />
 
       {/* REACT FLOW CANVAS OR STEP LIST MODE */}
       {builderMode === 'flow' ? (
