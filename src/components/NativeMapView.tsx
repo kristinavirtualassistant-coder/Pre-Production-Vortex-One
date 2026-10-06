@@ -8,7 +8,6 @@ import {
   Crosshair,
   Filter,
   Layers,
-  MapPin,
   Megaphone,
   MousePointer2,
   PhoneCall,
