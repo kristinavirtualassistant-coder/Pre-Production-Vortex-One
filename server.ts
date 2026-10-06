@@ -1565,6 +1565,7 @@ async function startServer() {
       }
 
       params.push(maxResults);
+      await pool.query('SET LOCAL statement_timeout = 5000');
       const result = await pool.query(
         `SELECT
            p.id, p.organization_id, p.address, p.city, p.state, p.zip, p.county, p.apn,
