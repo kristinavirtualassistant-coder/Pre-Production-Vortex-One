@@ -32,6 +32,7 @@ import { searchProperties, type PropertySearchQuery } from './server/services/pr
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
+import { analyticsRouter } from './server/routes/analytics';
 import communicationsRouter from './server/services/communicationsRouter';
 
 async function startServer() {
