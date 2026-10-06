@@ -45,18 +45,21 @@ export const CommunicationsView: React.FC<Props> = ({getAuthHeaders,organization
   const load=async()=>{
     setLoading(true);
     try {
-      const [threadData,templateData,suppressionData,numberData,sequenceData]=await Promise.all([
+      const results = await Promise.allSettled([
         api('/api/communications/threads?channel=' + channel),
         api('/api/communications/templates?channel=' + channel),
         api('/api/communications/suppressions'),
         api('/api/communications/numbers'),
         api('/api/communications/sequences'),
       ]);
-      setThreads(threadData.threads || []);
-      setTemplates(templateData.templates || []);
-      setSuppressions(suppressionData.suppressions || []);
-      setNumbers(numberData.numbers || []);
-      setSequences(sequenceData.sequences || []);
+      const [threadData,templateData,suppressionData,numberData,sequenceData]=results;
+      if(threadData.status==='fulfilled') setThreads(threadData.value.threads || []);
+      if(templateData.status==='fulfilled') setTemplates(templateData.value.templates || []);
+      if(suppressionData.status==='fulfilled') setSuppressions(suppressionData.value.suppressions || []);
+      if(numberData.status==='fulfilled') setNumbers(numberData.value.numbers || []);
+      if(sequenceData.status==='fulfilled') setSequences(sequenceData.value.sequences || []);
+      const failed=results.find((result)=>result.status==='rejected');
+      if(failed && failed.status==='rejected') setNotice(failed.reason?.message || 'Some communications data could not be loaded.');
     } catch(e:any) { setNotice(e.message); }
     finally { setLoading(false); }
   };
