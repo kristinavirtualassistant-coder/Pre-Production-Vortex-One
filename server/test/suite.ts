@@ -35,6 +35,7 @@ import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
 import './rbacRouteBoundary.test';
 import './manualDialService.test';
+import './realAgentRuntime.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
