@@ -26,6 +26,13 @@ function render(value: any, context: Record<string, any>): any {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,render(v,context)]));
   return value;
 }
+function dateValue(value: unknown): number | null {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export function evaluateCondition(condition: any, context: Record<string,any>): boolean {
   if (!condition) return true;
   if (condition.all) return condition.all.every((x:any)=>evaluateCondition(x,context));
@@ -36,8 +43,10 @@ export function evaluateCondition(condition: any, context: Record<string,any>): 
   const left=field.split('.').reduce((v:any,k:string)=>v?.[k],context);
   let right=condition.value;
   if (typeof right==='string' && right === '$now') right=new Date();
-  const l=left instanceof Date?left.getTime():left; const r=right instanceof Date?right.getTime():right;
-  switch(op){case '==':return l===r;case '!=':return l!==r;case '>':return Number(l)>Number(r);case '<':return Number(l)<Number(r);case '>=':return Number(l)>=Number(r);case '<=':return Number(l)<=Number(r);case 'contains':return String(l??'').includes(String(r??''));default:throw new Error('Unsupported workflow condition operator');}
+  const leftDate=dateValue(left); const rightDate=dateValue(right);
+  const l=leftDate!==null&&rightDate!==null?leftDate:(left instanceof Date?left.getTime():left);
+  const r=leftDate!==null&&rightDate!==null?rightDate:(right instanceof Date?right.getTime():right);
+  switch(op){case '==':return l===r;case '!=':return l!==r;case '>':case 'after':return Number(l)>Number(r);case '<':case 'before':return Number(l)<Number(r);case '>=':case 'on_or_after':return Number(l)>=Number(r);case '<=':case 'on_or_before':return Number(l)<=Number(r);case 'contains':return String(l??'').includes(String(r??''));default:throw new Error('Unsupported workflow condition operator');}
 }
 export async function logWorkflowEvent(pool:Pool, organizationId:string, input:{runId?:string;stepId?:string;level?:string;event:string;message:string;metadata?:any}) {
   const org=requireOrganizationId(organizationId);
@@ -97,8 +106,16 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
   const org=requireOrganizationId(job.organization_id); const scheduleId=String(job.payload?.scheduleId||''); const schedule=(await pool.query('SELECT * FROM workflow_schedules WHERE id=$1 AND organization_id=$2',[scheduleId,org])).rows[0]; if(!schedule){await completeJob(pool,org,job.id,workerId);return;}
   const version=(await pool.query('SELECT * FROM workflow_versions WHERE id=$1 AND organization_id=$2',[schedule.workflow_version_id,org])).rows[0]; if(!version){await failJob(pool,org,job.id,workerId,'Workflow version not found',60);return;}
   const def=parseJson(version.definition,{}); const steps=Array.isArray(def.steps)?def.steps:[]; const runId=String(job.payload?.runId||'wfr_'+randomUUID()); const start=Number(job.payload?.resumeStepIndex||0);
-  if(!job.payload?.runId) await pool.query("INSERT INTO workflow_runs (id,organization_id,workflow_id,name,status,total_steps,initiated_by) VALUES ($1,$2,$3,$4,'running',$5,'scheduler')",[runId,org,schedule.workflow_id,def.name||schedule.name,steps.length]);
-  const context:any={trigger:parseJson(job.payload?.triggerPayload,{}),workflow:def,now:new Date().toISOString(),steps:{}};
+  let savedStepOutputs:any={};
+  if(!job.payload?.runId) {
+    await pool.query("INSERT INTO workflow_runs (id,organization_id,workflow_id,name,status,total_steps,initiated_by) VALUES ($1,$2,$3,$4,'running',$5,'scheduler')",[runId,org,schedule.workflow_id,def.name||schedule.name,steps.length]);
+  } else {
+    const run=(await pool.query('SELECT step_outputs FROM workflow_runs WHERE id=$1 AND organization_id=$2',[runId,org])).rows[0];
+    savedStepOutputs=parseJson(run?.step_outputs,{});
+    await pool.query("UPDATE workflow_runs SET status='running',updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2",[runId,org]);
+  }
+  const context:any={trigger:parseJson(job.payload?.triggerPayload,{}),workflow:def,now:new Date().toISOString(),steps:{...savedStepOutputs}};
+  context.last=Object.keys(savedStepOutputs).length?savedStepOutputs[Object.keys(savedStepOutputs).at(-1) as string]:undefined;
   try{
     for(let i=start;i<steps.length;i++){ const step=steps[i]; const stepId=String(step.step_id||'step_'+(i+1)); const idem=runId+':'+stepId;
       if(step.condition&&!evaluateCondition(step.condition,context)){ await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,idempotency_key,input,completed_at) VALUES ($1,$2,$3,$4,$5,$6,'skipped',$7,$8::jsonb,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),idem,JSON.stringify(step.input_mapping||{})]); continue; }
@@ -106,8 +123,9 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
       await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,attempt,max_attempts,idempotency_key,input,started_at) VALUES ($1,$2,$3,$4,$5,$6,'running',1,$7,$8,$9::jsonb,CURRENT_TIMESTAMP) ON CONFLICT (organization_id,idempotency_key) DO UPDATE SET status='running',attempt=workflow_execution_steps.attempt+1,started_at=CURRENT_TIMESTAMP",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),Number(step.retryCount||2)+1,idem,JSON.stringify(step.input_mapping||{})]);
       await logWorkflowEvent(pool,org,{runId,stepId,event:'step_started',message:'Started '+String(step.name||stepId)});
       const output=await executeAction(pool,org,step,context,runId,stepId);
-      if(output.waiting){ const delay=Math.max(1,Number(output.delay_seconds||60)); await pool.query("UPDATE workflow_execution_steps SET status='waiting',scheduled_at=CURRENT_TIMESTAMP+($1*INTERVAL '1 second'),output=$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$3 AND idempotency_key=$4",[delay,JSON.stringify(output),org,idem]); await enqueueJob(pool,org,WORKFLOW_JOB_TYPE,{scheduleId,workflowId:schedule.workflow_id,workflowVersionId:schedule.workflow_version_id,triggerPayload:job.payload?.triggerPayload,runId,resumeStepIndex:i+1},Number(step.retryCount||2)+1); await completeJob(pool,org,job.id,workerId); return; }
-      context.steps[stepId]=output; context.last=output; await pool.query("UPDATE workflow_execution_steps SET status='completed',output=$1::jsonb,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$2 AND idempotency_key=$3",[JSON.stringify(output),org,idem]); await logWorkflowEvent(pool,org,{runId,stepId,event:'step_succeeded',message:'Completed '+String(step.name||stepId),metadata:output});
+      if(output.waiting){ const delay=Math.max(1,Number(output.delay_seconds||60)); await pool.query("UPDATE workflow_execution_steps SET status='waiting',scheduled_at=CURRENT_TIMESTAMP+($1*INTERVAL '1 second'),output=$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$3 AND idempotency_key=$4",[delay,JSON.stringify(output),org,idem]); await enqueueJob(pool,org,WORKFLOW_JOB_TYPE,{scheduleId,workflowId:schedule.workflow_id,workflowVersionId:schedule.workflow_version_id,triggerPayload:job.payload?.triggerPayload,runId,resumeStepIndex:i+1},Number(step.retryCount||2)+1,delay); await completeJob(pool,org,job.id,workerId); return; }
+      context.steps[stepId]=output; context.last=output; await pool.query("UPDATE workflow_execution_steps SET status='completed',output=$1::jsonb,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$2 AND idempotency_key=$3",[JSON.stringify(output),org,idem]);
+      await pool.query("UPDATE workflow_runs SET step_outputs=COALESCE(step_outputs,'{}'::jsonb)||$1::jsonb,completed_steps=$2,current_step_id=$3,current_step_name=$4,updated_at=CURRENT_TIMESTAMP WHERE id=$5 AND organization_id=$6",[JSON.stringify({[stepId]:output}),i+1,stepId,String(step.name||stepId),runId,org]); await logWorkflowEvent(pool,org,{runId,stepId,event:'step_succeeded',message:'Completed '+String(step.name||stepId),metadata:output});
     }
     await pool.query("UPDATE workflow_runs SET status='completed',completed_steps=$1,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,final_summary=$2 WHERE id=$3 AND organization_id=$4",[steps.length,'Completed '+steps.length+' workflow steps',runId,org]); await logWorkflowEvent(pool,org,{runId,event:'workflow_completed',message:'Workflow completed successfully'}); await completeJob(pool,org,job.id,workerId);
   }catch(e:any){ const msg=String(e?.message||e); await pool.query("UPDATE workflow_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,final_summary=$1 WHERE id=$2 AND organization_id=$3",[msg,runId,org]); await logWorkflowEvent(pool,org,{runId,level:'error',event:'workflow_failed',message:msg}); await failJob(pool,org,job.id,workerId,msg,Math.min(300,30*Math.max(1,job.attempts))); throw e; }
