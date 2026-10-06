@@ -38,6 +38,7 @@ import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows,
 import { queueEmailOutreach } from './server/services/emailOutreachService';
 import { createRateLimiter } from './server/middleware/rateLimit';
 import { createWorkflowRun, updateWorkflowRun, getWorkflowRun, listWorkflowRuns, abortWorkflowRun } from './server/services/workflowRunService';
+import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, runWorkflowWorkerOnce, logWorkflowEvent } from './server/services/workflowAutomationService';
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
@@ -96,6 +97,20 @@ async function startServer() {
         appliedMigrationsCount: db.appliedMigrationsCount,
       },
     });
+  });
+
+  app.post('/internal/scheduler/workflows', async (req, res) => {
+    const configuredSecret = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
+    const suppliedSecret = typeof req.headers['x-vortex-scheduler-secret'] === 'string' ? req.headers['x-vortex-scheduler-secret'].trim() : '';
+    if (!configuredSecret || suppliedSecret !== configuredSecret) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for workflow execution' });
+      return res.json(await runWorkflowWorkerOnce(pool));
+    } catch (err: any) {
+      console.error('[workflow-scheduler-trigger] failed:', err);
+      return res.status(500).json({ error: err?.message || 'Workflow scheduler failed' });
+    }
   });
 
   app.post('/internal/scheduler/email-outreach', async (req, res) => {
@@ -471,6 +486,59 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Failed to abort workflow run' });
     }
+  });
+
+  app.post('/api/workflows/:id/versions', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    try {
+      const pool = getPgPool();
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow version service unavailable' });
+      const version = await createWorkflowVersion(pool, orgId, req.params.id, (req as AuthRequest).dbUser?.id || 'system', Boolean(req.body?.publish));
+      return res.status(201).json(version);
+    } catch (err: any) { return res.status(400).json({ error: err?.message || 'Failed to create workflow version' }); }
+  });
+
+  app.post('/api/workflows/:id/versions/:versionId/publish', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    try {
+      const pool = getPgPool(); const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow version service unavailable' });
+      return res.json(await publishWorkflowVersion(pool, orgId, req.params.id, req.params.versionId));
+    } catch (err: any) { return res.status(400).json({ error: err?.message || 'Failed to publish workflow version' }); }
+  });
+
+  app.get('/api/workflows/:id/versions', async (req, res) => {
+    try {
+      const pool = getPgPool(); const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow version service unavailable' });
+      const result = await pool.query('SELECT id, workflow_id, version, status, created_by, created_at, published_at, definition FROM workflow_versions WHERE organization_id=$1 AND workflow_id=$2 ORDER BY version DESC', [orgId, req.params.id]);
+      return res.json(result.rows);
+    } catch (err: any) { return res.status(500).json({ error: err?.message || 'Failed to load workflow versions' }); }
+  });
+
+  app.post('/api/workflows/:id/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    try {
+      const pool = getPgPool(); const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow scheduling unavailable' });
+      return res.status(201).json(await scheduleWorkflow(pool, orgId, req.params.id, (req as AuthRequest).dbUser?.id || 'system', req.body || {}));
+    } catch (err: any) { return res.status(400).json({ error: err?.message || 'Failed to schedule workflow' }); }
+  });
+
+  app.get('/api/workflows/:id/schedules', async (req, res) => {
+    try {
+      const pool = getPgPool(); const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow scheduling unavailable' });
+      const result = await pool.query('SELECT * FROM workflow_schedules WHERE organization_id=$1 AND workflow_id=$2 ORDER BY next_run_at NULLS LAST, created_at DESC', [orgId, req.params.id]);
+      return res.json(result.rows);
+    } catch (err: any) { return res.status(500).json({ error: err?.message || 'Failed to load workflow schedules' }); }
+  });
+
+  app.get('/api/workflow-runs/:id/logs', async (req, res) => {
+    try {
+      const pool = getPgPool(); const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!pool) return res.status(503).json({ error: 'Workflow log service unavailable' });
+      const result = await pool.query('SELECT * FROM workflow_execution_logs WHERE organization_id=$1 AND workflow_run_id=$2 ORDER BY created_at ASC', [orgId, req.params.id]);
+      return res.json(result.rows);
+    } catch (err: any) { return res.status(500).json({ error: err?.message || 'Failed to load workflow logs' }); }
   });
 
   // Execute Custom Workflow Chain Step-by-Step
