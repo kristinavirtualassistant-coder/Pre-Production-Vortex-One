@@ -30,6 +30,7 @@ import { ResearchQueueView } from './components/ResearchQueueView';
 import { ReportsView } from './components/ReportsView';
 import { CampaignsView } from './components/CampaignsView';
 import { ReportingAnalyticsView } from './components/ReportingAnalyticsView';
+import { FilesDocumentsView } from './components/FilesDocumentsView';
 import { SettingsView } from './components/SettingsView';
 import { IntegrationCenterView } from './components/IntegrationCenterView';
 import { ContextInspector } from './components/ContextInspector';
@@ -79,6 +80,7 @@ const VALID_VIEWS = [
   'agents',
   'workflows',
   'drive',
+  'files',
   'privacy',
   'terms',
   'agent_builder',
@@ -813,6 +815,10 @@ export default function App() {
               getAuthHeaders={getAuthHeaders}
               organizationId={getActiveOrgId()}
             />
+          )}
+
+          {currentView === 'files' && (
+            <FilesDocumentsView getAuthHeaders={getAuthHeaders} organizationId={getActiveOrgId()} />
           )}
 
           {currentView === 'integrations' && <IntegrationCenterView />}
