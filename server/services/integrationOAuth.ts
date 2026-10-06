@@ -29,7 +29,7 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
       tokenEndpoint: 'https://oauth2.googleapis.com/token',
       clientId: requiredEnv('GOOGLE_INTEGRATION_CLIENT_ID'),
       clientSecret: requiredEnv('GOOGLE_INTEGRATION_CLIENT_SECRET'),
-      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive.readonly'],
+      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly'],
     };
   }
   return {
@@ -37,7 +37,7 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
     tokenEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     clientId: requiredEnv('MICROSOFT_INTEGRATION_CLIENT_ID'),
     clientSecret: requiredEnv('MICROSOFT_INTEGRATION_CLIENT_SECRET'),
-    scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read'],
+    scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Mail.Read', 'Mail.Send'],
   };
 }
 
