@@ -616,4 +616,71 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
 
+  {
+    version: 18,
+    name: '018_create_real_ai_agent_runtime',
+    sql: `
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS provider VARCHAR(30);
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS max_retries INTEGER DEFAULT 3 NOT NULL;
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN DEFAULT true NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS agent_memories (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        agent_id VARCHAR(64) NOT NULL,
+        memory_key VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        importance NUMERIC(4,3) DEFAULT 0.500 NOT NULL,
+        metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, agent_id, memory_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_memories_lookup
+        ON agent_memories(organization_id, agent_id, importance DESC, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        agent_id VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        objective TEXT NOT NULL,
+        provider VARCHAR(30) NOT NULL,
+        model VARCHAR(100) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'queued',
+        input_context JSONB DEFAULT '{}'::jsonb NOT NULL,
+        output JSONB,
+        error TEXT,
+        attempts INTEGER DEFAULT 0 NOT NULL,
+        max_attempts INTEGER DEFAULT 3 NOT NULL,
+        input_tokens INTEGER DEFAULT 0 NOT NULL,
+        output_tokens INTEGER DEFAULT 0 NOT NULL,
+        estimated_cost_usd NUMERIC(12,6) DEFAULT 0 NOT NULL,
+        execution_time_ms INTEGER,
+        pending_approval_id VARCHAR(64),
+        started_at TIMESTAMP WITH TIME ZONE,
+        completed_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_created ON agent_runs(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_agent ON agent_runs(organization_id, agent_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_status ON agent_runs(organization_id, status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_run_steps (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        run_id VARCHAR(64) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        step_no INTEGER NOT NULL,
+        step_type VARCHAR(30) NOT NULL,
+        tool_name VARCHAR(128),
+        status VARCHAR(30) NOT NULL,
+        input JSONB DEFAULT '{}'::jsonb NOT NULL,
+        output JSONB DEFAULT '{}'::jsonb NOT NULL,
+        error TEXT,
+        latency_ms INTEGER DEFAULT 0 NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run ON agent_run_steps(organization_id, run_id, step_no, created_at);
+    `,
+  },
 ];
