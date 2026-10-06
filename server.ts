@@ -3094,6 +3094,23 @@ async function startServer() {
   app.post('/api/campaigns', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const contacts = req.body.contacts && Array.isArray(req.body.contacts) ? req.body.contacts : [];
+
+      // Validate the complete contact set before creating the campaign so invalid
+      // or duplicate phones cannot leave an orphaned outbound campaign.
+      if (contacts.length > 0) {
+        const normalizedPhones = contacts.map((contact: any) => normalizePhoneNumber(contact?.phoneNumber || ''));
+        if (normalizedPhones.some((phone: string | null) => !phone)) {
+          return res.status(400).json({ error: 'Every campaign contact must include a valid phone number.' });
+        }
+        if (new Set(normalizedPhones).size !== normalizedPhones.length) {
+          return res.status(409).json({
+            error: 'Campaign contacts contain duplicate normalized phone numbers.',
+            code: 'CAMPAIGN_CONTACT_DUPLICATE_PHONE',
+          });
+        }
+      }
+
       const camp = await CampaignManager.createCampaign({
         organizationId: orgId,
         name: req.body.name || 'Targeted Multi-Family Outreach Campaign',
@@ -3106,20 +3123,8 @@ async function startServer() {
         timezone: req.body.timezone,
       });
 
-      // Validate the complete contact set before creation can report success.
       let addedContacts = 0;
-      if (req.body.contacts && Array.isArray(req.body.contacts) && req.body.contacts.length > 0) {
-        const contacts = req.body.contacts;
-        const normalizedPhones = contacts.map((contact: any) => normalizePhoneNumber(contact?.phoneNumber || ''));
-        if (normalizedPhones.some((phone: string | null) => !phone)) {
-          return res.status(400).json({ error: 'Every campaign contact must include a valid phone number.' });
-        }
-        if (new Set(normalizedPhones).size !== normalizedPhones.length) {
-          return res.status(409).json({
-            error: 'Campaign contacts contain duplicate normalized phone numbers.',
-            code: 'CAMPAIGN_CONTACT_DUPLICATE_PHONE',
-          });
-        }
+      if (contacts.length > 0) {
         const contactResult = await CampaignManager.addContacts(orgId, camp.id, contacts);
         addedContacts = contactResult.added;
         if (addedContacts !== req.body.contacts.length) {
