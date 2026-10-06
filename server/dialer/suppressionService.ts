@@ -33,6 +33,17 @@ export class SuppressionService {
     if (!cleanPhone) return { isSuppressed: false };
 
     const pool = requireSuppressionPool();
+    const communicationRes = await pool.query(
+      `SELECT reason, created_at AS suppressed_at, expires_at FROM communication_suppression
+       WHERE organization_id = $1 AND channel IN ('sms','phone') AND regexp_replace(destination, '[^0-9]', '', 'g') = $2
+         AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) LIMIT 1`,
+      [organizationId, cleanPhone],
+    );
+    if (communicationRes.rowCount) {
+      const row = communicationRes.rows[0];
+      return { isSuppressed: true, reason: row.reason || 'Communication suppression', suppressedAt: row.suppressed_at };
+    }
+
     const res = await pool.query(
       `SELECT reason, suppressed_at, expires_at FROM suppression_record
        WHERE organization_id = $1 AND (
@@ -92,6 +103,13 @@ export class SuppressionService {
        ON CONFLICT (organization_id, phone_number)
        DO UPDATE SET reason = EXCLUDED.reason, source = EXCLUDED.source, suppressed_at = EXCLUDED.suppressed_at`,
       [id, organizationId, formatted, reason, source, now],
+    );
+    await pool.query(
+      `INSERT INTO communication_suppression (id, organization_id, channel, destination, reason, source)
+       VALUES ($1, $2, 'phone', $3, $4, $5)
+       ON CONFLICT (organization_id, channel, destination)
+       DO UPDATE SET reason=EXCLUDED.reason, source=EXCLUDED.source, created_at=CURRENT_TIMESTAMP, expires_at=NULL`,
+      [`csupp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, organizationId, formatted, reason, source],
     );
 
     return record;
