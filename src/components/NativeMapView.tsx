@@ -420,9 +420,7 @@ export const NativeMapView: React.FC<NativeMapViewProps> = ({ onNavigate, onOpen
               )}
 
               {drawing && draftPath.map((point, index) => (
-                <Marker key={`draft-${index}`} position={point}>
-                  <MapPin className="w-4 h-4 text-cyan-400" />
-                </Marker>
+                <Marker key={`draft-${index}`} position={point} title={`Polygon point ${index + 1}`} />
               ))}
             </Map>
           </APIProvider>
