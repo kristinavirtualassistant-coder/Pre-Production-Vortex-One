@@ -73,9 +73,9 @@ export const AccountSecurityPanel: React.FC = () => {
             <h3 className="text-sm font-bold text-slate-900">Multi-factor authentication</h3>
             <p className="text-[11px] text-slate-500 mt-1">TOTP authenticator with single-use recovery codes.</p>
           </div>
-          {userProfile?.mfaEnabled ? <span className="text-xs font-semibold text-emerald-700">Enabled</span> : <span className="text-xs text-slate-500">Not enabled</span>}
+          {userProfile?.mfaEnabled || backupCodes.length > 0 ? <span className="text-xs font-semibold text-emerald-700">Enabled</span> : <span className="text-xs text-slate-500">Not enabled</span>}
         </div>
-        {!userProfile?.mfaEnabled && !mfaSecret && <button type="button" onClick={startMfa} disabled={loading} className="mt-3 px-3 py-2 rounded-lg bg-cyan-600 text-white text-xs font-semibold">{loading ? 'Preparing…' : 'Set up authenticator MFA'}</button>}
+        {!userProfile?.mfaEnabled && backupCodes.length === 0 && !mfaSecret && <button type="button" onClick={startMfa} disabled={loading} className="mt-3 px-3 py-2 rounded-lg bg-cyan-600 text-white text-xs font-semibold">{loading ? 'Preparing…' : 'Set up authenticator MFA'}</button>}
         {!userProfile?.mfaEnabled && mfaSecret && (
           <div className="mt-4 space-y-3">
             <div className="rounded-lg bg-slate-50 p-3 text-xs"><div className="font-semibold">Manual setup secret</div><code className="font-mono break-all">{mfaSecret}</code></div>
