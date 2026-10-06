@@ -113,7 +113,6 @@ export interface WorkflowStep {
   type: WorkflowStepType;
   assigned_agent: AgentId;
   objective: string;
-  input_mapping?: Record<string, string>;
   dependencies: string[];
   requiresApproval?: boolean;
   condition?: string;
