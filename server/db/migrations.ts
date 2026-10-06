@@ -806,4 +806,28 @@ export const MIGRATIONS: Migration[] = [
         ON appointments(organization_id, status);
     `,
   },
-];\n
+  {
+    version: 20,
+    name: '020_create_native_property_map_spatial_layer',
+    sql: `
+      CREATE EXTENSION IF NOT EXISTS postgis;
+
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS parcel_geometry JSONB;
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS map_signals JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS hazard_flags JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE properties ADD COLUMN IF NOT EXISTS location geography(Point, 4326);
+
+      CREATE INDEX IF NOT EXISTS idx_properties_location_gist
+        ON properties USING GIST(location);
+      CREATE INDEX IF NOT EXISTS idx_properties_org_location
+        ON properties(organization_id, latitude, longitude);
+
+      UPDATE properties
+      SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography
+      WHERE latitude IS NOT NULL
+        AND longitude IS NOT NULL
+        AND location IS NULL;
+    `,
+\n
