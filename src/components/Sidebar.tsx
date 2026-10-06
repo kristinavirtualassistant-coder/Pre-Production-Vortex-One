@@ -6,6 +6,7 @@ import {
   Building2,
   Users,
   Layers,
+  Map,
   Sparkles,
   Target,
   PhoneCall,
@@ -86,6 +87,7 @@ export const PRIMARY_NAV_SECTIONS: {
     category: 'PROPERTY INTELLIGENCE',
     items: [
       { id: 'property_search', label: 'Property Search', symbol: '⌖', icon: Search, badge: 'GIS' },
+      { id: 'map', label: 'Native Map', symbol: '⌗', icon: Map, badge: 'PostGIS' },
       { id: 'properties', label: 'Properties', symbol: '◈', icon: Building2 },
       { id: 'owners', label: 'Owners', symbol: '◎', icon: Users },
       { id: 'portfolios', label: 'Portfolios', symbol: '▦', icon: Layers },
