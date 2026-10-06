@@ -54,7 +54,7 @@ async function requestJson(url: string, init: RequestInit = {}): Promise<any> {
 
 async function connection(pool: Pool, organizationId: string, userId: string, provider: EmailProvider) {
   const result = await pool.query(
-    "SELECT * FROM integration_connections WHERE organization_id=$1 AND user_id=$2 AND provider=$3 AND status=''connected'' LIMIT 1"
+    "SELECT * FROM integration_connections WHERE organization_id=$1 AND user_id=$2 AND provider=$3 AND status=''connected'' LIMIT 1",
     [organizationId, userId, provider],
   );
   if (!result.rowCount) {
@@ -88,7 +88,7 @@ async function accessToken(pool: Pool, row: any): Promise<string> {
   }
   const expiresAt = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : row.token_expires_at;
   await pool.query(
-    "UPDATE integration_connections SET access_token=$1,refresh_token=$2,token_expires_at=$3,status=''connected'',updated_at=CURRENT_TIMESTAMP WHERE id=$4"
+    "UPDATE integration_connections SET access_token=$1,refresh_token=$2,token_expires_at=$3,status=''connected'',updated_at=CURRENT_TIMESTAMP WHERE id=$4",
     [encryptSecret(String(token.access_token)), token.refresh_token ? encryptSecret(String(token.refresh_token)) : row.refresh_token, expiresAt, row.id],
   );
   return String(token.access_token);
@@ -143,7 +143,7 @@ async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: 
 
   if (!ownerId && args.channel === 'email') {
     const owner = await pool.query(
-      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(email_addresses,''[]''::jsonb)) e WHERE lower(COALESCE(e->>''email'',''''))=lower($2)) LIMIT 1"
+      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(email_addresses,''[]''::jsonb)) e WHERE lower(COALESCE(e->>''email'',''''))=lower($2)) LIMIT 1",
       [organizationId, args.contactKey],
     );
     ownerId = owner.rows[0]?.id || null;
@@ -151,7 +151,7 @@ async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: 
 
   if (!ownerId && args.channel === 'sms') {
     const owner = await pool.query(
-      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(phone_numbers,''[]''::jsonb)) p WHERE regexp_replace(COALESCE(p->>''number'',''''),''[^0-9+]'''','''',''g'')=regexp_replace($2,''[^0-9+]'''','''',''g'')) LIMIT 1"
+      "SELECT id FROM property_owners WHERE organization_id=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(phone_numbers,''[]''::jsonb)) p WHERE regexp_replace(COALESCE(p->>''number'',''''),''[^0-9+]'''','''',''g'')=regexp_replace($2,''[^0-9+]'''','''',''g'')) LIMIT 1",
       [organizationId, args.contactKey],
     );
     ownerId = owner.rows[0]?.id || null;
@@ -180,7 +180,7 @@ async function resolveLink(pool: Pool, organizationId: string, args: { leadId?: 
 export async function assertNotSuppressed(pool: Pool, organizationId: string, channel: CommunicationChannel, contactKey: string) {
   const key = channel === 'email' ? normalizeEmail(contactKey) : normalizePhone(contactKey);
   const result = await pool.query(
-    "SELECT reason FROM communication_suppressions WHERE organization_id=$1 AND contact_key=$2 AND channel IN ($3,''all'') LIMIT 1"
+    "SELECT reason FROM communication_suppressions WHERE organization_id=$1 AND contact_key=$2 AND channel IN ($3,''all'') LIMIT 1",
     [organizationId, key, channel],
   );
   if (result.rowCount) throw new Error(channel.toUpperCase() + ' recipient is suppressed: ' + result.rows[0].reason);
@@ -208,7 +208,7 @@ async function thread(pool: Pool, args: any) {
 
 async function record(pool: Pool, args: any) {
   const result = await pool.query(
-    "INSERT INTO communication_messages (id,organization_id,thread_id,channel,provider,direction,external_message_id,from_address,to_address,subject,body,html_body,status,tracking_token,idempotency_key,lead_id,owner_id,property_id,created_by,sent_at,received_at,metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,CASE WHEN $6=''outbound'' AND $13 IN (''sent'',''delivered'',''read'',''replied'') THEN CURRENT_TIMESTAMP ELSE NULL END,CASE WHEN $6=''inbound'' THEN CURRENT_TIMESTAMP ELSE NULL END,$20) ON CONFLICT DO NOTHING RETURNING *"
+    "INSERT INTO communication_messages (id,organization_id,thread_id,channel,provider,direction,external_message_id,from_address,to_address,subject,body,html_body,status,tracking_token,idempotency_key,lead_id,owner_id,property_id,created_by,sent_at,received_at,metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,CASE WHEN $6=''outbound'' AND $13 IN (''sent'',''delivered'',''read'',''replied'') THEN CURRENT_TIMESTAMP ELSE NULL END,CASE WHEN $6=''inbound'' THEN CURRENT_TIMESTAMP ELSE NULL END,$20) ON CONFLICT DO NOTHING RETURNING *",
     ['cm_' + randomUUID(),args.organizationId,args.threadId,args.channel,args.provider,args.direction,args.externalMessageId || null,args.fromAddress || null,args.toAddress || null,args.subject || null,args.body,args.htmlBody || null,args.status,args.trackingToken || null,args.idempotencyKey || null,args.leadId || null,args.ownerId || null,args.propertyId || null,args.userId || null,JSON.stringify(args.metadata || {})],
   );
   if (result.rowCount) {
@@ -268,7 +268,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
     const sent = args.provider === 'microsoft-365'
       ? await sendOutlook(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id})
       : await sendGmail(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id});
-    const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status=''sent'',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *"[sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
+    const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status=''sent'',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
     await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2',[sent.externalThreadId,t.id]);
     return updated.rows[0];
   } catch (error: any) {
@@ -287,7 +287,7 @@ export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   const numbers = (data.incoming_phone_numbers || []).map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
   for (const n of numbers) {
     await pool.query(
-      "INSERT INTO messaging_numbers (id,organization_id,provider,phone_number,friendly_name,capabilities,status,metadata) VALUES ($1,$2,''twilio'',$3,$4,$5,''active'',$6) ON CONFLICT (organization_id,provider,phone_number) DO UPDATE SET friendly_name=EXCLUDED.friendly_name,capabilities=EXCLUDED.capabilities,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP"
+      "INSERT INTO messaging_numbers (id,organization_id,provider,phone_number,friendly_name,capabilities,status,metadata) VALUES ($1,$2,''twilio'',$3,$4,$5,''active'',$6) ON CONFLICT (organization_id,provider,phone_number) DO UPDATE SET friendly_name=EXCLUDED.friendly_name,capabilities=EXCLUDED.capabilities,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP",
       ['num_' + randomUUID(),organizationId,n.phone_number,n.friendly_name,JSON.stringify(n.capabilities),JSON.stringify({sid:n.sid})],
     );
   }
@@ -331,8 +331,8 @@ export async function handleTwilioInbound(pool: Pool, organizationId: string, re
   const t = await thread(pool,{organizationId,channel:'sms',provider:'twilio',contactKey:from,externalThreadId:body.MessageSid,subject:'SMS conversation',...links});
   const message = await record(pool,{organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'inbound',externalMessageId:body.MessageSid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:text,status:'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{twilio:body}});
   if (/^(stop|stopall|unsubscribe|cancel|end|quit|remove)$/i.test(text)) {
-    await pool.query("INSERT INTO communication_suppressions (id,organization_id,channel,contact_key,reason,source) VALUES ($1,$2,''sms'',$3,''STOP'',''twilio'') ON CONFLICT (organization_id,channel,contact_key) DO NOTHING"['sup_' + randomUUID(),organizationId,from]);
-    await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''opted_out'',$4)"['ce_' + randomUUID(),organizationId,message.id,JSON.stringify({source:'twilio'})]);
+    await pool.query("INSERT INTO communication_suppressions (id,organization_id,channel,contact_key,reason,source) VALUES ($1,$2,''sms'',$3,''STOP'',''twilio'') ON CONFLICT (organization_id,channel,contact_key) DO NOTHING", ['sup_' + randomUUID(),organizationId,from]);
+    await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''opted_out'',$4)", ['ce_' + randomUUID(),organizationId,message.id,JSON.stringify({source:'twilio'})]);
   }
 }
 
@@ -343,10 +343,10 @@ export async function handleTwilioStatus(pool: Pool, organizationId: string, req
   if (!sid) return;
   const status = String(body.MessageStatus || body.SmsStatus || '').toLowerCase();
   const mapped = status === 'delivered' ? 'delivered' : status === 'failed' || status === 'undelivered' ? 'failed' : status === 'read' ? 'read' : 'sent';
-  await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1=''failed'' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4"[mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
+  await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1=''failed'' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4", [mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
   if (mapped === 'delivered') {
     const message = await pool.query('SELECT id FROM communication_messages WHERE organization_id=$1 AND external_message_id=$2 LIMIT 1',[organizationId,sid]);
-    if (message.rowCount) await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''delivered'',$4)"['ce_' + randomUUID(),organizationId,message.rows[0].id,JSON.stringify(body)]);
+    if (message.rowCount) await pool.query("INSERT INTO communication_events (id,organization_id,message_id,event_type,metadata) VALUES ($1,$2,$3,''delivered'',$4)", ['ce_' + randomUUID(),organizationId,message.rows[0].id,JSON.stringify(body)]);
   }
 }
 
@@ -461,7 +461,7 @@ export async function recordTrackingEvent(pool: Pool, token: string, type:'opene
   if (!result.rowCount) return;
   const message=result.rows[0];
   await pool.query('INSERT INTO communication_events (id,organization_id,message_id,event_type,event_url) VALUES ($1,$2,$3,$4,$5)',['ce_' + randomUUID(),message.organization_id,message.id,type,url || null]);
-  await pool.query("UPDATE communication_messages SET status=CASE WHEN $1=''opened'' AND status=''sent'' THEN ''read'' WHEN $1=''clicked'' THEN ''read'' ELSE status END WHERE id=$2"[type,message.id]);
+  await pool.query("UPDATE communication_messages SET status=CASE WHEN $1=''opened'' AND status=''sent'' THEN ''read'' WHEN $1=''clicked'' THEN ''read'' ELSE status END WHERE id=$2", [type,message.id]);
 }
 
 export async function createSequence(pool: Pool, organizationId: string, userId: string, input:any) {
@@ -488,7 +488,7 @@ export async function enrollSequence(pool: Pool, organizationId: string, userId:
   const nextAt=new Date(Date.now()+delay*60000);
   const id='enroll_' + randomUUID();
   await pool.query(
-    "INSERT INTO communication_sequence_enrollments (id,organization_id,sequence_id,lead_id,status,current_step_order,next_run_at,created_by) VALUES ($1,$2,$3,$4,''active'',$5,$6,$7) ON CONFLICT (sequence_id,lead_id) DO UPDATE SET status=''active'',current_step_order=$5,next_run_at=$6,updated_at=CURRENT_TIMESTAMP"
+    "INSERT INTO communication_sequence_enrollments (id,organization_id,sequence_id,lead_id,status,current_step_order,next_run_at,created_by) VALUES ($1,$2,$3,$4,''active'',$5,$6,$7) ON CONFLICT (sequence_id,lead_id) DO UPDATE SET status=''active'',current_step_order=$5,next_run_at=$6,updated_at=CURRENT_TIMESTAMP",
     [id,organizationId,sequenceId,leadId,first.rows[0].step_order,nextAt.toISOString(),userId],
   );
   const row=await pool.query('SELECT id FROM communication_sequence_enrollments WHERE organization_id=$1 AND sequence_id=$2 AND lead_id=$3',[organizationId,sequenceId,leadId]);
@@ -498,7 +498,7 @@ export async function enrollSequence(pool: Pool, organizationId: string, userId:
 
 export async function runSequenceStep(pool: Pool, organizationId: string, enrollmentId: string) {
   const result=await pool.query(
-    "SELECT e.*,s.channel,s.template_id,s.step_order,l.owner_id,l.primary_property_id,o.name AS owner_name,o.email_addresses,o.phone_numbers FROM communication_sequence_enrollments e JOIN communication_sequence_steps s ON s.sequence_id=e.sequence_id AND s.step_order=e.current_step_order JOIN leads l ON l.id=e.lead_id AND l.organization_id=e.organization_id LEFT JOIN property_owners o ON o.id=l.owner_id AND o.organization_id=l.organization_id WHERE e.id=$1 AND e.organization_id=$2 AND e.status=''active'' LIMIT 1"
+    "SELECT e.*,s.channel,s.template_id,s.step_order,l.owner_id,l.primary_property_id,o.name AS owner_name,o.email_addresses,o.phone_numbers FROM communication_sequence_enrollments e JOIN communication_sequence_steps s ON s.sequence_id=e.sequence_id AND s.step_order=e.current_step_order JOIN leads l ON l.id=e.lead_id AND l.organization_id=e.organization_id LEFT JOIN property_owners o ON o.id=l.owner_id AND o.organization_id=l.organization_id WHERE e.id=$1 AND e.organization_id=$2 AND e.status=''active'' LIMIT 1",
     [enrollmentId,organizationId],
   );
   if (!result.rowCount) return {done:true};
@@ -521,7 +521,7 @@ export async function runSequenceStep(pool: Pool, organizationId: string, enroll
   }
   const next=await pool.query('SELECT step_order,delay_minutes FROM communication_sequence_steps WHERE sequence_id=$1 AND step_order>$2 ORDER BY step_order ASC LIMIT 1',[row.sequence_id,row.step_order]);
   if (!next.rowCount) {
-    await pool.query("UPDATE communication_sequence_enrollments SET status=''completed'',next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2"[enrollmentId,organizationId]);
+    await pool.query("UPDATE communication_sequence_enrollments SET status=''completed'',next_run_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2", [enrollmentId,organizationId]);
     return {done:true};
   }
   const nextAt=new Date(Date.now()+Number(next.rows[0].delay_minutes || 0)*60000);
