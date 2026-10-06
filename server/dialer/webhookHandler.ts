@@ -153,8 +153,26 @@ export class WebhookHandler {
             organizationId,
             callId: authoritativeCallId,
             recordingUrl: normalized.recordingUrl,
-          }).catch((archiveError) => {
+          }).catch(async (archiveError) => {
             console.error('[Files] RingCentral call recording archive failed:', archiveError);
+            try {
+              await pool.query(
+                `INSERT INTO file_processing_jobs
+                  (id,organization_id,file_id,job_type,status,max_attempts,last_error,result)
+                 VALUES ($1,$2,$3,'recording_archive','pending',5,$4,$5::jsonb)
+                 ON CONFLICT (file_id,job_type) DO UPDATE
+                   SET status='pending',last_error=EXCLUDED.last_error,updated_at=CURRENT_TIMESTAMP`,
+                [
+                  `fpj_${normalized.eventId}`,
+                  organizationId,
+                  `call_${authoritativeCallId}`,
+                  String(archiveError?.message || archiveError),
+                  JSON.stringify({ call_id: authoritativeCallId, recording_url: normalized.recordingUrl }),
+                ],
+              );
+            } catch (queueError) {
+              console.error('[Files] Unable to enqueue recording retry:', queueError);
+            }
           });
         }
 
