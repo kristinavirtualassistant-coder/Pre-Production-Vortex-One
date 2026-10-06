@@ -12,6 +12,8 @@ import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
+import { archiveRingCentralRecording } from '../services/fileStorageService';
+
 
 export interface WebhookProcessResult {
   status: 'processed' | 'duplicate_ignored' | 'error';
@@ -145,6 +147,17 @@ export class WebhookHandler {
           payload: { ...normalized.rawPayload, normalizedStatus: normalized.status, telephonySessionId: normalized.telephonySessionId, partyId: normalized.ringcentralPartyId },
           occurredAt: normalized.timestamp,
         });
+
+        if (normalized.recordingUrl && authoritativeCallId) {
+          archiveRingCentralRecording({
+            organizationId,
+            callId: authoritativeCallId,
+            recordingUrl: normalized.recordingUrl,
+            contactName: updatedCall?.contact_name,
+          }).catch((archiveError) => {
+            console.error('[Files] RingCentral call recording archive failed:', archiveError);
+          });
+        }
 
         await pool.query(
           `INSERT INTO processed_events (event_id, organization_id, provider, event_type, processed_at)
