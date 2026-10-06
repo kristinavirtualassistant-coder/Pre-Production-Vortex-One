@@ -115,7 +115,8 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
     await pool.query("UPDATE workflow_runs SET status='running',updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2",[runId,org]);
   }
   const context:any={trigger:parseJson(job.payload?.triggerPayload,{}),workflow:def,now:new Date().toISOString(),steps:{...savedStepOutputs}};
-  context.last=Object.keys(savedStepOutputs).length?savedStepOutputs[Object.keys(savedStepOutputs).at(-1) as string]:undefined;
+  const savedKeys=Object.keys(savedStepOutputs);
+  context.last=savedKeys.length?savedStepOutputs[savedKeys[savedKeys.length-1]]:undefined;
   try{
     for(let i=start;i<steps.length;i++){ const step=steps[i]; const stepId=String(step.step_id||'step_'+(i+1)); const idem=runId+':'+stepId;
       if(step.condition&&!evaluateCondition(step.condition,context)){ await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,idempotency_key,input,completed_at) VALUES ($1,$2,$3,$4,$5,$6,'skipped',$7,$8::jsonb,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),idem,JSON.stringify(step.input_mapping||{})]); continue; }
