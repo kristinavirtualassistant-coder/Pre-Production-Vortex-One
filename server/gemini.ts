@@ -69,6 +69,9 @@ export async function generateAgentText(
   options: ModelCallOptions = {}
 ): Promise<{ text: string; searchSources?: Array<{ uri: string; title: string }>; cached?: boolean }> {
   const category = 'gemini_text';
+  // AI prompts can contain tenant CRM/owner data. The current cache is process-global,
+  // so caching here would permit one tenant to receive another tenant's generated result.
+  // Keep AI generation uncached until an organization-scoped cache backend is in place.
   const inputPayload = { prompt, model: options.model, systemInstruction: options.systemInstruction, temperature: options.temperature };
 
   const { result, isCached } = await taskCacheService.wrapTask(
@@ -177,10 +180,10 @@ export async function generateAgentText(
         text: `[Vortex One Intelligence Synthesis]\nRequest analyzed: ${prompt.slice(0, 140)}...\nProcessed against property records, CRM data structures, and operational rules engine.`,
       };
     },
-    { skipCache: options.skipCache, forceRefresh: options.forceRefresh }
+    { skipCache: true, forceRefresh: options.forceRefresh }
   );
 
-  return { ...result, cached: isCached };
+  return { ...result, cached: false };
 }
 
 /**
