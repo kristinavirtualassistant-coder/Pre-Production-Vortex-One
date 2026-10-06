@@ -81,42 +81,31 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-
   const result = await pool.query(
-    `SELECT u.id, u.organization_id, u.email, u.name, u.role, u.password_hash, u.disabled_at,
-            o.name AS organization_name, o.slug AS organization_slug, o.settings AS organization_settings
-     FROM users u
-     JOIN organizations o ON o.id = u.organization_id
-     WHERE lower(u.email) = $1
-     LIMIT 1`,
-    [email],
-  );
+    `SELECT u.id,u.organization_id,u.email,u.name,u.role,u.password_hash,u.disabled_at,u.email_verified_at,u.mfa_enabled,
+            o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
+     FROM users u JOIN organizations o ON o.id=u.organization_id
+     WHERE lower(u.email)=$1 LIMIT 1`, [email]);
   const user = result.rows[0];
   if (!user || user.disabled_at || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
-
-  const token = createSessionToken();
-  await pool.query(
-    `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days')`,
-    [`sess_${randomUUID()}`, user.id, hashSessionToken(token)],
-  );
-  await pool.query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
-
-  return res.json({
-    token,
-    user: {
-      id: user.id,
-      organization_id: user.organization_id,
-      organization_name: user.organization_name,
-      organization_slug: user.organization_slug,
-      organization_settings: user.organization_settings,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    },
-  });
+  if (!user.email_verified_at) return res.status(403).json({ error: 'Email address must be verified before signing in', code: 'EMAIL_NOT_VERIFIED' });
+  if (user.mfa_enabled) {
+    const challengeToken = createOneTimeToken();
+    await pool.query(
+      `INSERT INTO auth_mfa_challenges (id,user_id,challenge_hash,expires_at)
+       VALUES ($1,$2,$3,CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
+      [`mfa_${randomUUID()}`,user.id,hashOneTimeToken(challengeToken)]);
+    return res.json({ mfaRequired: true, challengeToken });
+  }
+  const token = await issueSession(pool,user.id,req,res);
+  await pool.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[user.id]);
+  return res.json({ token, user: {
+    id:user.id,organization_id:user.organization_id,organization_name:user.organization_name,
+    organization_slug:user.organization_slug,organization_settings:user.organization_settings,
+    email:user.email,name:user.name,role:user.role
+  }});
 }
 
 async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
