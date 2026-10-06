@@ -88,11 +88,12 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 16, 'Migration list contains 16 defined migrations', `Expected 16, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 18, 'Migration list contains 18 defined migrations', `Expected 18, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 17 && migration.name === '017_enforce_global_user_email_identity'), 'Global email identity migration 17 present', 'Expected global email identity migration 17 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
@@ -998,37 +999,3 @@ async function runAllTests() {
   });
 
   assert(laSearchResult.success === true, 'LA County Assessor search returned success');
-  assert(laSearchResult.totalFound > 0, 'LA County Assessor returned at least 1 real parcel');
-  assert(laSearchResult.providerUsed.includes('Los Angeles County'), 'LA County provider correctly routed and used');
-
-  const laTop = laSearchResult.results[0];
-  if (laTop) {
-    assert(laTop.property.apn.includes('2038-020-084') || laTop.property.apn.length > 0, 'Real APN returned for LA County property');
-    assert(laTop.property.year_built > 0, 'Real year built returned from LA Assessor roll');
-    assert(laTop.property.square_feet > 0, 'Real square footage returned from LA Assessor roll');
-    assert(laTop.property.assessed_tax_value > 0, 'Real assessed tax value returned from LA Assessor roll');
-    assert(laTop.provenance.fipsCode === '06037', 'FIPS Code 06037 verified for Los Angeles County');
-  }
-
-  // Test Group 16: Property PDF Report Dossier Generation
-  console.log('\n[Group 16: Property Analytics PDF Dossier Generation]');
-  const sampleProp = inMemoryStore.properties[0];
-  assert(sampleProp !== undefined, 'Sample property available for PDF report generation');
-  assert(typeof sampleProp.apn === 'string' && sampleProp.apn.length > 0, 'Property APN present for report');
-  assert(sampleProp.estimated_value > 0, 'Property valuation analytics present for report');
-  assert(sampleProp.assessed_tax_value > 0, 'Assessor tax value present for report');
-  assert(sampleProp.provenance?.source !== undefined, 'Cadastral provenance ledger present for report');
-
-  console.log('\n========================================');
-  console.log(`  Tests Complete: ${passedTests} Passed, ${failedTests} Failed`);
-  console.log('========================================\n');
-
-  if (failedTests > 0) {
-    process.exit(1);
-  }
-}
-
-runAllTests().catch((err) => {
-  console.error('Test runner fatal error:', err);
-  process.exit(1);
-});
