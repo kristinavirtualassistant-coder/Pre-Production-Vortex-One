@@ -580,6 +580,8 @@ export class DataImportService {
             last_sale_date: rec.last_sale_date ?? existing.last_sale_date,
             last_sale_price: rec.last_sale_price ?? existing.last_sale_price,
             provenance,
+            latitude: rec.latitude ?? existing.latitude,
+            longitude: rec.longitude ?? existing.longitude,
           };
 
           inMemoryStore.properties[existingPropIndex] = targetProperty;
@@ -612,6 +614,8 @@ export class DataImportService {
             last_sale_date: rec.last_sale_date,
             last_sale_price: rec.last_sale_price,
             provenance,
+            latitude: rec.latitude,
+            longitude: rec.longitude,
           };
 
           inMemoryStore.properties.unshift(targetProperty);
