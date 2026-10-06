@@ -9,6 +9,7 @@ import {
   Sparkles,
   Target,
   PhoneCall,
+  MessageSquare,
   Megaphone,
   CheckSquare,
   Zap,
@@ -98,6 +99,7 @@ export const PRIMARY_NAV_SECTIONS: {
       { id: 'leads', label: 'Leads', symbol: '◉', icon: Target },
       { id: 'dialer', label: 'Dialer', symbol: '☎', icon: PhoneCall },
       { id: 'campaigns', label: 'Campaigns', symbol: '▤', icon: Megaphone },
+      { id: 'communications', label: 'Communications', symbol: '✉', icon: MessageSquare, badge: 'Email + SMS' },
     ],
   },
   {
