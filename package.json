@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
+    "dev": "tsx server-bootstrap.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server-bootstrap.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server-runtime.cjs",
+    "start": "node dist/server-runtime.cjs",
     "test": "tsx server/test/suite.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
