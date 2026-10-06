@@ -208,6 +208,159 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   return res.status(201).json({ email, role, token: rawToken, expiresInDays: 7 });
 }
 
+
+async function handleVerifyEmail(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const token=typeof req.body?.token==='string'?req.body.token.trim():'';
+  if(!token) return res.status(400).json({error:'Verification token is required'});
+  const result=await pool.query(
+    `SELECT id,user_id FROM email_verification_tokens
+     WHERE token_hash=$1 AND used_at IS NULL AND expires_at>CURRENT_TIMESTAMP LIMIT 1`,
+    [hashOneTimeToken(token)]);
+  const row=result.rows[0];
+  if(!row) return res.status(400).json({error:'Verification link is invalid or expired'});
+  await pool.query('UPDATE users SET email_verified_at=COALESCE(email_verified_at,CURRENT_TIMESTAMP) WHERE id=$1',[row.user_id]);
+  await pool.query('UPDATE email_verification_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=$1',[row.id]);
+  return res.json({verified:true});
+}
+
+async function handleRequestPasswordReset(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const email=typeof req.body?.email==='string'?req.body.email.trim().toLowerCase():'';
+  if(/^\S+@\S+\.\S+$/.test(email)){
+    const user=(await pool.query('SELECT id FROM users WHERE lower(email)=$1 AND disabled_at IS NULL LIMIT 1',[email])).rows[0];
+    if(user){
+      const token=createOneTimeToken();
+      await pool.query('DELETE FROM password_reset_tokens WHERE user_id=$1 AND used_at IS NULL',[user.id]);
+      await pool.query(`INSERT INTO password_reset_tokens (id,user_id,token_hash,expires_at)
+        VALUES ($1,$2,$3,CURRENT_TIMESTAMP+INTERVAL '30 minutes')`,
+        [`reset_${randomUUID()}`,user.id,hashOneTimeToken(token)]);
+      const link=`${appUrl()}/?reset=${encodeURIComponent(token)}`;
+      try{await sendSecurityEmail({to:email,subject:'Reset your Vortex One password',text:`Reset your Vortex One password within 30 minutes: ${link}`});}
+      catch(error){console.error('Password reset email failed:',error);}
+    }
+  }
+  return res.json({accepted:true});
+}
+
+async function handleResetPassword(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const token=typeof req.body?.token==='string'?req.body.token.trim():'';
+  const password=typeof req.body?.password==='string'?req.body.password:'';
+  if(!token||!password) return res.status(400).json({error:'Reset token and password are required'});
+  if(password.length<12) return res.status(400).json({error:'Password must be at least 12 characters'});
+  const result=await pool.query(`SELECT id,user_id FROM password_reset_tokens
+    WHERE token_hash=$1 AND used_at IS NULL AND expires_at>CURRENT_TIMESTAMP LIMIT 1`,[hashOneTimeToken(token)]);
+  const row=result.rows[0];
+  if(!row) return res.status(400).json({error:'Reset link is invalid or expired'});
+  const hash=await hashPassword(password);
+  await pool.query('UPDATE users SET password_hash=$1,password_changed_at=CURRENT_TIMESTAMP,email_verified_at=COALESCE(email_verified_at,CURRENT_TIMESTAMP) WHERE id=$2',[hash,row.user_id]);
+  await pool.query('UPDATE password_reset_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=$1',[row.id]);
+  await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND revoked_at IS NULL',[row.user_id]);
+  clearSessionCookie(res);
+  return res.json({reset:true});
+}
+
+async function handleMfaSetup(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const row=(await pool.query('SELECT email,mfa_enabled FROM users WHERE id=$1',[req.dbUser.id])).rows[0];
+  if(!row) return res.status(404).json({error:'User not found'});
+  if(row.mfa_enabled) return res.status(409).json({error:'MFA is already enabled'});
+  const secret=createTotpSecret();
+  await pool.query('UPDATE users SET mfa_secret=$1 WHERE id=$2',[encryptMfaSecret(secret),req.dbUser.id]);
+  return res.json({secret,otpauthUri:createTotpUri(secret,row.email)});
+}
+
+async function handleMfaEnable(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const code=typeof req.body?.code==='string'?req.body.code.trim():'';
+  const row=(await pool.query('SELECT mfa_secret FROM users WHERE id=$1',[req.dbUser.id])).rows[0];
+  if(!row?.mfa_secret) return res.status(400).json({error:'Start MFA setup first'});
+  if(!verifyTotp(decryptMfaSecret(row.mfa_secret),code)) return res.status(400).json({error:'Invalid authenticator code'});
+  const backupCodes=generateBackupCodes();
+  await pool.query('UPDATE users SET mfa_enabled=true,mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(await hashBackupCodes(backupCodes)),req.dbUser.id]);
+  return res.json({enabled:true,backupCodes});
+}
+
+async function handleMfaDisable(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const password=typeof req.body?.password==='string'?req.body.password:'';
+  const row=(await pool.query('SELECT password_hash FROM users WHERE id=$1',[req.dbUser.id])).rows[0];
+  if(!row?.password_hash||!(await verifyPassword(password,row.password_hash))) return res.status(401).json({error:'Current password is required'});
+  await pool.query("UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_backup_codes='[]'::jsonb WHERE id=$1",[req.dbUser.id]);
+  return res.json({enabled:false});
+}
+
+async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const challengeToken=typeof req.body?.challengeToken==='string'?req.body.challengeToken.trim():'';
+  const code=typeof req.body?.code==='string'?req.body.code.trim().replace(/-/g,'').toUpperCase():'';
+  if(!challengeToken||!code) return res.status(400).json({error:'MFA challenge and code are required'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query(`SELECT c.id,c.user_id,c.attempts,u.email,u.name,u.role,u.organization_id,u.mfa_secret,u.mfa_backup_codes,
+      o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
+      FROM auth_mfa_challenges c JOIN users u ON u.id=c.user_id JOIN organizations o ON o.id=u.organization_id
+      WHERE c.challenge_hash=$1 AND c.expires_at>CURRENT_TIMESTAMP AND u.disabled_at IS NULL FOR UPDATE`,
+      [hashOneTimeToken(challengeToken)]);
+    const row=result.rows[0];
+    if(!row||row.attempts>=5){await client.query('ROLLBACK');return res.status(401).json({error:'MFA challenge is invalid or expired'});}
+    const totpValid=row.mfa_secret?verifyTotp(decryptMfaSecret(row.mfa_secret),code):false;
+    const backups=Array.isArray(row.mfa_backup_codes)?row.mfa_backup_codes:[];
+    const backupIndex=totpValid?-1:backups.findIndex((hash:string)=>hashOneTimeToken(code)===hash);
+    if(!totpValid&&backupIndex<0){
+      await client.query('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=$1',[row.id]);
+      await client.query('COMMIT');
+      return res.status(401).json({error:'Invalid MFA code'});
+    }
+    if(backupIndex>=0){backups.splice(backupIndex,1);await client.query('UPDATE users SET mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(backups),row.user_id]);}
+    await client.query('DELETE FROM auth_mfa_challenges WHERE id=$1',[row.id]);
+    await client.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[row.user_id]);
+    await client.query('COMMIT');
+    const token=await issueSession(pool,row.user_id,req,res,{mfaVerified:true});
+    return res.json({token,user:{id:row.user_id,organization_id:row.organization_id,organization_name:row.organization_name,organization_slug:row.organization_slug,organization_settings:row.organization_settings,email:row.email,name:row.name,role:row.role}});
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+async function listSessions(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const token=getSessionToken(req);
+  const currentHash=token?hashOneTimeToken(token):'';
+  const result=await pool.query(`SELECT id,user_agent,ip_address,created_at,last_seen_at,expires_at,mfa_verified_at,
+    (token_hash=$2) AS current FROM auth_sessions
+    WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>CURRENT_TIMESTAMP ORDER BY last_seen_at DESC`,
+    [req.dbUser.id,currentHash]);
+  return res.json({sessions:result.rows});
+}
+
+async function revokeOtherSessions(req: AuthRequest,res: Response,pool: NonNullable<ReturnType<typeof getPgPool>>){
+  if(!req.dbUser)return res.status(401).json({error:'Unauthorized'});
+  const token=getSessionToken(req); const currentHash=token?hashOneTimeToken(token):'';
+  await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND token_hash<>$2 AND revoked_at IS NULL',[req.dbUser.id,currentHash]);
+  return res.json({revoked:true});
+}
+
+async function organizationSettings(req: AuthRequest,res: Response,pool: NonNullable<ReturnType<typeof getPgPool>>){
+  if(!req.dbUser)return res.status(401).json({error:'Unauthorized'});
+  if(req.method==='PATCH'&&!['admin','executive'].includes(req.dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+  if(req.method==='PATCH'){
+    const body=req.body&&typeof req.body==='object'?req.body:{};
+    if(body.name!==undefined&&(!String(body.name).trim()||String(body.name).length>255))return res.status(400).json({error:'Invalid organization name'});
+    if(body.billing_email!==undefined&&body.billing_email&&!/^\S+@\S+\.\S+$/.test(String(body.billing_email)))return res.status(400).json({error:'Invalid billing email'});
+    const current=(await pool.query('SELECT settings FROM organizations WHERE id=$1',[req.dbUser.organization_id])).rows[0];
+    const settings=body.settings&&typeof body.settings==='object'?body.settings:current?.settings||{};
+    await pool.query('UPDATE organizations SET name=COALESCE($1,name),billing_email=COALESCE($2,billing_email),timezone=COALESCE($3,timezone),settings=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE id=$5',
+      [body.name?.trim(),body.billing_email?.trim(),body.timezone,JSON.stringify(settings),req.dbUser.organization_id]);
+  }
+  const row=(await pool.query('SELECT id,name,slug,billing_email,timezone,settings FROM organizations WHERE id=$1',[req.dbUser.organization_id])).rows[0];
+  return res.json({organization:row});
+}
+
+async function billingAndUsage(req: AuthRequest,res: Response,pool: NonNullable<ReturnType<typeof getPgPool>>){
+  if(!req.dbUser)return res.status(401).json({error:'Unauthorized'});
+  const billing=(await pool.query('SELECT plan,subscription_status,trial_ends_at,current_period_start,current_period_end,cancel_at_period_end,limits FROM organization_billing WHERE organization_id=$1',[req.dbUser.organization_id])).rows[0]
+    || {plan:'free',subscription_status:'active',limits:{}};
+  const usage=(await pool.query(`SELECT metric,used FROM organization_usage WHERE organization_id=$1 AND period_start=date_trunc('month',CURRENT_DATE)::date`,[req.dbUser.organization_id])).rows;
+  return res.json({billing,usage:Object.fromEntries(usage.map((row:any)=>[row.metric,Number(row.used)]))});
+}
+
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const pool = getPgPool();
   if (!pool) return res.status(503).json({ error: 'Database unavailable' });
