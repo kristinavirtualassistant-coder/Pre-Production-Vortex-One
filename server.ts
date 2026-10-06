@@ -42,8 +42,10 @@ import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, runWor
 import { enqueueJob, JOB_TYPES } from './server/services/jobService';
 // Email worker runs through the managed worker entrypoint in server/workers/emailWorker.ts.
 import { callbackUrl, completeOAuthCallback, createOAuthStart, type OAuthProvider } from './server/services/integrationOAuth';
+import { createFilesRouter } from './server/routes/files';
+import { analyticsRouter } from './server/routes/analytics';
 
-export async function createApp() {
+async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
@@ -80,7 +82,7 @@ export async function createApp() {
     if (isProduction) throw err;
   }
 
-  // --- API Routes ---
+  // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
@@ -163,13 +165,15 @@ export async function createApp() {
   });
 
   // All API routes are authenticated except the minimal health endpoint and
-  // provider callbacks that must be reachable without an authenticated session.
+  // provider callbacks that must be reachable without a Firebase user token.
   app.use('/api', (req: AuthRequest, res, next) => {
     if (shouldBypassApiAuth(req.path)) {
       return next();
     }
     return requireAuth(req, res, next);
   });
+
+  app.use('/api/files', createFilesRouter());
 
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
@@ -4301,6 +4305,9 @@ ${transcript}`;
     }
   });
 
-  return app;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
+  });
 }
 
+startServer();
