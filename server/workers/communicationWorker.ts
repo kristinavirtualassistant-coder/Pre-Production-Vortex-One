@@ -1,11 +1,11 @@
 import type { Pool } from 'pg';
-import { claimNextJob, completeJob, failJob } from './jobService';
+import { claimNextJob, completeJob, failJob } from '../services/jobService';
 import {
   COMMUNICATION_JOB_TYPES,
   runSequenceStep,
   sendEmailNow,
   sendSmsNow,
-} from './communicationsService';
+} from '../services/communicationsService';
 
 export async function processCommunicationJob(pool: Pool, organizationId: string, workerId: string): Promise<boolean> {
   const job = await claimNextJob(pool, organizationId, workerId, [
