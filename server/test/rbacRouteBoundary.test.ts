@@ -41,6 +41,9 @@ const rbacExpectations: Array<[string, string]> = [
   ["app.post('/api/approvals/:id/decide'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/outreach-templates'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/dial-batch'", "requireRole(['admin', 'executive', 'manager', 'agent'])"],
+  ["app.post('/api/workflows/:id/versions'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/versions/:versionId/publish'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/schedules'", "requireRole(['admin', 'executive', 'manager'])"],
 ];
 
 for (const [route, middleware] of rbacExpectations) {
