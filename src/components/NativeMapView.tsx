@@ -1,6 +1,4 @@
-              {drawing && draftPath.map((point, index) => (
-                <Marker key={`draft-${index}`} position={point} />
-              ))}import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { APIProvider, Map, Marker, Polygon } from '@vis.gl/react-google-maps';
 import {
   Building2,
