@@ -32,6 +32,10 @@ export interface ModelCallOptions {
   useMaps?: boolean;
   skipCache?: boolean;
   forceRefresh?: boolean;
+  organizationId?: string;
+  userId?: string;
+  agentId?: string;
+  workflowRunId?: string;
 }
 
 // Helper to delay with jitter for exponential backoff
@@ -137,7 +141,7 @@ export async function generateAgentText(
             const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || 0);
             const totalTokens = Number(usage.totalTokenCount || inputTokens + outputTokens);
             const analyticsPool = getPgPool();
-            if (analyticsPool) {
+            if (analyticsPool && options.organizationId) {
               try {
                 await analyticsPool.query(
                   `INSERT INTO analytics_ai_usage
@@ -145,9 +149,9 @@ export async function generateAgentText(
                    VALUES ($1,$2,'google', $3,'generateAgentText',$4,$5,$6,0,$7,true,$8::jsonb)`,
                   [
                     `aiu_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
-                    process.env.VORTEX_ANALYTICS_ORGANIZATION_ID || process.env.DEFAULT_ORGANIZATION_ID || 'org_cmc_realty',
+                    options.organizationId,
                     currentModel, inputTokens, outputTokens, totalTokens, 0,
-                    JSON.stringify({ cached: false, requestedModel, hasSearch: Boolean(options.useSearch), hasMaps: Boolean(options.useMaps) }),
+                    JSON.stringify({ userId: options.userId, agentId: options.agentId, workflowRunId: options.workflowRunId, cached: false, requestedModel, hasSearch: Boolean(options.useSearch), hasMaps: Boolean(options.useMaps) }),
                   ],
                 );
               } catch (analyticsError) {
