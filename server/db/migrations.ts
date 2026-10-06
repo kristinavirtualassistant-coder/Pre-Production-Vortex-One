@@ -632,7 +632,7 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_workflow_execution_logs_run ON workflow_execution_logs(organization_id, workflow_run_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_jobs_workflow_due ON jobs(job_type, status, available_at);
     `,
-  },,
+  },
   {
     version: 19,
     name: '019_enforce_tenant_security_boundaries',
