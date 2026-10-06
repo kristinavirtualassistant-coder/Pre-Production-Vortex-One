@@ -849,4 +849,27 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_communication_suppression_lookup ON communication_suppression(organization_id, channel, destination);
     `,
   },
+  {
+    version: 23,
+    name: '023_create_workflow_communication_deliveries',
+    sql: `
+      CREATE TABLE IF NOT EXISTS workflow_communication_deliveries (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        workflow_run_id VARCHAR(64) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+        workflow_step_id VARCHAR(128),
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','phone')),
+        destination VARCHAR(320) NOT NULL,
+        idempotency_key VARCHAR(255) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','manual_review')),
+        provider_reference VARCHAR(255),
+        error TEXT,
+        request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_delivery_status ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
+  },
 ];
