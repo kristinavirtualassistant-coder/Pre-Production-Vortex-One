@@ -322,7 +322,7 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
 async function listSessions(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
   const token=getSessionToken(req);
-  const currentHash=token?hashOneTimeToken(token):'';
+  const currentHash=token?hashSessionToken(token):'';
   const result=await pool.query(`SELECT id,user_agent,ip_address,created_at,last_seen_at,expires_at,mfa_verified_at,
     (token_hash=$2) AS current FROM auth_sessions
     WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>CURRENT_TIMESTAMP ORDER BY last_seen_at DESC`,
@@ -376,7 +376,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
     const token=getSessionToken(req);
     if(!token)return res.status(401).json({error:'Unauthorized: Missing session'});
-    const tokenHash=hashOneTimeToken(token);
+    const tokenHash=hashSessionToken(token);
     const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
       FROM auth_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
