@@ -14,7 +14,9 @@
     "test:ringcentral:auth": "node --import tsx server/test/ringcentralJwtAuthConfig.test.ts",
     "dev:local": "./scripts/local-dev.sh",
     "worker:property-refresh": "tsx server/workers/runPropertyRefreshWorker.ts",
-    "build:client": "vite build"
+    "build:client": "vite build",
+    "build:firebase": "npm run build && mkdir -p functions/dist && cp dist/server.cjs functions/dist/server.cjs && esbuild firebase-worker.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=functions/dist/worker.cjs",
+    "firebase:deploy": "firebase deploy --only functions,hosting"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
