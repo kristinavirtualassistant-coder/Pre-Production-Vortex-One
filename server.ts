@@ -995,7 +995,7 @@ async function startServer() {
     res.json(inMemoryStore.smartForwarding);
   });
 
-  app.post('/api/settings/smart-forwarding', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/settings/smart-forwarding', requireRole(['admin', 'executive']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'In-memory smart forwarding was removed.' });
     const { enabled, rules } = req.body;
     if (typeof enabled === 'boolean') inMemoryStore.smartForwarding.enabled = enabled;
@@ -1014,7 +1014,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit/log', requireRole(['admin', 'executive', 'manager']), (req, res) => {
+  app.post('/api/audit/log', requireRole(['admin', 'executive']), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log writer was removed; audit events are persisted server-side.' });
     try {
       const { action, callerId, durationSeconds, timestamp, organizationId } = req.body;
@@ -1049,7 +1049,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/webhooks', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/webhooks', requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
@@ -1059,7 +1059,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/webhooks/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.put('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
@@ -1070,7 +1070,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
@@ -2836,7 +2836,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/import/sync-production', requireRole(['admin', 'executive', 'manager']), (_req, res) => {
+  app.post('/api/import/sync-production', requireRole(['admin', 'executive']), (_req, res) => {
     res.status(410).json({ error: 'The legacy synthetic CRM feed was removed. Use the authoritative import endpoint.' });
   });
 
