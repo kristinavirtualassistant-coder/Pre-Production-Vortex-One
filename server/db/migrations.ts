@@ -1257,4 +1257,37 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_agent_run_steps_org_run ON agent_run_steps(organization_id, run_id, step_no, created_at);
     `,
   },
+  {
+    version: 29,
+    name: '029_billing_invoice_history',
+    sql: `
+      CREATE TABLE IF NOT EXISTS billing_invoices (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        stripe_invoice_id VARCHAR(255) NOT NULL UNIQUE,
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
+        status VARCHAR(40),
+        collection_method VARCHAR(40),
+        currency VARCHAR(10),
+        amount_due BIGINT,
+        amount_paid BIGINT,
+        amount_remaining BIGINT,
+        hosted_invoice_url TEXT,
+        invoice_pdf TEXT,
+        period_start TIMESTAMP WITH TIME ZONE,
+        period_end TIMESTAMP WITH TIME ZONE,
+        due_date TIMESTAMP WITH TIME ZONE,
+        paid_at TIMESTAMP WITH TIME ZONE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_created
+        ON billing_invoices(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
+        ON billing_invoices(organization_id, status, created_at DESC);
+    `,
+  },
+
 ];
