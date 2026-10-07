@@ -104,6 +104,29 @@ export async function claimDueWorkflowSchedules(pool:Pool){
   finally{ client.release(); }
 }
 
+export async function updateWorkflowScheduleStatus(pool:Pool,organizationId:string,scheduleId:string,status:'active'|'paused'|'cancelled'){
+  const org=requireOrganizationId(organizationId);
+  if(status==='active'){
+    const result=await pool.query("UPDATE workflow_schedules SET status='active',next_run_at=COALESCE(next_run_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 AND status IN ('paused','active') RETURNING *",[scheduleId,org]);
+    if(!result.rowCount) throw new Error('Workflow schedule not found or cannot be resumed');
+    return result.rows[0];
+  }
+  const result=await pool.query("UPDATE workflow_schedules SET status=$1,updated_at=CURRENT_TIMESTAMP WHERE id=$2 AND organization_id=$3 AND status NOT IN ('completed','cancelled') RETURNING *",[status,scheduleId,org]);
+  if(!result.rowCount) throw new Error('Workflow schedule not found or cannot be changed');
+  return result.rows[0];
+}
+
+export async function runWorkflowScheduleNow(pool:Pool,organizationId:string,scheduleId:string){
+  const org=requireOrganizationId(organizationId);
+  const result=await pool.query("SELECT * FROM workflow_schedules WHERE id=$1 AND organization_id=$2",[scheduleId,org]);
+  if(!result.rowCount) throw new Error('Workflow schedule not found');
+  const schedule=result.rows[0];
+  if(schedule.status==='cancelled') throw new Error('Cancelled workflow schedules cannot be run');
+  const runId='wfr_'+randomUUID();
+  await enqueueJob(pool,org,WORKFLOW_JOB_TYPE,{scheduleId:schedule.id,workflowId:schedule.workflow_id,workflowVersionId:schedule.workflow_version_id,triggerPayload:schedule.trigger_payload,runId},3);
+  return {runId,scheduleId:schedule.id};
+}
+
 async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:string,channel:'email'|'sms'|'phone',destination:string,idempotencyKey:string,payload:any){
   const existing=await pool.query('SELECT * FROM workflow_communication_deliveries WHERE organization_id=$1 AND idempotency_key=$2 FOR UPDATE',[orgId,idempotencyKey]);
   if(existing.rowCount){const row=existing.rows[0]; if(row.status==='sent') return {state:'sent',row}; if(row.status==='sending'||row.status==='manual_review') return {state:'manual_review',row};}
