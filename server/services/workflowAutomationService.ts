@@ -127,6 +127,25 @@ export async function runWorkflowScheduleNow(pool:Pool,organizationId:string,sch
   return {runId,scheduleId:schedule.id};
 }
 
+export async function retryWorkflowRun(pool:Pool,organizationId:string,runId:string){
+  const org=requireOrganizationId(organizationId);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const runResult=await client.query("SELECT * FROM workflow_runs WHERE id=$1 AND organization_id=$2 FOR UPDATE",[runId,org]);
+    if(!runResult.rowCount) throw new Error('Workflow run not found');
+    if(runResult.rows[0].status!=='failed') throw new Error('Only failed workflow runs can be retried');
+    const jobResult=await client.query("SELECT * FROM jobs WHERE organization_id=$1 AND job_type=$2 AND status='failed' AND payload->>'runId'=$3 ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[org,WORKFLOW_JOB_TYPE,runId]);
+    if(!jobResult.rowCount) throw new Error('No failed workflow job is available for retry');
+    const source=jobResult.rows[0];
+    const retryJobId=await enqueueJobWithClient(client,org,WORKFLOW_JOB_TYPE,source.payload,source.max_attempts);
+    await client.query("UPDATE workflow_runs SET status='running',completed_at=NULL,final_summary='Retry queued',updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2",[runId,org]);
+    await logWorkflowEvent(client as any,org,{runId,level:'warn',event:'workflow_retry_queued',message:'Workflow retry queued',metadata:{sourceJobId:source.id,retryJobId}});
+    await client.query('COMMIT');
+    return {runId,jobId:retryJobId};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
 async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:string,channel:'email'|'sms'|'phone',destination:string,idempotencyKey:string,payload:any){
   const existing=await pool.query('SELECT * FROM workflow_communication_deliveries WHERE organization_id=$1 AND idempotency_key=$2 FOR UPDATE',[orgId,idempotencyKey]);
   if(existing.rowCount){const row=existing.rows[0]; if(row.status==='sent') return {state:'sent',row}; if(row.status==='sending'||row.status==='manual_review') return {state:'manual_review',row};}
@@ -163,8 +182,9 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
   const context:any={trigger:parseJson(job.payload?.triggerPayload,{}),workflow:def,now:new Date().toISOString(),steps:{...savedStepOutputs}};
   const savedKeys=Object.keys(savedStepOutputs);
   context.last=savedKeys.length?savedStepOutputs[savedKeys[savedKeys.length-1]]:undefined;
+  let activeStepId:string|undefined;
   try{
-    for(let i=start;i<steps.length;i++){ const step=steps[i]; const stepId=String(step.step_id||'step_'+(i+1)); const idem=runId+':'+stepId;
+    for(let i=start;i<steps.length;i++){ const step=steps[i]; const stepId=String(step.step_id||'step_'+(i+1)); activeStepId=stepId; const idem=runId+':'+stepId;
       if(step.condition&&!evaluateCondition(step.condition,context)){ await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,idempotency_key,input,completed_at) VALUES ($1,$2,$3,$4,$5,$6,'skipped',$7,$8::jsonb,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),idem,JSON.stringify(step.input_mapping||{})]); continue; }
       const existing=await pool.query('SELECT status FROM workflow_execution_steps WHERE organization_id=$1 AND idempotency_key=$2',[org,idem]); if(existing.rowCount&&['completed','skipped'].includes(existing.rows[0].status)) continue;
       await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,attempt,max_attempts,idempotency_key,input,started_at) VALUES ($1,$2,$3,$4,$5,$6,'running',1,$7,$8,$9::jsonb,CURRENT_TIMESTAMP) ON CONFLICT (organization_id,idempotency_key) DO UPDATE SET status='running',attempt=workflow_execution_steps.attempt+1,started_at=CURRENT_TIMESTAMP",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),Number(step.retryCount||2)+1,idem,JSON.stringify(step.input_mapping||{})]);
@@ -175,6 +195,6 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
       await pool.query("UPDATE workflow_runs SET step_outputs=COALESCE(step_outputs,'{}'::jsonb)||$1::jsonb,completed_steps=$2,current_step_id=$3,current_step_name=$4,updated_at=CURRENT_TIMESTAMP WHERE id=$5 AND organization_id=$6",[JSON.stringify({[stepId]:output}),i+1,stepId,String(step.name||stepId),runId,org]); await logWorkflowEvent(pool,org,{runId,stepId,event:'step_succeeded',message:'Completed '+String(step.name||stepId),metadata:output});
     }
     await pool.query("UPDATE workflow_runs SET status='completed',completed_steps=$1,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,final_summary=$2 WHERE id=$3 AND organization_id=$4",[steps.length,'Completed '+steps.length+' workflow steps',runId,org]); await logWorkflowEvent(pool,org,{runId,event:'workflow_completed',message:'Workflow completed successfully'}); await completeJob(pool,org,job.id,workerId);
-  }catch(e:any){ const msg=String(e?.message||e); await pool.query("UPDATE workflow_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,final_summary=$1 WHERE id=$2 AND organization_id=$3",[msg,runId,org]); await logWorkflowEvent(pool,org,{runId,level:'error',event:'workflow_failed',message:msg}); await failJob(pool,org,job.id,workerId,msg,Math.min(300,30*Math.max(1,job.attempts))); throw e; }
+  }catch(e:any){ const msg=String(e?.message||e); if(activeStepId) await pool.query("UPDATE workflow_execution_steps SET status='failed',error=$1,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$2 AND idempotency_key=$3",[msg,org,runId+':'+activeStepId]); await pool.query("UPDATE workflow_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,final_summary=$1 WHERE id=$2 AND organization_id=$3",[msg,runId,org]); await logWorkflowEvent(pool,org,{runId,stepId:activeStepId,level:'error',event:'workflow_failed',message:msg}); await failJob(pool,org,job.id,workerId,msg,Math.min(300,30*Math.max(1,job.attempts))); throw e; }
 }
 export async function runWorkflowWorkerOnce(pool:Pool){ let processed=0; const worker='workflow-worker-'+process.pid; const orgs=(await pool.query("SELECT DISTINCT organization_id FROM jobs WHERE job_type=$1 AND (status='queued' OR (status='processing' AND locked_at<CURRENT_TIMESTAMP-INTERVAL '5 minutes'))",[WORKFLOW_JOB_TYPE])).rows.map(r=>r.organization_id); for(const org of orgs){await recoverStaleJobs(pool,org,300); for(let i=0;i<10;i++){const job=await claimNextJob(pool,org,worker,[WORKFLOW_JOB_TYPE]); if(!job)break; processed++; try{await processWorkflowJob(pool,job,worker);}catch{}}} return processed; }
