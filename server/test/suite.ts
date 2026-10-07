@@ -39,6 +39,7 @@ import './phase6AgentOperationsBoundary.test';
 import './rbacRouteBoundary.test';
 import './manualDialService.test';
 import './realAgentRuntime.test';
+import './productionAgents.test';
 import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
@@ -96,7 +97,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 26, 'Migration list contains 26 defined migrations', `Expected 26, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 28, 'Migration list contains 26 defined migrations', `Expected 28, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
@@ -110,6 +111,8 @@ async function runAllTests() {
   assert(MIGRATIONS.some((migration) => migration.version === 24 && migration.name === '024_create_stripe_webhook_events'), 'Stripe webhook migration 24 present', 'Expected Stripe webhook migration 24 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 25 && migration.name === '025_create_owner_enrichment'), 'Owner enrichment migration 25 present', 'Expected owner enrichment migration 25 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 26 && migration.name === '026_create_unified_communications'), 'Unified communications migration 26 present', 'Expected unified communications migration 26 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 27 && migration.name === '027_create_file_processing_jobs'), 'File processing migration 27 present', 'Expected file processing migration 27 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 28 && migration.name === '028_create_real_ai_agent_runtime'), 'Real AI agent runtime migration 28 present', 'Expected real AI agent runtime migration 28 to be present');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
