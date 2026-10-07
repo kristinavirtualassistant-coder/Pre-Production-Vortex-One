@@ -463,7 +463,9 @@ export async function sendSmsNow(pool: Pool, args: any) {
  */
 export function validTwilio(reqUrl: string, params: Record<string,string>, signature: string, token: string): boolean {
   const payload = reqUrl + Object.keys(params).sort().map((key)=>key + params[key]).join('');
-  return createHmac('sha1',token).update(payload).digest('base64') === signature;
+  const expected = Buffer.from(createHmac('sha1',token).update(payload).digest('base64'));
+  const actual = Buffer.from(String(signature || ''));
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 /**
@@ -487,6 +489,13 @@ export async function handleTwilioInbound(pool: Pool, reqUrl: string, body: Reco
   );
   if (numberResult.rowCount !== 1) throw new Error('Twilio destination number is not mapped to exactly one organization');
   const organizationId = numberResult.rows[0].organization_id;
+  if (body.MessageSid) {
+    const dedupe = await pool.query(
+      "INSERT INTO processed_events (event_id,organization_id,provider,event_type,processed_at) VALUES ($1,$2,'twilio','sms.inbound',CURRENT_TIMESTAMP) ON CONFLICT (event_id) DO NOTHING RETURNING event_id",
+      ['twilio:inbound:' + body.MessageSid, organizationId],
+    );
+    if (!dedupe.rowCount) return;
+  }
   const links = await resolveLink(pool,organizationId,{channel:'sms',contactKey:from});
   const t = await thread(pool,{organizationId,channel:'sms',provider:'twilio',contactKey:from,externalThreadId:body.MessageSid,subject:'SMS conversation',...links});
   const message = await record(pool,{organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'inbound',externalMessageId:body.MessageSid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:text,status:'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{twilio:body}});
@@ -512,6 +521,11 @@ export async function handleTwilioStatus(pool: Pool, reqUrl: string, body: Recor
   if (messageOrg.rowCount !== 1) throw new Error('Twilio message is not mapped to exactly one organization');
   const organizationId = messageOrg.rows[0].organization_id;
   const status = String(body.MessageStatus || body.SmsStatus || '').toLowerCase();
+  const dedupe = await pool.query(
+    "INSERT INTO processed_events (event_id,organization_id,provider,event_type,processed_at) VALUES ($1,$2,'twilio','sms.status',CURRENT_TIMESTAMP) ON CONFLICT (event_id) DO NOTHING RETURNING event_id",
+    ['twilio:status:' + sid + ':' + status, organizationId],
+  );
+  if (!dedupe.rowCount) return;
   const mapped = status === 'delivered' ? 'delivered' : status === 'failed' || status === 'undelivered' ? 'failed' : status === 'read' ? 'read' : 'sent';
   await pool.query("UPDATE communication_messages SET status=$1,error_message=CASE WHEN $1='failed' THEN $2 ELSE error_message END WHERE organization_id=$3 AND external_message_id=$4", [mapped,body.ErrorMessage || body.ErrorCode || null,organizationId,sid]);
   if (mapped === 'delivered') {
