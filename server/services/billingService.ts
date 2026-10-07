@@ -161,7 +161,17 @@ export async function recordUsage(pool: Pool, organizationId: string, metric: st
 
 export async function enforceUsageLimit(pool: Pool, organizationId: string, metric: string, increment = 1) {
   const billing = await getOrganizationBilling(pool, organizationId);
-  const limits = billing?.limits || planLimits(billing?.plan || 'free');
+  const plan = (billing?.plan || 'free') as PlanName;
+  const status = String(billing?.subscription_status || 'active');
+  const paidPlan = plan !== 'free';
+  if (paidPlan && !['active', 'trialing'].includes(status)) {
+    const error: any = new Error('Subscription is not active');
+    error.statusCode = 402;
+    error.code = 'SUBSCRIPTION_INACTIVE';
+    error.subscriptionStatus = status;
+    throw error;
+  }
+  const limits = billing?.limits || planLimits(plan);
   const limit = Number(limits[metric] ?? Number.MAX_SAFE_INTEGER);
   if (!Number.isFinite(increment) || increment <= 0) throw new Error('Usage increment must be positive');
   const period = new Date();
