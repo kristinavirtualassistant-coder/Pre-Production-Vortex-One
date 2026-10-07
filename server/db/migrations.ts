@@ -1385,21 +1385,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 37,
-    name: '037_extend_workflow_delivery_idempotency',
-    sql: `
-      ALTER TABLE workflow_communication_deliveries
-        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
-      ALTER TABLE workflow_communication_deliveries
-        ADD CONSTRAINT workflow_communication_deliveries_channel_check
-        CHECK (channel IN ('email','sms','phone','webhook'));
-      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
-        ON workflow_communication_deliveries(organization_id, status, updated_at);
-    `,
-  },
-  {
-    version: 38,
-    name: '038_create_native_property_map_spatial_layer',
+    version: 35,
+    name: '035_create_native_property_map_spatial_layer',
     sql: `
       CREATE EXTENSION IF NOT EXISTS postgis;
       ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
@@ -1426,4 +1413,38 @@ export const MIGRATIONS: Migration[] = [
         ON agent_runs(organization_id, started_at, estimated_cost_usd);
     `,
   },
-];
+  {
+    version: 37,
+    name: '037_extend_workflow_delivery_idempotency',
+    sql: `
+      ALTER TABLE workflow_communication_deliveries
+        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
+      ALTER TABLE workflow_communication_deliveries
+        ADD CONSTRAINT workflow_communication_deliveries_channel_check
+        CHECK (channel IN ('email','sms','phone','webhook'));
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
+        ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
+  },
+  {
+    version: 38,
+    name: '038_make_audit_logs_append_only',
+    sql: `
+      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_logs is append-only';
+      END;
+      $$;
+
+      DROP TRIGGER IF EXISTS trg_audit_logs_immutable ON audit_logs;
+      CREATE TRIGGER trg_audit_logs_immutable
+      BEFORE UPDATE OR DELETE ON audit_logs
+      FOR EACH ROW
+      EXECUTE FUNCTION prevent_audit_log_mutation();
+    `,
+  },
+ ];
+
