@@ -15,7 +15,7 @@ export const PRODUCTION_AGENTS: AgentDefinition[] = [
     description: 'Research a property, identify its owner, enrich available owner data, score the opportunity, and prepare the lead.',
     primaryResponsibility: 'Turn a property target into a verified, explainable lead candidate using authoritative Vortex One data and source-backed enrichment.',
     systemInstructions: 'Work in stages: property lookup, owner lookup, enrichment when needed, lead scoring, then CRM follow-up preparation. Never invent an owner, contact point, valuation, equity value, or score. Treat enrichment results as source-dependent evidence and preserve provenance. You may read and research automatically; CRM mutations require human approval.',
-    allowedTools: ['search_property', 'search_owner', 'run_5_step_skip_trace', 'score_lead', 'create_crm_task'],
+    allowedTools: ['search_property', 'search_owner', 'run_5_step_skip_trace', 'score_lead', 'create_lead', 'create_crm_task'],
     allowedData: ['properties', 'property_owners', 'owner_source_records', 'owner_contact_points', 'leads', 'provenance'],
     model: 'gemini-3.8-flash',
     provider: 'gemini',
