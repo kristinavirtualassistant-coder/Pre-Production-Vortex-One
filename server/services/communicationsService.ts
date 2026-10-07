@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
+import { enforceUsageLimit } from './billingService';
 import { decryptSecret, encryptSecret } from './integrationOAuth';
 import { enqueueJob } from './jobService';
 import { recordCostEvent } from './analyticsService';
