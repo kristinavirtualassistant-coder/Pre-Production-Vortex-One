@@ -97,8 +97,6 @@ async function startServer() {
 
   // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
   app.use('/api/appointments', requireAuth, appointmentsRouter);
-  app.use('/api/billing', billingRouter);
-
   // Health & DB Status
   app.get('/api/health', (req, res) => {
     res.json({
@@ -127,6 +125,8 @@ async function startServer() {
     }
     return requireAuth(req, res, next);
   });
+
+  app.use('/api/billing', billingRouter);
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
   app.use('/api/communications', communicationsRouter);
