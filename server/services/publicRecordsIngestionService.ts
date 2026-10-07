@@ -60,14 +60,16 @@ export class PublicRecordsIngestionService {
         rawAttributes: result.rawAttributes || {},
       };
       const rawHash = crypto.createHash('sha256').update(JSON.stringify(sourcePayload)).digest('hex');
-      const sourceId = id('src');
+      let sourceId = id('src');
 
-      await pool.query(
+      const sourceInsert = await pool.query(
         `INSERT INTO owner_source_records
           (id, organization_id, owner_id, property_id, enrichment_job_id, source_type, provider_key,
            external_record_id, source_url, raw_payload, raw_hash, retrieved_at)
          VALUES ($1,$2,$3,$4,$5,'public_records',$6,$7,$8,$9::jsonb,$10,$11)
-         ON CONFLICT DO NOTHING`,
+         ON CONFLICT (organization_id, provider_key, raw_hash)
+         DO UPDATE SET retrieved_at=EXCLUDED.retrieved_at, raw_payload=EXCLUDED.raw_payload
+         RETURNING id`,
         [
           sourceId,
           orgId,
@@ -82,6 +84,7 @@ export class PublicRecordsIngestionService {
           result.provenance.retrievedAt || new Date().toISOString(),
         ],
       );
+      sourceId = sourceInsert.rows[0]?.id || sourceId;
       summary.sourceRecords += 1;
 
       const ownerName = result.owner?.name?.trim();
