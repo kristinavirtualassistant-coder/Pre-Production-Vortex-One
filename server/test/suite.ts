@@ -43,6 +43,7 @@ import './localDevelopmentAuth.test';
 import './localDevelopmentAuthMiddleware.test';
 import './dispositionService.test';
 import './schedulerTriggerContract.test';
+import './fileProcessingWorkerContract.test';
 import './workflowRunService.test';
 import './accountSecurity.test';
 import './workflowAutomationService.test';
