@@ -5,6 +5,7 @@
 import { Pool, PoolClient } from 'pg';
 import { MIGRATIONS } from './migrations';
 import { shouldSkipPostgresMigrations } from './migrationPolicy';
+import { getTenantContext } from './tenantContext';
 import type { CampaignContactRecord } from '../dialer/types';
 import {
   Property,
@@ -44,6 +45,27 @@ export interface DatabaseConnectionConfig {
 }
 
 let pgPool: Pool | null = null;
+const tenantPoolProxyCache = new WeakMap<Pool, Pool>();
+
+function getTenantAwarePool(pool: Pool): Pool {
+  const cached = tenantPoolProxyCache.get(pool);
+  if (cached) return cached;
+
+  const proxy = new Proxy(pool, {
+    get(target, property, receiver) {
+      if (property === 'query') {
+        return (...args: any[]) => {
+          const context = getTenantContext();
+          return context ? context.client.query(...args) : target.query(...args);
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as Pool;
+
+  tenantPoolProxyCache.set(pool, proxy);
+  return proxy;
+}
 let currentDbStatus: DatabaseStatus = {
   connected: false,
   type: 'in_memory',
@@ -1432,7 +1454,7 @@ export function getDatabaseStatus(): DatabaseStatus {
 }
 
 export function getPgPool(): Pool | null {
-  return pgPool;
+  return pgPool ? getTenantAwarePool(pgPool) : null;
 }
 
 /** Test-only dependency injection seam for database failure-path tests. */
