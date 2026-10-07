@@ -48,6 +48,15 @@ describe('Public records ingestion', () => {
     assert.match(source, /identity_matches/);
   });
 
+  it('tracks enrichment conflicts and freshness', async () => {
+    const service = await readFile(new URL('../services/ownerEnrichmentService.ts', repoRoot), 'utf8');
+    const migrations = await readFile(new URL('../db/migrations.ts', repoRoot), 'utf8');
+    assert.match(service, /owner_enrichment_conflicts/);
+    assert.match(service, /fresh_source_records/);
+    assert.match(service, /RETURNING \(xmax = 0\) AS inserted/);
+    assert.match(migrations, /034_owner_enrichment_conflicts/);
+  });
+
   it('has a migration that deduplicates portfolio-level signals with NULL property IDs', async () => {
     const source = await readFile(new URL('../db/migrations.ts', repoRoot), 'utf8');
     assert.match(source, /030_harden_owner_signal_dedupe/);
