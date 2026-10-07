@@ -140,7 +140,7 @@ export async function processFileProcessingJob(pool: Pool, job: FileProcessingJo
     }
 
     if (job.job_type === 'document_extract' || job.job_type === 'transcript_extract') {
-      const scanStatus = String(job.metadata?.malware_scan?.status || '').toLowerCase();
+      const scanStatus = String((job.metadata?.malware_scan as { status?: unknown } | undefined)?.status || '').toLowerCase();
       if (scanStatus === 'infected') {
         await completeFileProcessingJob(pool, job, { skipped: true, reason: 'malware_detected', completed_at: new Date().toISOString() });
         return 'completed';

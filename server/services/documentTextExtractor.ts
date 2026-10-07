@@ -19,13 +19,13 @@ function decodeXml(value: string): string {
 function xmlText(xml: string): string {
   return decodeXml(
     xml
-      .replace(/<w:tab\s*\/?>/g, '\\t')
-      .replace(/<w:br\s*\/?>/g, '\\n')
-      .replace(/<a:br\s*\/?>/g, '\\n')
+      .replace(/<w:tab\s*\/?>/g, '\t')
+      .replace(/<w:br\s*\/?>/g, '\n')
+      .replace(/<a:br\s*\/?>/g, '\n')
       .replace(/<[^>]+>/g, ' ')
-      .replace(/[\\t ]+/g, ' ')
-      .replace(/\\n[ \\t]+/g, '\\n')
-      .replace(/ *\\n */g, '\\n'),
+      .replace(/[\t ]+/g, ' ')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/ *\n */g, '\n'),
   ).trim();
 }
 
@@ -111,52 +111,52 @@ function extractOfficeOpenXml(buffer: Buffer, kind: 'docx' | 'xlsx' | 'pptx'): s
 
   if (kind === 'pptx') {
     const slides = entries
-      .filter((entry) => /^ppt\/slides\/slide\\d+\\.xml$/i.test(entry.name))
+      .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.name))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     if (!slides.length) throw new Error('PPTX slides not found');
-    return slides.map((entry) => xmlText(readZipEntry(buffer, entry).toString('utf8'))).filter(Boolean).join('\\n\\n');
+    return slides.map((entry) => xmlText(readZipEntry(buffer, entry).toString('utf8'))).filter(Boolean).join('\n\n');
   }
 
   const sharedStringsXml = read('xl/sharedStrings.xml');
   const sharedStrings = sharedStringsXml
-    ? [...sharedStringsXml.matchAll(/<si[\\s\\S]*?<\\/si>/g)].map((match) => xmlText(match[0]))
+    ? [...sharedStringsXml.matchAll(/<si[\s\S]*?<\/si>/g)].map((match) => xmlText(match[0]))
     : [];
 
   const sheets = entries
-    .filter((entry) => /^xl\/worksheets\/sheet\\d+\\.xml$/i.test(entry.name))
+    .filter((entry) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(entry.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!sheets.length) throw new Error('XLSX worksheets not found');
 
   const rows: string[] = [];
   for (const sheet of sheets) {
     const xml = readZipEntry(buffer, sheet).toString('utf8');
-    for (const row of xml.matchAll(/<row[\\s\\S]*?<\\/row>/g)) {
+    for (const row of xml.matchAll(/<row[\s\S]*?<\/row>/g)) {
       const cells: string[] = [];
-      for (const cell of row[0].matchAll(/<c\\b([^>]*)>[\\s\\S]*?<\\/c>/g)) {
+      for (const cell of row[0].matchAll(/<c\b([^>]*)>[\s\S]*?<\/c>/g)) {
         const attrs = cell[1];
-        const valueMatch = cell[0].match(/<v>([\\s\\S]*?)<\\/v>/);
-        const type = attrs.match(/\\bt="([^"]+)"/)?.[1];
+        const type = attrs.match(/\bt="([^"]+)"/)?.[1];
 
         if (type === 'inlineStr') {
-          const inlineMatch = cell[0].match(/<is[\\s\\S]*?<\\/is>/);
+          const inlineMatch = cell[0].match(/<is[\s\S]*?<\/is>/);
           cells.push(inlineMatch ? xmlText(inlineMatch[0]) : '');
           continue;
         }
 
+        const valueMatch = cell[0].match(/<v>([\s\S]*?)<\/v>/);
         if (!valueMatch) continue;
         const raw = decodeXml(valueMatch[1].trim());
         cells.push(type === 's' ? (sharedStrings[Number(raw)] || '') : raw);
       }
-      if (cells.length) rows.push(cells.join('\\t'));
+      if (cells.length) rows.push(cells.join('\t'));
     }
   }
-  return rows.join('\\n').trim();
+  return rows.join('\n').trim();
 }
 
 function extractPdf(buffer: Buffer): string {
   const chunks: string[] = [];
   const source = buffer.toString('latin1');
-  for (const match of source.matchAll(/stream\\r?\\n([\\s\\S]*?)\\r?\\nendstream/g)) {
+  for (const match of source.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
     const raw = Buffer.from(match[1], 'latin1');
     let decoded = raw;
     try {
@@ -165,16 +165,16 @@ function extractPdf(buffer: Buffer): string {
       // Uncompressed PDF content streams are also valid.
     }
     const text = decoded.toString('latin1');
-    for (const tj of text.matchAll(/\\((?:\\\\.|[^\\)])*\\)\\s*Tj/g)) {
-      chunks.push(tj[0].replace(/\\s*Tj$/, '').replace(/^\\(|\\)$/g, '').replace(/\\([\\\\()])/g, '$1'));
+    for (const tj of text.matchAll(/\((?:\\.|[^)])*\)\s*Tj/g)) {
+      chunks.push(tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\\()])/g, '$1'));
     }
-    for (const tjArray of text.matchAll(/\\[([\\s\\S]*?)\\]\\s*TJ/g)) {
-      for (const part of tjArray[1].matchAll(/\\((?:\\\\.|[^\\)])*\\)/g)) {
-        chunks.push(part[0].slice(1, -1).replace(/\\([\\\\()])/g, '$1'));
+    for (const tjArray of text.matchAll(/\[([\s\S]*?)\]\s*TJ/g)) {
+      for (const part of tjArray[1].matchAll(/\((?:\\.|[^)])*\)/g)) {
+        chunks.push(part[0].slice(1, -1).replace(/\\([\\()])/g, '$1'));
       }
     }
   }
-  return decodeXml(chunks.join(' ')).replace(/\\s+/g, ' ').trim();
+  return decodeXml(chunks.join(' ')).replace(/\s+/g, ' ').trim();
 }
 
 export function extractDocumentText(buffer: Buffer, mimeType: string): string {
@@ -184,7 +184,7 @@ export function extractDocumentText(buffer: Buffer, mimeType: string): string {
   if (mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return extractOfficeOpenXml(buffer, 'xlsx');
   if (mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return extractOfficeOpenXml(buffer, 'pptx');
   if (mime === 'text/plain' || mime === 'text/csv' || mime === 'application/json' || mime === 'application/xml' || mime === 'text/xml') {
-    return buffer.toString('utf8').replace(/^\\uFEFF/, '').trim();
+    return buffer.toString('utf8').replace(/^\uFEFF/, '').trim();
   }
   throw new Error('Document text extraction is not supported for MIME type: ' + (mime || 'unknown'));
 }

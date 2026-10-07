@@ -229,6 +229,7 @@ export const ReportingAnalyticsView: React.FC<Props> = ({ getAuthHeaders, organi
           <section className="bg-white border border-slate-200 rounded-xl p-5"><div className="text-xs text-slate-500">ROI</div><div className="text-2xl font-bold mt-2">{data.roi.roiPercent === null ? 'Not measurable yet' : pct(data.roi.roiPercent)}</div><p className="text-[11px] text-slate-500 mt-2">{data.roi.note}</p></section>
           <section className="md:col-span-3 bg-slate-50 border border-slate-200 rounded-xl p-5"><h2 className="text-sm font-bold">Cost breakdown</h2><div className="mt-3 overflow-auto"><table className="w-full text-xs"><thead><tr className="text-left text-slate-500 border-b"><th className="p-2">Category</th><th className="p-2">Provider</th><th className="p-2">Events</th><th className="p-2">Cost</th></tr></thead><tbody>{data.costs.map((x,i)=><tr key={`${x.category}-${x.provider}-${i}`} className="border-b"><td className="p-2">{x.category}</td><td className="p-2">{x.provider || '—'}</td><td className="p-2">{x.events}</td><td className="p-2">{money(x.cost_usd)}</td></tr>)}</tbody></table>{data.costs.length===0&&<p className="text-xs text-slate-500 py-5">No recorded cost events for this period. No estimated costs are shown.</p>}</div></section>
         </div>
+        </div>
       )}
     </div>
   );
