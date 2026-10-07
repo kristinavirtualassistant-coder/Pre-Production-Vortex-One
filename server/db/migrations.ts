@@ -1641,6 +1641,49 @@ export const MIGRATIONS: Migration[] = [
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
 
+      ALTER TABLE workflow_schedules ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE workflow_schedules FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_schedules;
+      CREATE POLICY vortex_tenant_isolation ON workflow_schedules
+        USING (organization_id = current_setting('vortex.organization_id', true))
+        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
+
+      ALTER TABLE workflow_execution_steps ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE workflow_execution_steps FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_execution_steps;
+      CREATE POLICY vortex_tenant_isolation ON workflow_execution_steps
+        USING (organization_id = current_setting('vortex.organization_id', true))
+        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
+
+      ALTER TABLE workflow_execution_logs ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE workflow_execution_logs FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_execution_logs;
+      CREATE POLICY vortex_tenant_isolation ON workflow_execution_logs
+        USING (organization_id = current_setting('vortex.organization_id', true))
+        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
+
+      ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE organization_invites FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS vortex_tenant_isolation ON organization_invites;
+      CREATE POLICY vortex_tenant_isolation ON organization_invites
+        USING (organization_id = current_setting('vortex.organization_id', true))
+        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
+
+      ALTER TABLE communication_sequence_steps ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE communication_sequence_steps FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_sequence_steps;
+      CREATE POLICY vortex_tenant_isolation ON communication_sequence_steps
+        USING (EXISTS (
+          SELECT 1 FROM communication_sequences s
+          WHERE s.id = communication_sequence_steps.sequence_id
+            AND s.organization_id = current_setting('vortex.organization_id', true)
+        ))
+        WITH CHECK (EXISTS (
+          SELECT 1 FROM communication_sequences s
+          WHERE s.id = communication_sequence_steps.sequence_id
+            AND s.organization_id = current_setting('vortex.organization_id', true)
+        ));
+
       -- The global parcel intelligence table intentionally has no organization_id
       -- and is therefore outside the tenant RLS policy model.
       -- Authentication tables remain outside this migration because login must
