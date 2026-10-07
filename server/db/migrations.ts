@@ -1389,5 +1389,16 @@ export const MIGRATIONS: Migration[] = [
       UPDATE properties SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography
       WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL;
     `,
+  },  {
+    version: 36,
+    name: '036_add_agent_run_controls',
+    sql: `
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
+        ON agent_runs(organization_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
+        ON agent_runs(organization_id, started_at, estimated_cost_usd);
+    `,
   },
 ];
