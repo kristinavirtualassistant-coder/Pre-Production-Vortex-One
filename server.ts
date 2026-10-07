@@ -294,7 +294,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow get error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows', async (req, res) => {
+  app.post('/api/workflows', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if (!req.body.name || !Array.isArray(req.body.steps)) return res.status(400).json({ error: 'Workflow name and steps array are required' });
     const pool = getPgPool();
@@ -303,7 +303,7 @@ async function startServer() {
     catch (err: any) { console.error('Workflow upsert error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.put('/api/workflows/:id', async (req, res) => {
+  app.put('/api/workflows/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
@@ -314,7 +314,7 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow update error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.delete('/api/workflows/:id', async (req, res) => {
+  app.delete('/api/workflows/:id', requireRole(['admin', 'executive']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for authoritative workflow state' });
