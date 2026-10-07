@@ -112,7 +112,7 @@ jobs:
         run: npm run test:e2e:smoke
 
   live-gis:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
