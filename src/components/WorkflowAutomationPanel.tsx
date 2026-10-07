@@ -88,6 +88,44 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
     setLogs(res.ok ? await res.json() : []);
   };
 
+  const updateSchedule = async (scheduleId: string, status: 'active'|'paused'|'cancelled') => {
+    setBusy(true); setMessage('');
+    try {
+      const res = await fetch(`/api/workflows/${workflow?.workflow_id}/schedules/${scheduleId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Schedule update failed');
+      setMessage(`Schedule ${status}.`);
+      await load();
+    } catch (e: any) { setMessage(e.message || 'Schedule update failed'); }
+    finally { setBusy(false); }
+  };
+
+  const runScheduleNow = async (scheduleId: string) => {
+    setBusy(true); setMessage('');
+    try {
+      const res = await fetch(`/api/workflows/${workflow?.workflow_id}/schedules/${scheduleId}/run-now`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Run failed');
+      setMessage(`Workflow queued: ${data.runId}`);
+      await load();
+    } catch (e: any) { setMessage(e.message || 'Run failed'); }
+    finally { setBusy(false); }
+  };
+
+  const retryRun = async (runId: string) => {
+    setBusy(true); setMessage('');
+    try {
+      const res = await fetch(`/api/workflow-runs/${runId}/retry`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Retry failed');
+      setMessage(`Retry queued: ${data.jobId}`);
+      await load();
+    } catch (e: any) { setMessage(e.message || 'Retry failed'); }
+    finally { setBusy(false); }
+  };
+
   if (!workflow) return null;
 
   return (
@@ -133,7 +171,17 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
             <Play className="h-3.5 w-3.5" /> Create schedule
           </button>
           <div className="max-h-28 space-y-1 overflow-auto">
-            {schedules.slice(0, 6).map(s => <div key={s.id} className="rounded border border-slate-100 px-2 py-1.5 text-[9px]"><span className="font-semibold">{s.schedule_type}</span> · {s.status} · {s.next_run_at ? new Date(s.next_run_at).toLocaleString() : 'complete'}</div>)}
+            {schedules.slice(0, 6).map(s => (
+              <div key={s.id} className="rounded border border-slate-100 px-2 py-1.5 text-[9px]">
+                <div><span className="font-semibold">{s.schedule_type}</span> · {s.status} · {s.next_run_at ? new Date(s.next_run_at).toLocaleString() : 'complete'}</div>
+                <div className="mt-1 flex gap-2">
+                  {s.status === 'active' && <button disabled={busy} onClick={() => void updateSchedule(s.id, 'paused')} className="font-semibold text-amber-700">Pause</button>}
+                  {s.status === 'paused' && <button disabled={busy} onClick={() => void updateSchedule(s.id, 'active')} className="font-semibold text-emerald-700">Resume</button>}
+                  {!['completed','cancelled'].includes(s.status) && <button disabled={busy} onClick={() => void runScheduleNow(s.id)} className="font-semibold text-cyan-700">Run now</button>}
+                  {!['completed','cancelled'].includes(s.status) && <button disabled={busy} onClick={() => void updateSchedule(s.id, 'cancelled')} className="font-semibold text-rose-700">Cancel</button>}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -141,10 +189,15 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
           <span className="text-xs font-semibold">Execution history</span>
           <div className="max-h-44 space-y-1 overflow-auto">
             {runs.length === 0 && <p className="text-[10px] text-slate-400">No durable runs yet.</p>}
-            {runs.map(r => <button key={r.id} onClick={() => void loadLogs(r.id)} className={`flex w-full items-center justify-between rounded-lg border p-2 text-left ${selectedRunId===r.id?'border-cyan-300 bg-cyan-50':'border-slate-100 bg-slate-50'}`}>
-              <span><span className="block text-[10px] font-semibold">{r.status}</span><span className="text-[9px] text-slate-500">{new Date(r.created_at).toLocaleString()}</span></span>
-              <Clock3 className="h-3.5 w-3.5 text-slate-400" />
-            </button>)}
+            {runs.map(r => (
+              <div key={r.id} className={`flex items-center justify-between rounded-lg border p-2 ${selectedRunId===r.id?'border-cyan-300 bg-cyan-50':'border-slate-100 bg-slate-50'}`}>
+                <button onClick={() => void loadLogs(r.id)} className="min-w-0 flex-1 text-left">
+                  <span className="block text-[10px] font-semibold">{r.status}</span><span className="text-[9px] text-slate-500">{new Date(r.created_at).toLocaleString()}</span>
+                </button>
+                {r.status === 'failed' && <button disabled={busy} onClick={() => void retryRun(r.id)} className="ml-2 text-[10px] font-semibold text-cyan-700">Retry</button>}
+                <Clock3 className="ml-2 h-3.5 w-3.5 text-slate-400" />
+              </div>
+            ))}
           </div>
           {selectedRunId && <div className="max-h-28 overflow-auto rounded-lg border border-slate-100 bg-slate-950 p-2 font-mono text-[9px] text-slate-200">{logs.map(l => <div key={l.id} className="mb-1"><span className="text-cyan-300">{l.event}</span> {l.message}</div>)}</div>}
         </div>
