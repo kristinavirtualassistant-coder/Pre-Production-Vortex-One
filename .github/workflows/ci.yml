@@ -1,4 +1,5 @@
 name: Vortex One CI
+# QA gate: build, PostgreSQL integration, browser smoke, and scheduled live GIS.
 
 on:
   push:
