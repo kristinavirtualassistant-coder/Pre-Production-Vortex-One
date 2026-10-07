@@ -110,7 +110,7 @@ export async function ensureProductionAgents(pool: Pool, organizationId: string)
          allowed_tools, allowed_data, model, temperature, max_tokens, permissions, parent_agent_id,
          enabled, capabilities, provider, max_retries, memory_enabled)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19)
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (organization_id, id) DO NOTHING`,
       [
         agent.id, organizationId, agent.name, agent.role, agent.description, agent.primaryResponsibility,
         agent.systemInstructions, JSON.stringify(agent.allowedTools), JSON.stringify(agent.allowedData),
