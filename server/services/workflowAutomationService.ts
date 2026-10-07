@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { requireOrganizationId } from './organizationContext';
-import { enqueueJob, claimNextJob, completeJob, failJob, recoverStaleJobs, type JobRecord } from './jobService';
+import { enqueueJob, enqueueJobWithClient, claimNextJob, completeJob, failJob, recoverStaleJobs, type JobRecord } from './jobService';
 import { sendEmail } from './emailService';
 import { executeSubAgent } from '../agents/subAgents';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
@@ -76,9 +76,32 @@ export async function scheduleWorkflow(pool:Pool,organizationId:string,workflowI
   return result.rows[0];
 }
 export async function claimDueWorkflowSchedules(pool:Pool){
-  const result=await pool.query("WITH due AS (SELECT id FROM workflow_schedules WHERE status='active' AND next_run_at<=CURRENT_TIMESTAMP ORDER BY next_run_at FOR UPDATE SKIP LOCKED LIMIT 25) UPDATE workflow_schedules s SET last_run_at=CURRENT_TIMESTAMP,next_run_at=CASE WHEN s.schedule_type='interval' THEN CURRENT_TIMESTAMP+(s.interval_seconds*INTERVAL '1 second') WHEN s.schedule_type='once' THEN NULL WHEN s.schedule_type='cron' THEN NULL ELSE CURRENT_TIMESTAMP+(s.interval_seconds*INTERVAL '1 second') END,status=CASE WHEN s.schedule_type='once' THEN 'completed' ELSE 'active' END,updated_at=CURRENT_TIMESTAMP FROM due WHERE s.id=due.id RETURNING s.*");
-  for(const row of result.rows) await enqueueJob(pool,row.organization_id,WORKFLOW_JOB_TYPE,{scheduleId:row.id,workflowId:row.workflow_id,workflowVersionId:row.workflow_version_id,triggerPayload:row.trigger_payload,runId:'wfr_'+randomUUID()},3);
-  for(const row of result.rows){ if(row.schedule_type==='cron'){ const next=nextCronRun(row.cron_expression,new Date()); await pool.query("UPDATE workflow_schedules SET next_run_at=$1 WHERE id=$2",[next,row.id]); row.next_run_at=next; } } return result.rows;
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query("SELECT * FROM workflow_schedules WHERE status='active' AND next_run_at<=CURRENT_TIMESTAMP ORDER BY next_run_at FOR UPDATE SKIP LOCKED LIMIT 25");
+    const claimed=[];
+    for(const row of result.rows){
+      const runId='wfr_'+randomUUID();
+      await enqueueJobWithClient(client,row.organization_id,WORKFLOW_JOB_TYPE,{scheduleId:row.id,workflowId:row.workflow_id,workflowVersionId:row.workflow_version_id,triggerPayload:row.trigger_payload,runId},3);
+      let nextRun:null|Date=null;
+      let status='active';
+      if(row.schedule_type==='interval'){
+        nextRun=new Date(Date.now()+Number(row.interval_seconds)*1000);
+      }else if(row.schedule_type==='cron'){
+        nextRun=nextCronRun(row.cron_expression,new Date());
+      }else if(row.schedule_type==='once'){
+        status='completed';
+      }else{
+        nextRun=new Date(Date.now()+Math.max(60,Number(row.interval_seconds||60))*1000);
+      }
+      const updated=await client.query("UPDATE workflow_schedules SET last_run_at=CURRENT_TIMESTAMP,next_run_at=$1,status=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$3 AND organization_id=$4 RETURNING *",[nextRun,status,row.id,row.organization_id]);
+      claimed.push(updated.rows[0]);
+    }
+    await client.query('COMMIT');
+    return claimed;
+  }catch(error){ await client.query('ROLLBACK'); throw error; }
+  finally{ client.release(); }
 }
 
 async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:string,channel:'email'|'sms'|'phone',destination:string,idempotencyKey:string,payload:any){
