@@ -42,18 +42,27 @@ function org(req: AuthRequest): string {
   return req.dbUser.organization_id;
 }
 
+/**
+ * Return the organization's conversation threads, optionally filtered by channel.
+ */
 router.get('/threads', async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   try { res.json({ threads: await listThreads(pool, org(req), req.query.channel as any || undefined) }); }
   catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load threads' }); }
 });
 
+/**
+ * Return a single thread's messages, scoped to the authenticated organization.
+ */
 router.get('/threads/:id/messages', async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   try { res.json({ messages: await listThreadMessages(pool, org(req), req.params.id) }); }
   catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load conversation' }); }
 });
 
+/**
+ * Return recent organization messages, optionally filtered by lead, owner, property, and limit.
+ */
 router.get('/timeline', async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   try {
@@ -66,6 +75,9 @@ router.get('/timeline', async (req: AuthRequest, res) => {
   } catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load communications timeline' }); }
 });
 
+/**
+ * Validate and queue an outbound email job for the authenticated organization and user.
+ */
 router.post('/email/send', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   const body=req.body || {};
@@ -81,6 +93,9 @@ router.post('/email/send', requireRole(['admin','executive','manager','agent']),
   } catch (e:any) { res.status(400).json({error:e.message || 'Failed to queue email'}); }
 });
 
+/**
+ * Validate and queue an outbound SMS job for the authenticated organization and user.
+ */
 router.post('/sms/send', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   const body=req.body || {};
@@ -93,6 +108,9 @@ router.post('/sms/send', requireRole(['admin','executive','manager','agent']), a
   } catch (e:any) { res.status(400).json({error:e.message || 'Failed to queue SMS'}); }
 });
 
+/**
+ * Trigger an inbox sync for the requested email provider and return the imported count.
+ */
 router.post('/email/sync', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest, res) => {
   const pool=poolOrFail(res); if(!pool)return;
   const provider=req.body?.provider || req.query.provider;
@@ -101,6 +119,10 @@ router.post('/email/sync', requireRole(['admin','executive','manager','agent']),
   catch(e:any) { res.status(400).json({error:e.message || 'Email sync failed'}); }
 });
 
+/**
+ * Return the organization's messaging numbers, syncing from Twilio when none exist and
+ * Twilio credentials are configured.
+ */
 router.get('/numbers', async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try {
@@ -113,12 +135,18 @@ router.get('/numbers', async (req: AuthRequest,res) => {
   } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load messaging numbers'}); }
 });
 
+/**
+ * Force a Twilio messaging number sync for the authenticated organization.
+ */
 router.post('/numbers/sync', requireRole(['admin','executive','manager']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try { res.json({numbers:await listTwilioNumbers(pool,org(req))}); }
   catch(e:any) { res.status(400).json({error:e.message || 'Twilio number sync failed'}); }
 });
 
+/**
+ * Return the organization's most recent 500 suppression entries.
+ */
 router.get('/suppressions', async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try {
@@ -127,6 +155,9 @@ router.get('/suppressions', async (req: AuthRequest,res) => {
   } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load suppressions'}); }
 });
 
+/**
+ * Validate the channel and contact key, then create or update a suppression entry.
+ */
 router.post('/suppressions', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   if(!['email','sms','voice','all'].includes(req.body?.channel) || !req.body?.contactKey) return res.status(400).json({error:'channel and contactKey are required'});
@@ -134,6 +165,9 @@ router.post('/suppressions', requireRole(['admin','executive','manager','agent']
   catch(e:any) { res.status(400).json({error:e.message || 'Failed to create suppression'}); }
 });
 
+/**
+ * Return up to 250 organization templates, optionally filtered by channel.
+ */
 router.get('/templates', async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try {
@@ -146,6 +180,9 @@ router.get('/templates', async (req: AuthRequest,res) => {
   } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load templates'}); }
 });
 
+/**
+ * Validate required fields, extract template variables, and create an outreach template.
+ */
 router.post('/templates', requireRole(['admin','executive','manager']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   const body=req.body || {};
@@ -160,6 +197,9 @@ router.post('/templates', requireRole(['admin','executive','manager']), async (r
   } catch(e:any) { res.status(400).json({error:e.message || 'Failed to create template'}); }
 });
 
+/**
+ * Return the organization's sequences with their enrollment counts.
+ */
 router.get('/sequences', async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try {
@@ -171,6 +211,9 @@ router.get('/sequences', async (req: AuthRequest,res) => {
   } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load sequences'}); }
 });
 
+/**
+ * Validate the name and steps, then create a new communication sequence.
+ */
 router.post('/sequences', requireRole(['admin','executive','manager']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   const input=req.body || {};
@@ -179,6 +222,9 @@ router.post('/sequences', requireRole(['admin','executive','manager']), async (r
   catch(e:any) { res.status(400).json({error:e.message || 'Failed to create sequence'}); }
 });
 
+/**
+ * Enroll the given lead into a sequence, requiring a leadId in the request body.
+ */
 router.post('/sequences/:id/enroll', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   if(!req.body?.leadId) return res.status(400).json({error:'leadId is required'});
@@ -186,6 +232,9 @@ router.post('/sequences/:id/enroll', requireRole(['admin','executive','manager',
   catch(e:any) { res.status(400).json({error:e.message || 'Failed to enroll lead'}); }
 });
 
+/**
+ * Record an open-tracking event for the token and respond with a 1x1 transparent pixel.
+ */
 router.get('/tracking/open/:token.gif', async (req,res) => {
   const pool=getPgPool();
   if(pool) await recordTrackingEvent(pool,req.params.token,'opened').catch(()=>undefined);
@@ -193,6 +242,9 @@ router.get('/tracking/open/:token.gif', async (req,res) => {
   res.setHeader('Content-Type','image/gif'); res.setHeader('Cache-Control','no-store'); res.status(200).send(pixel);
 });
 
+/**
+ * Suppress the email address associated with a tracking token and show a confirmation page.
+ */
 router.get('/tracking/unsubscribe/:token', async (req,res) => {
   const pool=getPgPool();
   if(!pool) return res.status(503).send('Communications unavailable');
@@ -204,6 +256,9 @@ router.get('/tracking/unsubscribe/:token', async (req,res) => {
   } catch(e:any) { res.status(500).send('Unable to process unsubscribe request'); }
 });
 
+/**
+ * Record a click-tracking event for the token and redirect to the signed destination URL.
+ */
 router.get('/tracking/click/:token', async (req,res) => {
   const url=typeof req.query.url === 'string' ? req.query.url : '';
   const signature=typeof req.query.sig === 'string' ? req.query.sig : '';
@@ -219,6 +274,9 @@ router.get('/tracking/click/:token', async (req,res) => {
   return res.status(503).send('Communications unavailable');
 });
 
+/**
+ * Handle an inbound Twilio SMS webhook, verifying its signature and acknowledging with empty TwiML.
+ */
 router.post('/webhooks/twilio/inbound', async (req,res) => {
   const pool=getPgPool(); if(!pool) return res.status(503).send('Communications unavailable');
   try {
@@ -228,6 +286,9 @@ router.post('/webhooks/twilio/inbound', async (req,res) => {
   } catch(e:any) { res.status(403).type('text/xml').send('<Response><Message>Webhook rejected</Message></Response>'); }
 });
 
+/**
+ * Handle a Twilio delivery status webhook, verifying its signature before updating the message.
+ */
 router.post('/webhooks/twilio/status', async (req,res) => {
   const pool=getPgPool(); if(!pool) return res.status(503).send('Communications unavailable');
   try {
