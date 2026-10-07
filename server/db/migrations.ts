@@ -1441,12 +1441,6 @@ export const MIGRATIONS: Migration[] = [
       CREATE POLICY vortex_tenant_isolation ON integration_oauth_states
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_versions ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_versions FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_versions;
-      CREATE POLICY vortex_tenant_isolation ON workflow_versions
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
       ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
       ALTER TABLE organization_invites FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_tenant_isolation ON organization_invites;
