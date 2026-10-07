@@ -1349,8 +1349,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 30,
-    name: '030_extend_workflow_delivery_idempotency',
+    version: 33,
+    name: '033_extend_workflow_delivery_idempotency',
     sql: `
       ALTER TABLE workflow_communication_deliveries
         DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
@@ -1363,8 +1363,8 @@ export const MIGRATIONS: Migration[] = [
   },
 
   {
-    version: 30,
-    name: '030_create_native_property_map_spatial_layer',
+    version: 34,
+    name: '034_create_native_property_map_spatial_layer',
     sql: `
       CREATE EXTENSION IF NOT EXISTS postgis;
       ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
