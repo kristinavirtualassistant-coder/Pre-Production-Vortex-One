@@ -1684,6 +1684,11 @@ export const MIGRATIONS: Migration[] = [
             AND s.organization_id = current_setting('vortex.organization_id', true)
         ));
 
+      CREATE INDEX IF NOT EXISTS idx_call_telephony_call_id_global
+        ON call(telephony_call_id) WHERE telephony_call_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_call_telephony_session_id_global
+        ON call(telephony_session_id) WHERE telephony_session_id IS NOT NULL;
+
       -- The global parcel intelligence table intentionally has no organization_id
       -- and is therefore outside the tenant RLS policy model.
       -- Authentication tables remain outside this migration because login must
