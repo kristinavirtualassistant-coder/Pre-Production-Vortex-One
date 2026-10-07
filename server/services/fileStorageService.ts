@@ -72,6 +72,36 @@ export async function objectExists(path:string){
   const data=await storageRequest(`/object/list/${getFileStorageBucket()}`,{method:'POST',body:JSON.stringify({prefix:folder,limit:10,offset:0,search:name,sortBy:{column:'name',order:'asc'}})});
   return Array.isArray(data)&&data.some((item:any)=>item.name===name);
 }
+export async function downloadStoredObject(path:string, maxBytes = 10 * 1024 * 1024): Promise<{body: Buffer; contentType: string}> {
+  const {url, key} = config();
+  const response = await fetch(url + '/object/' + getFileStorageBucket() + '/' + path, {
+    headers: { Authorization: 'Bearer ' + key, apikey: key },
+  });
+  if (!response.ok || !response.body) {
+    throw new Error('Private storage download failed (' + response.status + ')');
+  }
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > maxBytes) throw new Error('Text extraction file exceeds worker memory limit');
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('Text extraction file exceeds worker memory limit');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return {
+    body: Buffer.concat(chunks),
+    contentType: (response.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim(),
+  };
+}
+
 export async function removeStoredObject(path:string){
   await storageRequest(`/object/${getFileStorageBucket()}`,{method:'DELETE',body:JSON.stringify({prefixes:[path]})});
 }
