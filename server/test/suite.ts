@@ -105,11 +105,11 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 30, 'Migration list contains 30 defined migrations', `Expected 30, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 34, 'Migration list contains 34 defined migrations', `Expected 34, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
-  assert(MIGRATIONS.some((migration) => migration.version === 30 && migration.name === '030_extend_workflow_delivery_idempotency'), 'Workflow delivery idempotency migration 30 present', 'Expected workflow delivery idempotency migration 30 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 33 && migration.name === '033_extend_workflow_delivery_idempotency'), 'Workflow delivery idempotency migration 33 present', 'Expected workflow delivery idempotency migration 33 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 17 && migration.name === '017_enforce_global_user_email_identity'), 'Global email identity migration 17 present', 'Expected global email identity migration 17 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 19 && migration.name === '019_production_auth_account_management'), 'Production auth migration 19 present', 'Expected production auth migration 19 to be present');
@@ -123,6 +123,7 @@ async function runAllTests() {
   assert(MIGRATIONS.some((migration) => migration.version === 27 && migration.name === '027_create_file_processing_jobs'), 'File processing migration 27 present', 'Expected file processing migration 27 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 28 && migration.name === '028_create_real_ai_agent_runtime'), 'Real AI agent runtime migration 28 present', 'Expected real AI agent runtime migration 28 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 29 && migration.name === '029_billing_invoice_history'), 'Billing invoice migration 29 present', 'Expected billing invoice migration 29 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 34 && migration.name === '034_create_native_property_map_spatial_layer'), 'Native property map migration 34 present', 'Expected native property map migration 34 to be present');
   assert(PLAN_CATALOG.starter.trialDays === 14 && PLAN_CATALOG.professional.trialDays === 14 && PLAN_CATALOG.enterprise.trialDays === 14, 'Paid plans provide 14-day trials');
   assert(PLAN_CATALOG.free.priceCents === 0 && PLAN_CATALOG.free.limits.calls_month === 250, 'Free plan catalog is configured');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
