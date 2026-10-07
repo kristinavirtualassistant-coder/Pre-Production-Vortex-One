@@ -64,7 +64,7 @@ export async function publishWorkflowVersion(pool:Pool,organizationId:string,wor
   const org=requireOrganizationId(organizationId); const client=await pool.connect(); try{await client.query('BEGIN');
     const v=await client.query('SELECT * FROM workflow_versions WHERE id=$1 AND workflow_id=$2 AND organization_id=$3 FOR UPDATE',[versionId,workflowId,org]); if(!v.rowCount) throw new Error('Workflow version not found');
     await client.query("UPDATE workflow_versions SET status='archived' WHERE workflow_id=$1 AND organization_id=$2 AND status='published'",[workflowId,org]);
-    const result=await client.query("UPDATE workflow_versions SET status='published',published_at=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *",[versionId]); await client.query('COMMIT'); return result.rows[0];
+    const result=await client.query("UPDATE workflow_versions SET status='published',published_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 RETURNING *",[versionId,org]); await client.query('COMMIT'); return result.rows[0];
   }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
 export async function scheduleWorkflow(pool:Pool,organizationId:string,workflowId:string,createdBy:string,input:any){

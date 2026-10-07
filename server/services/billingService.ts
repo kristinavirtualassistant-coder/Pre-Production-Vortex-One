@@ -130,7 +130,7 @@ export async function listBillingInvoices(pool: Pool, organizationId: string, li
   return result.rows;
 }
 
-async function upsertBillingInvoice(pool: Pool, organizationId: string, invoice: any) {
+async function upsertBillingInvoice(pool: Pick<Pool, 'query'>, organizationId: string, invoice: any) {
   const periodStart = invoice.period_start ? new Date(Number(invoice.period_start) * 1000).toISOString() : null;
   const periodEnd = invoice.period_end ? new Date(Number(invoice.period_end) * 1000).toISOString() : null;
   const dueDate = invoice.due_date ? new Date(Number(invoice.due_date) * 1000).toISOString() : null;
@@ -138,62 +138,109 @@ async function upsertBillingInvoice(pool: Pool, organizationId: string, invoice:
   await pool.query(
     `INSERT INTO billing_invoices(id,organization_id,stripe_invoice_id,stripe_customer_id,stripe_subscription_id,status,collection_method,currency,amount_due,amount_paid,amount_remaining,hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,metadata)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
-     ON CONFLICT(stripe_invoice_id) DO UPDATE SET status=EXCLUDED.status,collection_method=EXCLUDED.collection_method,currency=EXCLUDED.currency,amount_due=EXCLUDED.amount_due,amount_paid=EXCLUDED.amount_paid,amount_remaining=EXCLUDED.amount_remaining,hosted_invoice_url=EXCLUDED.hosted_invoice_url,invoice_pdf=EXCLUDED.invoice_pdf,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,due_date=EXCLUDED.due_date,paid_at=EXCLUDED.paid_at,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP`,
+     ON CONFLICT(stripe_invoice_id) DO UPDATE SET status=EXCLUDED.status,collection_method=EXCLUDED.collection_method,currency=EXCLUDED.currency,amount_due=EXCLUDED.amount_due,amount_paid=EXCLUDED.amount_paid,amount_remaining=EXCLUDED.amount_remaining,hosted_invoice_url=EXCLUDED.hosted_invoice_url,invoice_pdf=EXCLUDED.invoice_pdf,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,due_date=EXCLUDED.due_date,paid_at=EXCLUDED.paid_at,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP WHERE billing_invoices.organization_id=EXCLUDED.organization_id`,
     ['inv_' + invoice.id, organizationId, invoice.id, invoice.customer || null, invoice.subscription || null, invoice.status || null, invoice.collection_method || null, invoice.currency || null,
      Number.isFinite(Number(invoice.amount_due)) ? Number(invoice.amount_due) : null, Number.isFinite(Number(invoice.amount_paid)) ? Number(invoice.amount_paid) : null, Number.isFinite(Number(invoice.amount_remaining)) ? Number(invoice.amount_remaining) : null,
      invoice.hosted_invoice_url || null, invoice.invoice_pdf || null, periodStart, periodEnd, dueDate, paidAt, JSON.stringify(invoice.metadata || {})],
   );
 }
-export async function handleStripeEvent(pool: Pool, event: any) {
+type Queryable = Pick<Pool, 'query'>;
+
+const KNOWN_PLANS = new Set<string>(Object.keys(PLAN_LIMITS));
+
+/**
+ * Resolves the organization a Stripe object belongs to from OUR OWN records (the Stripe customer id that
+ * checkout stored on organization_billing before the session was created). Organization ids that appear in
+ * event metadata are attacker-influenceable inputs and are only used as a consistency check, never as the
+ * source of authorization.
+ */
+export async function resolveStripeOrganization(db: Queryable, object: any): Promise<{ organizationId: string } | { ignored: true; reason: string }> {
+  const customerId = typeof object?.customer === 'string' ? object.customer : '';
+  if (!customerId) return { ignored: true, reason: 'event has no Stripe customer' };
+  const mapped = await db.query('SELECT organization_id FROM organization_billing WHERE billing_customer_id=$1 LIMIT 2', [customerId]);
+  if (mapped.rowCount !== 1) return { ignored: true, reason: 'Stripe customer is not mapped to exactly one organization' };
+  const organizationId = String(mapped.rows[0].organization_id);
+  const claimed = object?.metadata?.organization_id || object?.metadata?.organizationId;
+  if (claimed && String(claimed) !== organizationId) {
+    console.error('Stripe webhook organization metadata does not match the customer mapping; event ignored');
+    return { ignored: true, reason: 'organization metadata does not match Stripe customer mapping' };
+  }
+  return { organizationId };
+}
+
+export async function handleStripeEvent(db: Queryable, event: any) {
   const object = event?.data?.object || {};
   const metadata = object.metadata || {};
-  const organizationId = metadata.organization_id || metadata.organizationId;
+  const type = String(event?.type || '');
 
-  const subscription = event.type.startsWith('customer.subscription.') ? object : null;
+  const isInvoice = type.startsWith('invoice.');
+  const isSubscription = type.startsWith('customer.subscription.');
+  const isCheckout = type === 'checkout.session.completed';
+  if (!isInvoice && !isSubscription && !isCheckout) return { ignored: true, reason: type };
 
-  if (event.type.startsWith('invoice.')) {
-    let orgId = organizationId;
-    if (!orgId && object.customer) {
-      const customerResult = await pool.query('SELECT organization_id FROM organization_billing WHERE billing_customer_id=$1 LIMIT 1', [object.customer]);
-      orgId = customerResult.rows[0]?.organization_id;
-    }
-    if (orgId && object.id) {
-      await upsertBillingInvoice(pool, orgId, object);
-      return { updated: true, organizationId: orgId, invoiceId: object.id };
-    }
-    return { ignored: true, reason: 'invoice missing organization mapping' };
+  const resolved = await resolveStripeOrganization(db, object);
+  if ('ignored' in resolved) return resolved;
+  const organizationId = resolved.organizationId;
+
+  if (isInvoice) {
+    if (!object.id) return { ignored: true, reason: 'invoice has no id' };
+    await upsertBillingInvoice(db, organizationId, object);
+    return { updated: true, organizationId, invoiceId: object.id };
   }
 
-  if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
+  const requestedPlan = String(metadata.plan || object.items?.data?.[0]?.price?.metadata?.plan || 'free');
+  if (!KNOWN_PLANS.has(requestedPlan)) return { ignored: true, reason: 'unknown plan' };
+  const plan = requestedPlan;
 
-  if (subscription) {
-    const plan = metadata.plan || subscription.items?.data?.[0]?.price?.metadata?.plan || 'free';
-    const status = subscription.status || 'active';
-    await pool.query(
+  if (isSubscription) {
+    const status = object.status || 'active';
+    await db.query(
       `UPDATE organization_billing
        SET plan=$1,subscription_status=$2,billing_customer_id=$3,billing_subscription_id=$4,
            trial_ends_at=CASE WHEN $5 > 0 THEN to_timestamp($5) ELSE NULL END,current_period_start=to_timestamp($6),current_period_end=to_timestamp($7),
            cancel_at_period_end=$8,limits=$9::jsonb,updated_at=CURRENT_TIMESTAMP
        WHERE organization_id=$10`,
-      [plan,status,subscription.customer || null,subscription.id || null,
-       Number(subscription.trial_end || 0),Number(subscription.current_period_start || 0),Number(subscription.current_period_end || 0),
-       Boolean(subscription.cancel_at_period_end),JSON.stringify(planLimits(plan)),organizationId],
+      [plan,status,object.customer || null,object.id || null,
+       Number(object.trial_end || 0),Number(object.current_period_start || 0),Number(object.current_period_end || 0),
+       Boolean(object.cancel_at_period_end),JSON.stringify(planLimits(plan)),organizationId],
     );
     return { updated: true, organizationId, plan, status };
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const customerId = object.customer;
-    const subscriptionId = object.subscription;
-    const plan = metadata.plan || 'free';
-    await pool.query(
-      `UPDATE organization_billing SET plan=$1,billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
-      [plan,customerId,subscriptionId,JSON.stringify(planLimits(plan)),organizationId],
-    );
-    return { updated: true, organizationId, plan };
-  }
+  await db.query(
+    `UPDATE organization_billing SET plan=$1,billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
+    [plan,object.customer,object.subscription,JSON.stringify(planLimits(plan)),organizationId],
+  );
+  return { updated: true, organizationId, plan };
+}
 
-  return { ignored: true, reason: event.type };
+/**
+ * Records a signature-verified Stripe event exactly once and processes it in the same transaction, so a
+ * processing failure rolls the idempotency record back and Stripe's retry is processed instead of being
+ * discarded as a duplicate.
+ */
+export async function processStripeWebhookEvent(pool: Pool, event: any): Promise<{ processed: boolean; result?: unknown }> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const inserted = await client.query(
+      `INSERT INTO stripe_webhook_events(id,event_type,payload)
+       VALUES($1,$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
+      [event.id, event.type, JSON.stringify(event)],
+    );
+    if (inserted.rowCount !== 1) {
+      await client.query('COMMIT');
+      return { processed: false };
+    }
+    const result = await handleStripeEvent(client, event);
+    await client.query('COMMIT');
+    return { processed: true, result };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* connection already unusable */ }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function recordUsage(pool: Pool, organizationId: string, metric: string, increment = 1) {

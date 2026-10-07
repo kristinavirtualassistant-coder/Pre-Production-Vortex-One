@@ -3,6 +3,8 @@
  * Handles automated version tracking, transactional migrations, and table bootstrap
  */
 
+import { POSTGRESQL_AUTH_MIGRATION } from './postgresqlAuthMigration';
+
 export interface Migration {
   version: number;
   name: string;
@@ -472,6 +474,11 @@ export const MIGRATIONS: Migration[] = [
     ALTER TABLE call ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_call_org_idempotency ON call(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
   `, },
+  // Version 12 was historically missing from this chain: the authentication/webhook/voicemail foundation was
+  // created lazily at request time by whichever database role served the first login. It is now part of the
+  // ordered, admin-applied migration chain. The SQL is fully idempotent (IF NOT EXISTS), so databases that
+  // already received it through the old lazy bootstrap simply re-run it as a no-op.
+  { version: 12, name: '012_auth_webhook_voicemail_foundation', sql: POSTGRESQL_AUTH_MIGRATION.sql },
   {
     version: 13,
     name: '013_create_email_outreach_schema',
@@ -1402,18 +1409,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 39,
-    name: '039_add_agent_run_controls',
-    sql: `
-      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
-        ON agent_runs(organization_id, idempotency_key)
-        WHERE idempotency_key IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
-        ON agent_runs(organization_id, started_at, estimated_cost_usd);
-    `,
-  },
-  {
     version: 37,
     name: '037_extend_workflow_delivery_idempotency',
     sql: `
@@ -1446,5 +1441,30 @@ export const MIGRATIONS: Migration[] = [
       EXECUTE FUNCTION prevent_audit_log_mutation();
     `,
   },
- ];
+   {
+    version: 39,
+    name: '039_add_agent_run_controls',
+    sql: `
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
+        ON agent_runs(organization_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
+        ON agent_runs(organization_id, started_at, estimated_cost_usd);
+    `,
+  },
+  {
+    version: 40,
+    name: '040_add_campaign_scheduling_columns',
+    // Code paths read and write these columns but no earlier migration created them, so the features failed on any
+    // database built from the chain: campaign scheduling (CampaignManager) and call note edits (PATCH /api/calls/:id,
+    // POST /api/calls/:id/notes write call.updated_at).
+    sql: `
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_by VARCHAR(255);
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      CREATE INDEX IF NOT EXISTS idx_campaign_due_schedule ON campaign(scheduled_at) WHERE status = 'scheduled';
+    `,
+  },
+];
 

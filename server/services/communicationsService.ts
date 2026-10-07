@@ -432,8 +432,19 @@ export async function sendSmsNow(pool: Pool, args: any) {
   if (existing.rowCount) return existing.rows[0];
   await enforceUsageLimit(pool, args.organizationId, 'sms_month', 1);
   const cfg = await twilio();
-  const from = normalizePhone(args.from || process.env.TWILIO_FROM_NUMBER || '');
-  if (!from) throw new Error('TWILIO_FROM_NUMBER is not configured');
+  // The sender must be an active messaging number registered to THIS organization. A caller-supplied `from`
+  // is only honored when it is one of those numbers, and the platform-wide TWILIO_FROM_NUMBER is never used
+  // as an implicit fallback (that would let any tenant send, and bill, as the platform or another tenant).
+  const ownedNumbers = await pool.query(
+    "SELECT phone_number FROM messaging_numbers WHERE organization_id=$1 AND provider='twilio' AND status='active' ORDER BY phone_number LIMIT 50",
+    [args.organizationId],
+  );
+  const ownedFromNumbers = ownedNumbers.rows.map((row: any) => normalizePhone(row.phone_number));
+  const requestedFrom = normalizePhone(args.from || '');
+  const from = requestedFrom || ownedFromNumbers[0] || '';
+  if (!from || !ownedFromNumbers.includes(from)) {
+    throw Object.assign(new Error('No active messaging number registered to this organization is available to send from'), { statusCode: 403 });
+  }
   const form = new URLSearchParams({To:to,From:from,Body:String(args.body)});
   const callback = (process.env.APP_URL || '').replace(/\/$/,'') + '/api/communications/webhooks/twilio/status';
   if (callback.startsWith('http')) form.set('StatusCallback',callback);

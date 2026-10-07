@@ -109,11 +109,11 @@ export class WebhookHandler {
            FROM call c
            LEFT JOIN dialing_session ds ON ds.id = c.session_id AND ds.organization_id = c.organization_id
            WHERE c.organization_id = $1
-             AND (telephony_session_id = $2 OR telephony_call_id = $2
-                  OR (regexp_replace(phone_number, '\\D', '', 'g') = ANY($3::text[])
-                      AND status IN ('initiated','ringing','connected','in-progress')
-                      AND created_at >= CURRENT_TIMESTAMP - INTERVAL '10 minutes'))
-           ORDER BY CASE WHEN telephony_session_id = $2 THEN 0 WHEN telephony_call_id = $2 THEN 1 ELSE 2 END, created_at DESC
+             AND (c.telephony_session_id = $2 OR c.telephony_call_id = $2
+                  OR (regexp_replace(c.phone_number, '\\D', '', 'g') = ANY($3::text[])
+                      AND c.status IN ('initiated','ringing','connected','in-progress')
+                      AND c.created_at >= CURRENT_TIMESTAMP - INTERVAL '10 minutes'))
+           ORDER BY CASE WHEN c.telephony_session_id = $2 THEN 0 WHEN c.telephony_call_id = $2 THEN 1 ELSE 2 END, c.created_at DESC
            LIMIT 1`,
           [organizationId, normalized.telephonyCallId, partyPhones.map((n: string) => n.replace(/\D/g, ''))],
         );

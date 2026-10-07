@@ -41,6 +41,19 @@ export function shouldBypassApiAuth(path: string): boolean {
   return path === '/health' || path === '/ready' || path === '/billing/webhook' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/') || path.startsWith('/communications/webhooks/') || path.startsWith('/communications/tracking/');
 }
 
+/**
+ * Identity headers that older clients sent. The authenticated PostgreSQL user (session -> users ->
+ * organizations) is the ONLY source of user id, email, organization and role, so these are deleted before any
+ * handler can read them. `x-organization-id` is deliberately not listed: it is validated for consistency in
+ * canonicalizeOrganizationContext and then overwritten with the authenticated organization.
+ */
+export const CLIENT_IDENTITY_HEADERS = ['x-user-id', 'x-user-email', 'x-user-role', 'x-user-name', 'x-uid'] as const;
+
+export function stripClientIdentityHeaders(req: Request, _res: Response, next: NextFunction) {
+  for (const header of CLIENT_IDENTITY_HEADERS) delete req.headers[header];
+  next();
+}
+
 export function isLocalDevelopmentAuthEnabled(): boolean {
   return false;
 }

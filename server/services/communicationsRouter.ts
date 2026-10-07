@@ -101,6 +101,11 @@ router.post('/sms/send', requireRole(['admin','executive','manager','agent']), a
   const body=req.body || {};
   if (!body.to || !body.body) return res.status(400).json({error:'to and body are required'});
   try {
+    if (body.from) {
+      // Fail fast: a caller-supplied sender must be one of THIS organization's active messaging numbers.
+      const ownedSender = await pool.query("SELECT 1 FROM messaging_numbers WHERE organization_id=$1 AND provider='twilio' AND status='active' AND phone_number=$2 LIMIT 1",[org(req),String(body.from).trim()]);
+      if (!ownedSender.rowCount) return res.status(403).json({error:'Sender number is not registered to this organization'});
+    }
     const jobId=await queueCommunicationJob(pool,org(req),COMMUNICATION_JOB_TYPES.SMS_SEND,{
       userId:req.dbUser!.id,to:body.to,body:body.body,from:body.from,leadId:body.leadId,ownerId:body.ownerId,propertyId:body.propertyId,idempotencyKey:body.idempotencyKey,
     });

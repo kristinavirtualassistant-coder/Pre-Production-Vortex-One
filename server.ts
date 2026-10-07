@@ -23,7 +23,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole, stripClientIdentityHeaders } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
@@ -41,39 +41,62 @@ import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, update
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun, cancelAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
-import { createCheckoutSession, createPortalSession, verifyStripeWebhook, handleStripeEvent, enforceUsageLimit } from './server/services/billingService';
+import { createCheckoutSession, createPortalSession, verifyStripeWebhook, processStripeWebhookEvent, enforceUsageLimit } from './server/services/billingService';
+import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
+import { httpStatusForError } from './server/errors';
+import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
-async function startServer() {
+export interface CreateAppOptions {
+  /** Serve the Vite dev middleware (development) or built static assets (production). Default true. */
+  serveFrontend?: boolean;
+  /** Start the legacy in-process refresh/campaign timer. Default true; the timer never keeps the process alive. */
+  backgroundTimers?: boolean;
+}
+
+/**
+ * Builds the fully configured Express application WITHOUT binding a port, so it can be mounted by a
+ * serverless handler or exercised over real HTTP in tests. `startServer()` below binds the port.
+ */
+export async function createApp(options: CreateAppOptions = {}): Promise<express.Express> {
+  const serveFrontend = options.serveFrontend ?? true;
+  const backgroundTimers = options.backgroundTimers ?? true;
   const app = express();
-  const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Stripe requires the exact raw request bytes for webhook signature verification.
-  app.post('/api/billing/webhook', requireRole(['admin', 'executive', 'manager']), express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+  // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
+  app.use(stripClientIdentityHeaders);
+
+  // Stripe webhook: authenticated ONLY by the Stripe signature over the exact raw request bytes. It has no
+  // user session and no role, so it must never sit behind requireAuth/requireRole. Registered before the
+  // JSON body parser so the raw bytes are intact.
+  app.post('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
     const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-    const signature = req.header('stripe-signature') || '';
-    if (!secret || !signature || !Buffer.isBuffer(req.body)) {
-      return res.status(400).json({ error: 'Stripe webhook is not configured correctly' });
+    if (!secret) {
+      console.error('STRIPE_WEBHOOK_SECRET is not configured; rejecting Stripe webhook');
+      return res.status(503).json({ error: 'Stripe webhook is not configured' });
     }
-    if (!verifyStripeWebhook(req.body, signature, secret)) {
+    const signature = req.header('stripe-signature') || '';
+    if (!signature || !Buffer.isBuffer(req.body)) {
+      return res.status(400).json({ error: 'Missing Stripe signature or raw body' });
+    }
+    let signatureValid = false;
+    try {
+      signatureValid = verifyStripeWebhook(req.body, signature, secret);
+    } catch {
+      signatureValid = false;
+    }
+    if (!signatureValid) {
       return res.status(400).json({ error: 'Invalid Stripe webhook signature' });
     }
     try {
       const event = JSON.parse(req.body.toString('utf8'));
-      if (!event?.id || typeof event.id !== 'string' || !event.type) {
+      if (!event?.id || typeof event.id !== 'string' || typeof event.type !== 'string') {
         return res.status(400).json({ error: 'Invalid Stripe event' });
       }
       const pool = getPgPool();
       if (!pool) return res.status(503).json({ error: 'Database unavailable' });
-      const inserted = await pool.query(
-        `INSERT INTO stripe_webhook_events(id,event_type,payload)
-         VALUES($1,$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
-        [event.id, event.type, JSON.stringify(event)],
-      );
-      if (inserted.rowCount === 1) {
-        await handleStripeEvent(pool, event);
-      }
-      return res.json({ received: true, processed: inserted.rowCount === 1 });
+      const outcome = await processStripeWebhookEvent(pool, event);
+      return res.json({ received: true, processed: outcome.processed });
     } catch (error: any) {
       console.error('Stripe webhook processing failed:', error);
       return res.status(500).json({ error: 'Stripe webhook processing failed' });
@@ -131,10 +154,8 @@ async function startServer() {
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
   app.use('/api/communications', communicationsRouter);
 
-  app.post('/internal/scheduler/workflows', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const expected = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
-    const supplied = String(req.header('x-vortex-scheduler-secret') || '').trim();
-    if (!expected || supplied !== expected) return res.status(401).json({ error: 'Unauthorized scheduler request' });
+  // Scheduler trigger: machine-to-machine, authenticated ONLY by SCHEDULER_TRIGGER_SECRET (no session/role).
+  app.post('/internal/scheduler/workflows', requireSchedulerSecret, async (req, res) => {
     try {
       res.json(await runWorkflowScheduler());
     } catch (err: any) {
@@ -329,12 +350,13 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow versioning'});
     try { res.status(201).json(await createWorkflowVersion(pool,orgId,req.params.id,userId,Boolean(req.body?.publish))); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to create workflow version'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to create workflow version')}); }
   });
 
   app.get('/api/workflows/:id/versions', async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow versions'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     const result=await pool.query('SELECT * FROM workflow_versions WHERE workflow_id=$1 AND organization_id=$2 ORDER BY version DESC',[req.params.id,orgId]);
     res.json(result.rows);
   });
@@ -343,14 +365,15 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow publishing'});
     try { res.json(await publishWorkflowVersion(pool,orgId,req.params.id,req.params.versionId)); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to publish workflow version'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to publish workflow version')}); }
   });
 
   app.post('/api/workflows/:id/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     try { res.status(201).json(await scheduleWorkflow(pool,orgId,req.params.id,userId,req.body||{})); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to schedule workflow'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to schedule workflow')}); }
   });
 
   app.patch('/api/workflows/:id/schedules/:scheduleId', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -359,7 +382,7 @@ async function startServer() {
     const status=String(req.body?.status||'');
     if(!['active','paused','cancelled'].includes(status)) return res.status(400).json({error:'status must be active, paused, or cancelled'});
     try { res.json(await updateWorkflowScheduleStatus(pool,orgId,req.params.scheduleId,status as 'active'|'paused'|'cancelled')); }
-    catch(err:any){ res.status(404).json({error:err.message||'Failed to update workflow schedule'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to update workflow schedule')}); }
   });
 
   app.post('/api/workflows/:id/schedules/:scheduleId/run-now', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -368,12 +391,13 @@ async function startServer() {
     try {
       const result=await runWorkflowScheduleNow(pool,orgId,req.params.scheduleId);
       res.status(202).json(result);
-    } catch(err:any){ res.status(400).json({error:err.message||'Failed to queue workflow'}); }
+    } catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to queue workflow')}); }
   });
 
   app.get('/api/workflows/:id/schedules', async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow schedules'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     const result=await pool.query('SELECT * FROM workflow_schedules WHERE workflow_id=$1 AND organization_id=$2 ORDER BY created_at DESC',[req.params.id,orgId]);
     res.json(result.rows);
   });
@@ -394,7 +418,7 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow retry'});
     try { res.status(202).json(await retryWorkflowRun(pool,orgId,req.params.id)); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to retry workflow'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to retry workflow')}); }
   });
 
   app.get('/api/workflow-runs/:id/steps', async (req, res) => {
@@ -1007,7 +1031,8 @@ async function startServer() {
   app.get('/api/audit/logs', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log API was removed; use /api/audit.' });
     try {
-      res.json(inMemoryStore.auditLogs);
+      const auditOrgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      res.json(inMemoryStore.auditLogs.filter((entry: any) => entry.organization_id === auditOrgId));
     } catch (err: any) {
       console.error('Failed to get audit logs:', err);
       res.status(500).json({ error: 'Failed to get audit logs' });
@@ -1096,6 +1121,8 @@ async function startServer() {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const limit = Math.max(1, Number(req.query.limit) || 50);
+      const ownedEndpoint = await getPgPool()?.query('SELECT 1 FROM webhook_endpoints WHERE organization_id = $1 AND id = $2', [organizationId, req.params.id]);
+      if (!ownedEndpoint?.rowCount) return res.status(404).json({ error: 'Webhook endpoint not found' });
       res.json(await externalWebhookService.listDeliveries(organizationId, req.params.id, limit));
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to list webhook deliveries' });
@@ -2034,7 +2061,7 @@ async function startServer() {
         return res.status(400).json({ error: 'leadIds array is required' });
       }
 
-      const leads = inMemoryStore.leads.filter((l) => leadIds.includes(l.id));
+      const leads = inMemoryStore.leads.filter((l) => leadIds.includes(l.id) && l.organization_id === orgId);
 
       const enriched = leads.map((l, idx) => {
         // Update lead stage in memory store to enriched
@@ -2278,7 +2305,7 @@ async function startServer() {
   };
 
   // Background timer interval: check every 30 seconds for due schedules & scheduled campaign execution
-  setInterval(() => {
+  const refreshTimer = backgroundTimers ? setInterval(() => {
     try {
       const now = new Date().getTime();
       const schedules = inMemoryStore.propertyRefreshSchedules || [];
@@ -2301,7 +2328,8 @@ async function startServer() {
     } catch (schedTickErr) {
       console.error('[Scheduler] Periodic tick check error:', schedTickErr);
     }
-  }, 30000);
+  }, 30000) : undefined;
+  refreshTimer?.unref();
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
@@ -2555,7 +2583,7 @@ async function startServer() {
             assigned_agent = COALESCE($4, assigned_agent),
             dnc_compliant = COALESCE($5, dnc_compliant),
             updated_at = NOW()
-          WHERE id = $6`,
+          WHERE id = $6 AND organization_id = $7`,
           [
             updates.stage || null,
             updates.lead_score || null,
@@ -2563,6 +2591,7 @@ async function startServer() {
             updates.assigned_agent || null,
             updates.dnc_compliant !== undefined ? updates.dnc_compliant : null,
             id,
+            orgId,
           ]
         );
       } catch (pgErr) {
@@ -2934,6 +2963,15 @@ async function startServer() {
   });
 
   // Dialer & Campaign Lifecycle APIs
+  // Responds 404 and returns false unless the row belongs to the caller's organization (see tenantGuards).
+  const ensureOwned = async (res: express.Response, table: OwnedTable, id: unknown, orgId: string): Promise<boolean> => {
+    const pool = getPgPool();
+    if (pool && await isOwned(pool, table, id, orgId)) return true;
+    res.status(404).json({ error: 'Not found' });
+    return false;
+  };
+  const ensureOwnedCampaign = (req: express.Request, res: express.Response, orgId: string) => ensureOwned(res, 'campaign', req.params.id, orgId);
+
   app.get('/api/campaigns', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -3016,7 +3054,7 @@ async function startServer() {
       const updated = await CampaignManager.scheduleCampaign(orgId, req.params.id, scheduledAt, timezone, scheduledBy);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3026,7 +3064,7 @@ async function startServer() {
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3036,7 +3074,7 @@ async function startServer() {
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3046,7 +3084,7 @@ async function startServer() {
       await CampaignManager.pauseCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'paused', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3056,7 +3094,7 @@ async function startServer() {
       await CampaignManager.stopCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'completed', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3065,6 +3103,8 @@ async function startServer() {
     const pool = getPgPool();
     if (pool) {
       try {
+        const ownedCampaign = await pool.query('SELECT 1 FROM campaign WHERE id = $1 AND organization_id = $2', [req.params.id, orgId]);
+        if (!ownedCampaign.rowCount) return res.status(404).json({ error: 'Not found' });
         const result = await pool.query(
           `SELECT id, organization_id, campaign_id, lead_id, contact_name, phone_number, property_address, dial_status, attempts, last_dialed_at, priority, created_at
            FROM campaign_contact WHERE campaign_id = $1 AND organization_id = $2 ORDER BY priority DESC, created_at ASC`,
@@ -3085,13 +3125,14 @@ async function startServer() {
       const result = await CampaignManager.addContacts(orgId, req.params.id, contacts);
       res.status(201).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
   app.post('/api/campaigns/:id/dial-next', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!(await ensureOwnedCampaign(req, res, orgId))) return;
       const result = await CampaignManager.dialNextContact({
         organizationId: orgId,
         campaignId: req.params.id,
@@ -3101,7 +3142,7 @@ async function startServer() {
       });
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3118,17 +3159,18 @@ async function startServer() {
       const result = await startDialingEngine({ organizationId: orgId, campaignId: req.params.id, sessionId: req.body.session_id, concurrency, callStrategyBrief: req.body.call_strategy_brief });
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
   app.post('/api/campaigns/:id/shuffle', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!(await ensureOwnedCampaign(req, res, orgId))) return;
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3192,6 +3234,7 @@ async function startServer() {
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Production call events require PostgreSQL', code: 'CALL_EVENT_DATABASE_UNAVAILABLE' });
     try {
+      await assertOwned(pool, 'call', req.params.id, orgId);
       const result = await pool.query(
         `SELECT id, organization_id, call_id, event_type, payload, occurred_at
          FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
@@ -3199,6 +3242,7 @@ async function startServer() {
       );
       return res.json(result.rows);
     } catch (err: any) {
+      if (httpStatusForError(err) === 404) return res.status(404).json({ error: 'Not found' });
       return res.status(503).json({ error: 'Production call events are temporarily unavailable', code: 'CALL_EVENT_DATABASE_ERROR' });
     }
   });
@@ -3293,7 +3337,8 @@ async function startServer() {
   });
 
   // Telephony Webhook Ingestion & Idempotency API (RingCentral)
-  app.post('/api/telephony/webhook/:provider', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  // Authenticated ONLY by the provider's validation token / signature below (no session or role).
+  app.post('/api/telephony/webhook/:provider', async (req, res) => {
     if (req.params.provider !== 'ringcentral') return res.status(404).json({ error: 'Unsupported telephony provider' });
 
     // RingCentral sends a validation request when a subscription is created. It has no
@@ -3928,7 +3973,7 @@ ${transcript}`;
   // 2. Get single template
   app.get('/api/outreach-templates/:id', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
-    const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id);
+    const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
     if (!tpl) return res.status(404).json({ error: 'Outreach template not found' });
     res.json(tpl);
   });
@@ -4006,7 +4051,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4063,7 +4108,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4096,7 +4141,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const existing = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId);
+      const existing = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (!existing) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4144,7 +4189,7 @@ ${transcript}`;
       let bodyText = rawTemplate?.body || '';
 
       if (templateId) {
-        const found = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId);
+        const found = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
         if (found) {
           channel = found.channel;
           subjectText = found.subject || '';
@@ -4154,13 +4199,13 @@ ${transcript}`;
 
       // Build context dictionary
       let matchedProp = propertyId
-        ? inMemoryStore.properties.find((p) => p.id === propertyId)
+        ? inMemoryStore.properties.find((p) => p.id === propertyId && p.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id))
         : null;
       let matchedOwner = matchedProp
-        ? inMemoryStore.propertyOwners.find((o) => o.id === matchedProp?.owner_id)
+        ? inMemoryStore.propertyOwners.find((o) => o.id === matchedProp?.owner_id && o.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id))
         : null;
       let matchedLead = matchedProp
-        ? inMemoryStore.leads.find((l) => l.primary_property_id === matchedProp?.id || l.owner_id === matchedProp?.owner_id)
+        ? inMemoryStore.leads.find((l) => l.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id) && (l.primary_property_id === matchedProp?.id || l.owner_id === matchedProp?.owner_id))
         : null;
 
       // Merge with custom overrides or defaults
@@ -4235,7 +4280,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4437,7 +4482,9 @@ ${transcript}`;
   });
 
   // --- Vite Middleware / Static Serving ---
-  if (process.env.NODE_ENV !== 'production') {
+  if (!serveFrontend) {
+    // API-only application (tests, serverless API handler)
+  } else if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -4461,11 +4508,16 @@ ${transcript}`;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
       if (pool) await enforceUsageLimit(pool, orgId, 'calls_month', Math.max(1, Array.isArray(req.body?.leads) ? req.body.leads.length : 1));
-      const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
+      const { campaignId, leads, dialRatioMultiplier } = req.body;
 
       if (!campaignId || !leads || !Array.isArray(leads)) {
         return res.status(400).json({ error: 'campaignId and leads array are required' });
       }
+      // The campaign must belong to the caller's organization. A caller-supplied from-number is never honored:
+      // the outbound caller id is a server-side/organization setting, not request input.
+      if (!pool) return res.status(503).json({ error: 'Dialing requires PostgreSQL' });
+      const ownedCampaign = await pool.query('SELECT 1 FROM campaign WHERE id = $1 AND organization_id = $2', [campaignId, orgId]);
+      if (!ownedCampaign.rowCount) return res.status(404).json({ error: 'Not found' });
 
       // Import the services from /src/services/ as they implement batch dialing
       const { SubAgentPool } = await import('./src/services/subAgents');
@@ -4487,7 +4539,7 @@ ${transcript}`;
 
       await manager.executeDialingBatch(
         campaignId,
-        fromNumber || process.env.RINGCENTRAL_FROM_NUMBER!,
+        process.env.RINGCENTRAL_FROM_NUMBER!,
         leads,
         dialRatioMultiplier
       );
@@ -4499,9 +4551,14 @@ ${transcript}`;
     }
   });
 
+  return app;
+}
+
+/** Builds the app and binds the HTTP port. Invoked by server-bootstrap.ts, never on import. */
+export async function startServer() {
+  const PORT = Number(process.env.PORT || 8080);
+  const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
   });
 }
-
-startServer();
