@@ -83,6 +83,7 @@ export async function createCheckoutSession(pool: Pool, organizationId: string, 
     cancel_url: `${base}/settings?billing=cancelled`,
     'subscription_data[metadata][organization_id]': organizationId,
     'subscription_data[metadata][plan]': plan,
+    'subscription_data[trial_period_days]': String(PLAN_CATALOG[plan].trialDays),
     'metadata[organization_id]': organizationId,
     'metadata[plan]': plan,
   });
@@ -118,6 +119,31 @@ export function verifyStripeWebhook(rawBody: Buffer, signatureHeader: string, se
   });
 }
 
+export async function listBillingInvoices(pool: Pool, organizationId: string, limit = 50) {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+  const result = await pool.query(
+    `SELECT id,stripe_invoice_id,status,currency,amount_due,amount_paid,amount_remaining,
+            hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,created_at
+       FROM billing_invoices WHERE organization_id=$1 ORDER BY created_at DESC LIMIT $2`,
+    [organizationId, safeLimit],
+  );
+  return result.rows;
+}
+
+async function upsertBillingInvoice(pool: Pool, organizationId: string, invoice: any) {
+  const periodStart = invoice.period_start ? new Date(Number(invoice.period_start) * 1000).toISOString() : null;
+  const periodEnd = invoice.period_end ? new Date(Number(invoice.period_end) * 1000).toISOString() : null;
+  const dueDate = invoice.due_date ? new Date(Number(invoice.due_date) * 1000).toISOString() : null;
+  const paidAt = invoice.status_transitions?.paid_at ? new Date(Number(invoice.status_transitions.paid_at) * 1000).toISOString() : null;
+  await pool.query(
+    `INSERT INTO billing_invoices(id,organization_id,stripe_invoice_id,stripe_customer_id,stripe_subscription_id,status,collection_method,currency,amount_due,amount_paid,amount_remaining,hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,metadata)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
+     ON CONFLICT(stripe_invoice_id) DO UPDATE SET status=EXCLUDED.status,collection_method=EXCLUDED.collection_method,currency=EXCLUDED.currency,amount_due=EXCLUDED.amount_due,amount_paid=EXCLUDED.amount_paid,amount_remaining=EXCLUDED.amount_remaining,hosted_invoice_url=EXCLUDED.hosted_invoice_url,invoice_pdf=EXCLUDED.invoice_pdf,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,due_date=EXCLUDED.due_date,paid_at=EXCLUDED.paid_at,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP`,
+    [`inv_\${invoice.id}`, organizationId, invoice.id, invoice.customer || null, invoice.subscription || null, invoice.status || null, invoice.collection_method || null, invoice.currency || null,
+     Number.isFinite(Number(invoice.amount_due)) ? Number(invoice.amount_due) : null, Number.isFinite(Number(invoice.amount_paid)) ? Number(invoice.amount_paid) : null, Number.isFinite(Number(invoice.amount_remaining)) ? Number(invoice.amount_remaining) : null,
+     invoice.hosted_invoice_url || null, invoice.invoice_pdf || null, periodStart, periodEnd, dueDate, paidAt, JSON.stringify(invoice.metadata || {})],
+  );
+}
 export async function handleStripeEvent(pool: Pool, event: any) {
   const object = event?.data?.object || {};
   const metadata = object.metadata || {};
@@ -125,6 +151,19 @@ export async function handleStripeEvent(pool: Pool, event: any) {
   if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
 
   const subscription = event.type.startsWith('customer.subscription.') ? object : null;
+
+  if (event.type.startsWith('invoice.')) {
+    let orgId = organizationId;
+    if (!orgId && object.customer) {
+      const customerResult = await pool.query('SELECT organization_id FROM organization_billing WHERE billing_customer_id=$1 LIMIT 1', [object.customer]);
+      orgId = customerResult.rows[0]?.organization_id;
+    }
+    if (orgId && object.id) {
+      await upsertBillingInvoice(pool, orgId, object);
+      return { updated: true, organizationId: orgId, invoiceId: object.id };
+    }
+    return { ignored: true, reason: 'invoice missing organization mapping' };
+  }
   if (subscription) {
     const plan = metadata.plan || subscription.items?.data?.[0]?.price?.metadata?.plan || 'free';
     const status = subscription.status || 'active';
