@@ -180,8 +180,13 @@ async function ensureSchema(pool: Pool): Promise<void> {
       source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
       observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       expires_at TIMESTAMPTZ,
-      UNIQUE(organization_id, owner_id, property_id, signal_type)
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
+      ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
+      WHERE property_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
+      ON owner_lead_signals(organization_id, owner_id, signal_type)
+      WHERE property_id IS NULL;
     CREATE INDEX IF NOT EXISTS idx_owner_lead_signals_org_owner
       ON owner_lead_signals(organization_id, owner_id, score DESC);
 
