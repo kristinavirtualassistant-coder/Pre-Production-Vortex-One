@@ -578,22 +578,32 @@ async function syncGmail(pool: Pool, organizationId: string, userId: string) {
   const row = await connection(pool,organizationId,userId,'google-workspace');
   const token = await accessToken(pool,row);
   const after = Math.floor((Date.now()-7*24*3600*1000)/1000);
-  const list = await requestJson('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q=after:' + after,{headers:{Authorization:'Bearer ' + token}});
+  const maxPages = Math.min(Math.max(Number(process.env.EMAIL_SYNC_MAX_PAGES || 5),1),20);
+  let pageToken = '';
   let imported = 0;
-  for (const item of list.messages || []) {
-    const message = await requestJson('https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(item.id) + '?format=full',{headers:{Authorization:'Bearer ' + token}});
-    const headers = message.payload?.headers || [];
-    const fromRaw = header(headers,'From');
-    const from = (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).trim().toLowerCase();
-    if (!EMAIL_RE.test(from)) continue;
-    const subject = header(headers,'Subject');
-    const body = gmailBody(message.payload);
-    const bounce = /mailer-daemon|postmaster|delivery status notification|undeliverable/i.test(fromRaw + ' ' + subject);
-    const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
-    const t = await thread(pool,{organizationId,userId,channel:'email',provider:'gmail',contactKey:from,externalThreadId:message.threadId,subject,...links});
-    const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'gmail',direction:'inbound',externalMessageId:item.id,fromAddress:from,toAddress:header(headers,'To'),subject,body:body.replace(/<[^>]+>/g,' '),htmlBody:body,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{gmail_thread_id:message.threadId,message_id:header(headers,'Message-ID'),in_reply_to:header(headers,'In-Reply-To'),labels:message.labelIds || []}});
-    if (bounce) await suppressBounceRecipient(pool, organizationId, body, subject, from);
-    if (recorded) imported += 1;
+  for (let page = 0; page < maxPages; page += 1) {
+    const query = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+    query.searchParams.set('maxResults','25');
+    query.searchParams.set('q','after:' + after);
+    if (pageToken) query.searchParams.set('pageToken',pageToken);
+    const list = await requestJson(query.toString(),{headers:{Authorization:'Bearer ' + token}});
+    for (const item of list.messages || []) {
+      const message = await requestJson('https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(item.id) + '?format=full',{headers:{Authorization:'Bearer ' + token}});
+      const headers = message.payload?.headers || [];
+      const fromRaw = header(headers,'From');
+      const from = (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).trim().toLowerCase();
+      if (!EMAIL_RE.test(from)) continue;
+      const subject = header(headers,'Subject');
+      const body = gmailBody(message.payload);
+      const bounce = /mailer-daemon|postmaster|delivery status notification|undeliverable/i.test(fromRaw + ' ' + subject);
+      const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
+      const t = await thread(pool,{organizationId,userId,channel:'email',provider:'gmail',contactKey:from,externalThreadId:message.threadId,subject,...links});
+      const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'gmail',direction:'inbound',externalMessageId:item.id,fromAddress:from,toAddress:header(headers,'To'),subject,body:body.replace(/<[^>]+>/g,' '),htmlBody:body,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{gmail_thread_id:message.threadId,message_id:header(headers,'Message-ID'),in_reply_to:header(headers,'In-Reply-To'),labels:message.labelIds || []}});
+      if (bounce) await suppressBounceRecipient(pool, organizationId, body, subject, from);
+      if (recorded) imported += 1;
+    }
+    pageToken = String(list.nextPageToken || '');
+    if (!pageToken) break;
   }
   return imported;
 }
@@ -605,21 +615,24 @@ async function syncGmail(pool: Pool, organizationId: string, userId: string) {
 async function syncOutlook(pool: Pool, organizationId: string, userId: string) {
   const row = await connection(pool,organizationId,userId,'microsoft-365');
   const token = await accessToken(pool,row);
-  const data = await requestJson('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=25&$orderby=receivedDateTime%20desc&$select=id,conversationId,subject,from,toRecipients,body,receivedDateTime,internetMessageId,inReplyTo',{
-    headers:{Authorization:'Bearer ' + token,Prefer:'outlook.body-content-type="html"'},
-  });
+  const maxPages = Math.min(Math.max(Number(process.env.EMAIL_SYNC_MAX_PAGES || 5),1),20);
+  let nextUrl = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=25&$orderby=receivedDateTime%20desc&$select=id,conversationId,subject,from,toRecipients,body,receivedDateTime,internetMessageId,inReplyTo';
   let imported = 0;
-  for (const message of data.value || []) {
-    const from = String(message.from?.emailAddress?.address || '').toLowerCase();
-    if (!EMAIL_RE.test(from)) continue;
-    const subject = String(message.subject || '');
-    const html = String(message.body?.content || '');
-    const bounce = /mailer-daemon|postmaster|delivery status notification|undeliverable/i.test(from + ' ' + subject);
-    const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
-    const t = await thread(pool,{organizationId,userId,channel:'email',provider:'outlook',contactKey:from,externalThreadId:message.conversationId,subject,...links});
-    const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'outlook',direction:'inbound',externalMessageId:message.id,fromAddress:from,toAddress:String(message.toRecipients?.[0]?.emailAddress?.address || ''),subject,body:html.replace(/<[^>]+>/g,' '),htmlBody:html,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{conversation_id:message.conversationId,internet_message_id:message.internetMessageId,in_reply_to:message.inReplyTo,received_at:message.receivedDateTime}});
-    if (bounce) await suppressBounceRecipient(pool, organizationId, html.replace(/<[^>]+>/g,' '), subject, from);
-    if (recorded) imported += 1;
+  for (let page = 0; page < maxPages && nextUrl; page += 1) {
+    const data = await requestJson(nextUrl,{headers:{Authorization:'Bearer ' + token,Prefer:'outlook.body-content-type="html"'}});
+    for (const message of data.value || []) {
+      const from = String(message.from?.emailAddress?.address || '').toLowerCase();
+      if (!EMAIL_RE.test(from)) continue;
+      const subject = String(message.subject || '');
+      const html = String(message.body?.content || '');
+      const bounce = /mailer-daemon|postmaster|delivery status notification|undeliverable/i.test(from + ' ' + subject);
+      const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
+      const t = await thread(pool,{organizationId,userId,channel:'email',provider:'outlook',contactKey:from,externalThreadId:message.conversationId,subject,...links});
+      const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'outlook',direction:'inbound',externalMessageId:message.id,fromAddress:from,toAddress:String(message.toRecipients?.[0]?.emailAddress?.address || ''),subject,body:html.replace(/<[^>]+>/g,' '),htmlBody:html,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{conversation_id:message.conversationId,internet_message_id:message.internetMessageId,in_reply_to:message.inReplyTo,received_at:message.receivedDateTime}});
+      if (bounce) await suppressBounceRecipient(pool, organizationId, html.replace(/<[^>]+>/g,' '), subject, from);
+      if (recorded) imported += 1;
+    }
+    nextUrl = String(data['@odata.nextLink'] || '');
   }
   return imported;
 }
