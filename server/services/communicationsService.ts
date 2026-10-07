@@ -458,7 +458,7 @@ export async function sendSmsNow(pool: Pool, args: any) {
 /**
  * Compare a Twilio webhook signature with the HMAC-SHA1 of its URL and sorted parameters.
  */
-function validTwilio(reqUrl: string, params: Record<string,string>, signature: string, token: string): boolean {
+export function validTwilio(reqUrl: string, params: Record<string,string>, signature: string, token: string): boolean {
   const payload = reqUrl + Object.keys(params).sort().map((key)=>key + params[key]).join('');
   return createHmac('sha1',token).update(payload).digest('base64') === signature;
 }
