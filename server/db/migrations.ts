@@ -1349,6 +1349,17 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 33,
+    name: '033_owner_identity_match_candidate_reference',
+    sql: `
+      ALTER TABLE owner_identity_matches
+        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
+        REFERENCES property_owners(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
+        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
+    `,
+  },
+  {
     version: 34,
     name: '034_extend_workflow_delivery_idempotency',
     sql: `
@@ -1359,18 +1370,6 @@ export const MIGRATIONS: Migration[] = [
         CHECK (channel IN ('email','sms','phone','webhook'));
       CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
         ON workflow_communication_deliveries(organization_id, status, updated_at);
-    `,
-  },
-
-  {
-    version: 33,
-    name: '033_owner_identity_match_candidate_reference',
-    sql: `
-      ALTER TABLE owner_identity_matches
-        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
-        REFERENCES property_owners(id) ON DELETE SET NULL;
-      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
-        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
     `,
   },
   {
@@ -1389,7 +1388,8 @@ export const MIGRATIONS: Migration[] = [
       UPDATE properties SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography
       WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL;
     `,
-  },  {
+  },
+  {
     version: 36,
     name: '036_add_agent_run_controls',
     sql: `
