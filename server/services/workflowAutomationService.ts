@@ -4,6 +4,7 @@ import { requireOrganizationId } from './organizationContext';
 import { enqueueJob, enqueueJobWithClient, claimNextJob, completeJob, failJob, recoverStaleJobs, type JobRecord } from './jobService';
 import { sendEmail } from './emailService';
 import { executeSubAgent } from '../agents/subAgents';
+import { executeAgentRun } from '../agents/agentRuntime';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { SuppressionService } from '../dialer/suppressionService';
 import { validateWebhookTarget } from './safeWebhookService';
@@ -200,7 +201,7 @@ async function executeAction(pool:Pool,orgId:string,step:any,context:any,runId:s
         throw error;
       }
     }
-    case 'ai_agent': { const task:any={task_id:'wf_task_'+randomUUID(),assigned_agent:String(input.agent_id||step.assigned_agent||'sub_agent_1'),objective:String(input.objective||step.objective||''),input,status:'queued',dependencies:[],priority:'medium',created_at:new Date().toISOString(),organization_id:orgId}; const result=await executeSubAgent(task.assigned_agent as any,task,{organizationId:orgId}); return {ok:true,result}; }
+    case 'ai_agent': { const agentId=String(input.agent_id||step.assigned_agent||'sub_agent_1'); const objective=String(input.objective||step.objective||''); if(!objective) throw new Error('AI agent action requires objective'); const result=await executeAgentRun({organizationId:orgId,agentId,objective,context:{workflow_run_id:runId,workflow_step_id:stepId,workflow_input:input,workflow_context:context},idempotencyKey:'workflow-agent:'+runId+':'+stepId}); return {ok:result.status!=='failed',agentRunId:result.runId,status:result.status,finalText:result.finalText,pendingApprovalId:result.pendingApprovalId,error:result.error,provider:result.provider,model:result.model}; }
     default: throw new Error('Unsupported workflow action: '+action);
   }
 }
