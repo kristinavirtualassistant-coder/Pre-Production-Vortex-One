@@ -23,10 +23,7 @@ export function createRateLimiter(options: RateLimitOptions) {
     const now = Date.now();
     const tenantId = (req as Request & { dbUser?: { organization_id?: string } }).dbUser?.organization_id;
     const clientKey = req.ip || req.socket.remoteAddress || 'unknown';
-    // Scope authenticated buckets to the tenant so one customer cannot exhaust another customer's quota.
-    const key = tenantId
-      ? `${keyPrefix}:org:${tenantId}:ip:${clientKey}`
-      : `${keyPrefix}:ip:${clientKey}`;
+    const key = tenantId ? `${keyPrefix}:org:${tenantId}:ip:${clientKey}` : `${keyPrefix}:ip:${clientKey}`;
     const pool = getPgPool();
 
     if (pool) {
