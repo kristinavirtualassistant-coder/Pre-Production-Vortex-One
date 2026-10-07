@@ -1287,6 +1287,10 @@ export const MIGRATIONS: Migration[] = [
         ON billing_invoices(organization_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
         ON billing_invoices(organization_id, status, created_at DESC);
+      UPDATE organization_billing
+         SET limits = limits || '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb,
+             updated_at=CURRENT_TIMESTAMP
+       WHERE plan='free';
     `,
   },
 
