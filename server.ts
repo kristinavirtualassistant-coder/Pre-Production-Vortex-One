@@ -39,7 +39,7 @@ import communicationsRouter from './server/services/communicationsRouter';
 import billingRouter from './server/routes/billing';
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow, retryWorkflowRun } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
-import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
+import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun, cancelAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
 import { createCheckoutSession, createPortalSession, verifyStripeWebhook, handleStripeEvent, enforceUsageLimit } from './server/services/billingService';
 
@@ -4376,6 +4376,17 @@ ${transcript}`;
       res.json(run);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Failed to load agent run' });
+    }
+  });
+
+  app.post('/api/ai-agent-runs/:runId/cancel', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+    try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const result = await cancelAgentRun(orgId, req.params.runId, (req as AuthRequest).dbUser?.id);
+      if (!result) return res.status(404).json({ error: 'Agent run not found' });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to cancel agent run' });
     }
   });
 
