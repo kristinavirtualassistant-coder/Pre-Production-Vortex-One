@@ -17,6 +17,10 @@ export function getTenantContext(): TenantDbContext | undefined {
   return storage.getStore();
 }
 
+export function enterTenantContext(context: TenantDbContext): void {
+  storage.enterWith(context);
+}
+
 export async function beginTenantContext(client: PoolClient, organizationId: string): Promise<TenantDbContext> {
   await client.query('BEGIN');
   await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', organizationId]);
