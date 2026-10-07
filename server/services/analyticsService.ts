@@ -22,6 +22,11 @@ function n(value: unknown): number {
   return Number(value || 0);
 }
 
+/**
+ * Persist an organization's cost event using the supplied PostgreSQL pool.
+ * Quantity defaults to one and unit cost to zero; an omitted total is their product.
+ * Resolves after insertion and rejects on an invalid organization or database error.
+ */
 export async function recordCostEvent(pool: Pool, input: {
   organizationId: string;
   id: string;
@@ -54,7 +59,13 @@ export async function recordCostEvent(pool: Pool, input: {
   );
 }
 
-
+/**
+ * Estimate USD cost using the configured model rates per million tokens.
+ * Omitted input and output token counts default to zero.
+ *
+ * @param input - Model identifier and separate input/output token counts.
+ * @returns Estimated cost, or null when no rate is found for the model.
+ */
 export function estimateAiCostUsd(input: {
   model?: string;
   inputTokens?: number;
@@ -72,6 +83,12 @@ export function estimateAiCostUsd(input: {
     + ((input.outputTokens ?? 0) / 1_000_000) * rate.output;
 }
 
+/**
+ * Persist an organization's AI usage using the supplied PostgreSQL pool.
+ * Missing token counts default to zero; an omitted total is their sum.
+ * Estimated cost is supplied by the caller and defaults to zero.
+ * Resolves after insertion and rejects on an invalid organization or database error.
+ */
 export async function recordAiUsage(pool: Pool, input: {
   organizationId: string;
   id: string;

@@ -62,6 +62,12 @@ function assert(condition: boolean, testName: string, message?: string) {
   }
 }
 
+/**
+ * Initialize database and in-memory fixtures, then run the backend assertions.
+ * Records assertion results in the suite counters and logs each outcome.
+ * Live government GIS queries run unless VORTEX_ONE_SKIP_LIVE_GIS is '1'.
+ * Rejects on setup errors or unhandled failures during test execution.
+ */
 async function runAllTests() {
   console.log('\n========================================');
   console.log('  Vortex One - Automated Test Suite');
