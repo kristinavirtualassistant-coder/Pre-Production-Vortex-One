@@ -100,8 +100,8 @@ function extractOpenAIText(body: any): string {
 async function callOpenAI(request: AgentProviderRequest): Promise<AgentProviderResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY is not configured');
-  const input = (request.previousResponseId ? request.messages.filter((m) => m.role === 'tool') : request.messages).map((m) => {
-    if (m.role === 'tool') return { type: 'function_call_output', call_id: m.toolCallId, output: m.content };
+  const input = request.messages.map((m) => {
+    if (m.role === 'tool') return { role: 'user', content: `Tool ${m.name || 'result'} result:\n${m.content}` };
     return { role: m.role, content: m.content };
   });
   const response = await fetch(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/responses', {
