@@ -1347,7 +1347,7 @@ export const MIGRATIONS: Migration[] = [
       END $$;
       CREATE INDEX IF NOT EXISTS idx_agent_configs_org_id ON agent_configs(organization_id, id);
     `,
-  },,
+  },
   {
     version: 30,
     name: '030_extend_workflow_delivery_idempotency',
