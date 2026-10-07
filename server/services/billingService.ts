@@ -171,10 +171,10 @@ export async function handleStripeEvent(pool: Pool, event: any) {
       `UPDATE organization_billing
        SET plan=$1,subscription_status=$2,billing_customer_id=$3,billing_subscription_id=$4,
            trial_ends_at=CASE WHEN $5 > 0 THEN to_timestamp($5) ELSE NULL END,current_period_start=to_timestamp($6),current_period_end=to_timestamp($7),
-           cancel_at_period_end=$7,limits=$8::jsonb,updated_at=CURRENT_TIMESTAMP
-       WHERE organization_id=$9`,
+           cancel_at_period_end=$8,limits=$9::jsonb,updated_at=CURRENT_TIMESTAMP
+       WHERE organization_id=$10`,
       [plan,status,subscription.customer || null,subscription.id || null,
-       Number(subscription.current_period_start || 0),Number(subscription.current_period_end || 0),
+       Number(subscription.trial_end || 0),Number(subscription.current_period_start || 0),Number(subscription.current_period_end || 0),
        Boolean(subscription.cancel_at_period_end),JSON.stringify(planLimits(plan)),organizationId],
     );
     return { updated: true, organizationId, plan, status };
