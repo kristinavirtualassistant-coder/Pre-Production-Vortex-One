@@ -239,21 +239,9 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
 
     // Relationship evidence is accepted only from explicit normalized source fields.
     // Shared addresses, similar names, or proximity are not sufficient to claim a relationship.
-    const relationships = [
-      ...jsonArray(row.relationships),
-      ...jsonArray(row.related_entities),
-      ...jsonArray(row.related_owners),
-    ].filter((relationship: any) =>
-      relationship &&
-      (relationship.related_name || relationship.name) &&
-      (relationship.relationship_type || relationship.type)
-    ).map((relationship: any) => ({
-      related_entity_type: relationship.related_entity_type || relationship.entity_type || 'entity',
-      related_entity_id: relationship.related_entity_id || relationship.id || null,
-      related_name: String(relationship.related_name || relationship.name),
-      relationship_type: String(relationship.relationship_type || relationship.type),
-      confidence_score: Number(relationship.confidence_score ?? relationship.confidence ?? 0.75),
-    }));
+    // Public-record providers only expose relationships when an upstream adapter explicitly
+    // supplies them. Canonical property_owners rows do not contain relationship JSON.
+    const relationships: Array<Record<string, unknown>> = [];
 
     const signals: Array<Record<string, unknown>> = [];
     for (const p of properties.rows) {
