@@ -1378,3 +1378,4 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
 ];
+
