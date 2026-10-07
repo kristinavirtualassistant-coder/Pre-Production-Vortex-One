@@ -6,10 +6,23 @@ import { requireOrganizationId } from './organizationContext';
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`;
 
 function normalizeOwnerName(value: string): string {
-  return value.trim().replace(/\\s+/g, ' ').toLowerCase();
+  return value
+    .normalize('NFKD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .trim()
+    .replace(/\\s+/g, ' ')
+    .toLowerCase();
 }
 
-function similarity(a: string, b: string): number {
+function normalizeAddress(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function tokenSimilarity(a: string, b: string): number {
   const left = normalizeOwnerName(a);
   const right = normalizeOwnerName(b);
   if (!left || !right) return 0;
@@ -19,6 +32,41 @@ function similarity(a: string, b: string): number {
   const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
   const union = new Set([...leftTokens, ...rightTokens]).size;
   return union ? intersection / union : 0;
+}
+
+function identityScore(source: {
+  name: string;
+  mailingAddress?: unknown;
+  mailingCity?: unknown;
+  mailingState?: unknown;
+  mailingZip?: unknown;
+}, candidate: {
+  name: string;
+  mailing_address?: unknown;
+  mailing_city?: unknown;
+  mailing_state?: unknown;
+  mailing_zip?: unknown;
+}): { score: number; evidence: Record<string, unknown> } {
+  const nameScore = tokenSimilarity(source.name, candidate.name);
+  const sourceAddress = normalizeAddress(source.mailingAddress);
+  const candidateAddress = normalizeAddress(candidate.mailing_address);
+  const addressExact = Boolean(sourceAddress && candidateAddress && sourceAddress === candidateAddress);
+  const cityExact = normalizeOwnerName(String(source.mailingCity ?? '')) === normalizeOwnerName(String(candidate.mailing_city ?? ''));
+  const stateExact = normalizeOwnerName(String(source.mailingState ?? '')) === normalizeOwnerName(String(candidate.mailing_state ?? ''));
+  const zipExact = String(source.mailingZip ?? '').trim() !== '' &&
+    String(source.mailingZip ?? '').trim() === String(candidate.mailing_zip ?? '').trim();
+
+  let score = nameScore * 0.7;
+  if (addressExact) score += 0.2;
+  else if (cityExact && stateExact) score += 0.06;
+  if (stateExact) score += 0.04;
+  if (zipExact) score += 0.06;
+  score = Math.min(1, score);
+
+  return {
+    score,
+    evidence: { nameScore, addressExact, cityExact, stateExact, zipExact },
+  };
 }
 
 export interface PublicRecordIngestionSummary {
@@ -143,20 +191,32 @@ export class PublicRecordsIngestionService {
           LIMIT 250`,
         [orgId],
       );
-      const best = candidateOwners.rows
-        .map((row) => ({ ...row, score: similarity(ownerName, String(row.name)) }))
-        .filter((row) => row.score >= 0.75)
-        .sort((a, b) => b.score - a.score)[0];
+      const sourceIdentity = {
+        name: ownerName,
+        mailingAddress: (result.owner as any)?.mailing_address ?? (result.rawAttributes as any)?.mailing_address,
+        mailingCity: (result.owner as any)?.mailing_city ?? (result.rawAttributes as any)?.mailing_city,
+        mailingState: (result.owner as any)?.mailing_state ?? (result.rawAttributes as any)?.mailing_state,
+        mailingZip: (result.owner as any)?.mailing_zip ?? (result.rawAttributes as any)?.mailing_zip,
+      };
+      const rankedCandidates = candidateOwners.rows
+        .map((row) => ({ ...row, ...identityScore(sourceIdentity, row) }))
+        .filter((row) => row.id !== ownerId && row.score >= 0.82)
+        .sort((a, b) => b.score - a.score);
+      const best = rankedCandidates[0];
+      const runnerUp = rankedCandidates[1];
 
-      if (best && best.id !== ownerId) {
+      // Only persist a candidate when there is a meaningful margin over the next match.
+      // This prevents common names from becoming misleading identity links.
+      if (best && (!runnerUp || best.score - runnerUp.score >= 0.05)) {
         await pool.query(
           `INSERT INTO owner_identity_matches
-            (id, organization_id, owner_id, candidate_name, match_score, match_status, evidence, source_record_id)
-           VALUES ($1,$2,$3,$4,$5,'candidate',$6::jsonb,$7)`,
+            (id, organization_id, owner_id, candidate_owner_id, candidate_name, match_score, match_status, evidence, source_record_id)
+           VALUES ($1,$2,$3,$4,$5,$6,'candidate',$7::jsonb,$8)`,
           [
             id('match'),
             orgId,
             ownerId,
+            best.id,
             String(best.name),
             best.score,
             JSON.stringify({
@@ -164,6 +224,8 @@ export class PublicRecordsIngestionService {
               candidateOwnerId: best.id,
               provider: result.provenance.provider,
               recordIdentifier: result.provenance.recordIdentifier,
+              ...best.evidence,
+              runnerUpScore: runnerUp?.score ?? null,
             }),
             sourceId,
           ],
