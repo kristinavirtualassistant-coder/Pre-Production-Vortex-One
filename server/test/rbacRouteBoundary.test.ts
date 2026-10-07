@@ -46,6 +46,9 @@ const rbacExpectations: Array<[string, string]> = [
   ["app.post('/api/workflows/:id/schedules'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.patch('/api/workflows/:id/schedules/:scheduleId'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/workflows/:id/schedules/:scheduleId/run-now'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflow-runs/:id/retry'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.patch('/api/workflows/:id/schedules/:scheduleId'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/schedules/:scheduleId/run-now'", "requireRole(['admin', 'executive', 'manager'])"],
 ];
 
 for (const [route, middleware] of rbacExpectations) {
