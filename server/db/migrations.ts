@@ -1347,5 +1347,19 @@ export const MIGRATIONS: Migration[] = [
       END $$;
       CREATE INDEX IF NOT EXISTS idx_agent_configs_org_id ON agent_configs(organization_id, id);
     `,
+  },,
+  {
+    version: 30,
+    name: '030_extend_workflow_delivery_idempotency',
+    sql: `
+      ALTER TABLE workflow_communication_deliveries
+        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
+      ALTER TABLE workflow_communication_deliveries
+        ADD CONSTRAINT workflow_communication_deliveries_channel_check
+        CHECK (channel IN ('email','sms','phone','webhook'));
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
+        ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
   },
+
 ];
