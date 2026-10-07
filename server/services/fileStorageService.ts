@@ -78,6 +78,13 @@ export async function removeStoredObject(path:string){
 export function createFileId(){return `file_${randomUUID()}`;}
 
 
+export function getRingCentralRecordingFileId(recordingUrl:string): string {
+  const url=new URL(String(recordingUrl||'').trim());
+  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
+  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
+  return `file_callrec_${safeRecordingId}`;
+}
+
 export async function archiveRingCentralRecording(input:{organizationId:string;callId:string;recordingUrl:string;contactName?:string}){
   const organizationId=String(input.organizationId||'').trim();
   const callId=String(input.callId||'').trim();
@@ -106,7 +113,7 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
 
   const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
   const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
-  const fileId=`file_callrec_${safeRecordingId}`;
+  const fileId=getRingCentralRecordingFileId(recordingUrl);
   const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId};
 
   await pool.query(
