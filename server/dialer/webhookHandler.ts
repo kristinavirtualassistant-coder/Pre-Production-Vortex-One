@@ -12,7 +12,7 @@ import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
-import { archiveRingCentralRecording, attachCallTranscript } from '../services/fileStorageService';
+import { archiveRingCentralRecording, attachCallTranscript, getRingCentralRecordingFileId } from '../services/fileStorageService';
 
 
 export interface WebhookProcessResult {
@@ -181,7 +181,7 @@ export class WebhookHandler {
                 [
                   `fpj_${normalized.eventId}`,
                   organizationId,
-                  `call_${authoritativeCallId}`,
+                  getRingCentralRecordingFileId(normalized.recordingUrl),
                   String(archiveError?.message || archiveError),
                   JSON.stringify({ call_id: authoritativeCallId, recording_url: normalized.recordingUrl }),
                 ],
