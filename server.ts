@@ -47,7 +47,7 @@ import { httpStatusForError } from './server/errors';
 import { requirePermission } from './server/security/permissions';
 import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
 import { isDemoModeEnabled } from './server/security/demoMode';
-import { logError } from './server/security/logger';
+import { logError, safeErrorMessage } from './server/security/logger';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -190,7 +190,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(await runWorkflowScheduler());
     } catch (err: any) {
       console.error('Workflow scheduler failed:', err);
-      res.status(500).json({ error: err.message || 'Workflow scheduler failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Workflow scheduler failed') });
     }
   });
 
@@ -213,7 +213,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
           (SELECT COUNT(*) FROM jobs WHERE organization_id = $1 AND status = 'failed') AS failed_jobs`, [organizationId]);
       res.json({ organizationId, ...result.rows[0], database: getDatabaseStatus() });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to load operational metrics' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to load operational metrics') });
     }
   });
 
@@ -264,7 +264,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(result);
     } catch (err: any) {
       console.error('Orchestration error:', err);
-      res.status(500).json({ error: err.message || 'Orchestration failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Orchestration failed') });
     }
   });
 
@@ -722,7 +722,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('Workflow execution error:', err);
-      res.status(500).json({ error: err.message || 'Workflow execution failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Workflow execution failed') });
     }
   });
 
@@ -1016,7 +1016,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.end();
     } catch (err: any) {
       console.error('Workflow stream error:', err);
-      sendEvent('error', { error: err.message || 'Streaming execution failed' });
+      sendEvent('error', { error: safeErrorMessage(err, 'Streaming execution failed') });
       res.end();
     }
   });
@@ -1101,7 +1101,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       res.json(await externalWebhookService.listEndpoints(organizationId));
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to list webhook endpoints' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to list webhook endpoints') });
     }
   });
 
@@ -1133,7 +1133,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       if (!deleted) return res.status(404).json({ error: 'Webhook endpoint not found' });
       res.json({ success: true, deletedId: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete webhook endpoint' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete webhook endpoint') });
     }
   });
 
@@ -1156,7 +1156,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       if (!ownedEndpoint?.rowCount) return res.status(404).json({ error: 'Webhook endpoint not found' });
       res.json(await externalWebhookService.listDeliveries(organizationId, req.params.id, limit));
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to list webhook deliveries' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to list webhook deliveries') });
     }
   });
 
@@ -1233,7 +1233,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json({ success: true, ...result });
     } catch (err: any) {
       console.error('Database property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Property search failed') });
     }
   });
 
@@ -1264,7 +1264,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
       res.status(result.created ? 201 : 200).json({ success: true, ...result, propertyId: property.id, ownerId: property.owner_id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create canonical CRM lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create canonical CRM lead') });
     }
   });
 
@@ -1291,7 +1291,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(results);
     } catch (err: any) {
       console.error('Live property provider search error:', err);
-      res.status(500).json({ error: err.message || 'Live property search failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Live property search failed') });
     }
   });
 
@@ -1665,7 +1665,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('Bulk tag properties error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update property tags' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update property tags') });
     }
   });
 
@@ -1791,7 +1791,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(updatedProp);
     } catch (err: any) {
       console.error('Update property tags error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update property tags' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update property tags') });
     }
   });
 
@@ -1810,7 +1810,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       return res.json(result.rows);
     } catch (err: any) {
       console.error('Owner query error:', err);
-      return res.status(500).json({ error: err.message || 'Failed to load owners' });
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to load owners') });
     }
   });
 
@@ -1835,7 +1835,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(result);
     } catch (err: any) {
       console.error('Skip trace execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute 5-step skip trace' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute 5-step skip trace') });
     }
   });
 
@@ -1864,7 +1864,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(saveResult);
     } catch (err: any) {
       console.error('Save discovered contacts error:', err);
-      res.status(500).json({ error: err.message || 'Failed to save discovered contacts' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to save discovered contacts') });
     }
   });
 
@@ -2026,7 +2026,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(pipelineResult);
     } catch (err: any) {
       console.error('Automated pipeline execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to run automated property search & skip trace pipeline' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to run automated property search & skip trace pipeline') });
     }
   });
 
@@ -2044,7 +2044,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(batchResult);
     } catch (err: any) {
       console.error('Batch skip trace error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute batch skip trace' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute batch skip trace') });
     }
   });
 
@@ -2067,7 +2067,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(enriched);
     } catch (err: any) {
       console.error('Auto-enrich error:', err);
-      res.status(500).json({ error: err.message || 'Failed to auto-enrich contact info' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to auto-enrich contact info') });
     }
   });
 
@@ -2078,7 +2078,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const stats = SkipTraceService.getAutomationStats(orgId);
       res.json(stats);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to load skip trace telemetry stats' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to load skip trace telemetry stats') });
     }
   });
 
@@ -2135,7 +2135,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('Deep enrichment error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute deep enrichment workflow' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute deep enrichment workflow') });
     }
   });
 
@@ -2432,7 +2432,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.status(201).json(newSchedule);
     } catch (err: any) {
       console.error('Create schedule error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create schedule') });
     }
   });
 
@@ -2461,7 +2461,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       inMemoryStore.propertyRefreshSchedules[index] = updated;
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to update schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update schedule') });
     }
   });
 
@@ -2486,7 +2486,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       inMemoryStore.propertyRefreshSchedules[index] = existing;
       res.json(existing);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to toggle schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to toggle schedule') });
     }
   });
 
@@ -2499,7 +2499,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(result);
     } catch (err: any) {
       console.error('Manual schedule run error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute scheduled property refresh') });
     }
   });
 
@@ -2519,7 +2519,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.json({ success: true, message: 'Schedule deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete schedule') });
     }
   });
 
@@ -2631,7 +2631,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.json(updatedLead);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to update lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update lead') });
     }
   });
 
@@ -2721,7 +2721,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
         message: `Successfully updated ${updatedCount} leads.`,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Batch lead update failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Batch lead update failed') });
     }
   });
 
@@ -2828,7 +2828,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.status(201).json(newLead);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create lead') });
     }
   });
 
@@ -2848,7 +2848,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.json({ success: true, message: 'Lead deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete lead') });
     }
   });
 
@@ -2869,7 +2869,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.json({ success: true, deletedCount, message: `Deleted ${deletedCount} leads.` });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Batch delete failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Batch delete failed') });
     }
   });
 
@@ -2892,7 +2892,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.status(200).json(result);
     } catch (err: any) {
       console.error('Data import reconciliation error:', err);
-      res.status(500).json({ error: err.message || 'Reconciliation failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Reconciliation failed') });
     }
   });
 
@@ -2916,7 +2916,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json(report);
     } catch (err: any) {
       console.error('Referential integrity validation error:', err);
-      res.status(500).json({ error: err.message || 'Integrity validation failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Integrity validation failed') });
     }
   });
 
@@ -2989,7 +2989,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.json(audits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3068,7 +3068,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
       res.status(201).json({ ...camp, addedContacts });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3353,7 +3353,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       );
       res.status(201).json(record);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3363,7 +3363,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const success = await SuppressionService.removeSuppression(orgId, req.params.id);
       res.json({ success, id: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3457,7 +3457,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       res.json({ success: !!base64Audio, audio: base64Audio });
     } catch (err: any) {
       console.error('TTS error:', err.message);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3536,7 +3536,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     } finally {
       client.release();
     }
@@ -3556,7 +3556,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3574,7 +3574,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3590,7 +3590,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       const ended = await adapter.terminateCall(row.telephony_session_id || '', row.ringcentral_party_id || undefined, row.ringcentral_ringout_id || undefined);
       if (!ended) return res.status(409).json({ error: 'RingCentral cannot end this call in its current state; wait for session/party identifiers or provider completion.' });
       res.json({ success: true });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeErrorMessage(err, 'Request failed') }); }
   });
 
   app.post('/api/calls/:id/disposition', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -3645,7 +3645,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
 
       res.json({ suggestedTask: result.text });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3700,7 +3700,7 @@ ${transcript}`;
       res.json(parsed);
     } catch (err: any) {
       console.error('AI call analysis failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to analyze call' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to analyze call') });
     }
   });
 
@@ -3756,7 +3756,7 @@ ${transcript}`;
 
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3787,7 +3787,7 @@ ${transcript}`;
         createdAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create imported files folder' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create imported files folder') });
     }
   });
 
@@ -3826,7 +3826,7 @@ ${transcript}`;
         files: fileList,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to retrieve imported files' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to retrieve imported files') });
     }
   });
 
@@ -3869,7 +3869,7 @@ ${transcript}`;
       res.setHeader('Content-Type', targetMeta.fileName.endsWith('.csv') ? 'text/csv' : 'application/json');
       fs.createReadStream(filePath).pipe(res);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Download failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Download failed') });
     }
   });
 
@@ -3910,7 +3910,7 @@ ${transcript}`;
 
       res.json({ success: true, message: 'Imported file deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete file' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete file') });
     }
   });
 
@@ -4072,7 +4072,7 @@ ${transcript}`;
       res.status(201).json(newTemplate);
     } catch (err: any) {
       console.error('Create template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create template') });
     }
   });
 
@@ -4129,7 +4129,7 @@ ${transcript}`;
       res.json(updated);
     } catch (err: any) {
       console.error('Update template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update template') });
     }
   });
 
@@ -4162,7 +4162,7 @@ ${transcript}`;
 
       res.json({ success: true, deleted_id: deleted.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete template') });
     }
   });
 
@@ -4197,7 +4197,7 @@ ${transcript}`;
       inMemoryStore.outreachTemplates.unshift(cloned);
       res.status(201).json(cloned);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to duplicate template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to duplicate template') });
     }
   });
 
@@ -4301,7 +4301,7 @@ ${transcript}`;
       });
     } catch (err: any) {
       console.error('Render template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to render template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to render template') });
     }
   });
 
@@ -4343,7 +4343,7 @@ ${transcript}`;
 
       res.json(tpl);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -4578,7 +4578,7 @@ ${transcript}`;
       res.json({ success: true, message: 'Dialing batch initiated' });
     } catch (err: any) {
       console.error('Dial batch execution error:', err);
-      res.status(500).json({ error: err.message || 'Dial batch execution failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Dial batch execution failed') });
     }
   });
 

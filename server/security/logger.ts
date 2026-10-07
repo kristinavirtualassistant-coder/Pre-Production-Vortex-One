@@ -24,3 +24,12 @@ export function logError(context: string, error: unknown): void {
   const e = error as { name?: string; message?: string; code?: string };
   console.error(JSON.stringify({ level: 'error', context, name: e?.name, code: e?.code, message: redact(String(e?.message ?? error)) }));
 }
+
+/**
+ * Message safe to return to a client for an unexpected (5xx) failure: the detail is logged server-side
+ * (redacted) and the client receives only the generic fallback — no SQL, hostnames, paths or stack traces.
+ */
+export function safeErrorMessage(error: unknown, fallback: string): string {
+  logError(fallback, error);
+  return fallback;
+}

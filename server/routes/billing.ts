@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '../security/logger';
 import { requirePermission } from '../security/permissions';
 import { Router } from 'express';
 import type { AuthRequest } from '../middleware/auth';
@@ -42,7 +43,7 @@ router.get('/', requirePermission('billing:read'), async (req, res) => {
     if (!billing) return res.status(404).json({ error: 'Billing account not found' });
     res.json({ ...billing, plans: PLAN_CATALOG });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load billing' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load billing') });
   }
 });
 
@@ -52,7 +53,7 @@ router.get('/usage', requirePermission('billing:read'), async (req, res) => {
   try {
     res.json(await getUsageSummary(pool, organizationId(req as AuthRequest)));
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load billing usage' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load billing usage') });
   }
 });
 
@@ -63,7 +64,7 @@ router.get('/invoices', requirePermission('billing:read'), async (req, res) => {
     const limit = Number(req.query.limit || 50);
     res.json(await listBillingInvoices(pool, organizationId(req as AuthRequest), limit));
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load invoice history' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load invoice history') });
   }
 });
 
