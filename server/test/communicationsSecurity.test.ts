@@ -49,7 +49,7 @@ assert.equal(
   'target@example.com',
 );
 assert.equal(uniqueBouncePool.calls.length, 2);
-assert.equal(uniqueBouncePool.calls[1].params.slice(1), ['target@example.com', 'hard bounce', 'provider-bounce']);
+assert.deepEqual(uniqueBouncePool.calls[1].params.slice(1), ['target@example.com', 'hard bounce', 'provider-bounce']);
 
 const ambiguousBouncePool = fakePool([
   { to_address: 'one@example.com' },
