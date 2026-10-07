@@ -54,6 +54,24 @@ export async function recordCostEvent(pool: Pool, input: {
   );
 }
 
+
+export function estimateAiCostUsd(input: {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}): number | null {
+  const rates: Record<string, { input: number; output: number }> = {
+    'gemini-3.7-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.8-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
+  };
+  const rate = input.model ? rates[input.model] : undefined;
+  if (!rate) return null;
+  return ((input.inputTokens ?? 0) / 1_000_000) * rate.input
+    + ((input.outputTokens ?? 0) / 1_000_000) * rate.output;
+}
+
 export async function recordAiUsage(pool: Pool, input: {
   organizationId: string;
   id: string;
