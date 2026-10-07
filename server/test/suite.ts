@@ -38,6 +38,7 @@ import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
 import './rbacRouteBoundary.test';
+import './analyticsValueEventBoundary.test';
 import './manualDialService.test';
 import './realAgentRuntime.test';
 import './productionAgents.test';
