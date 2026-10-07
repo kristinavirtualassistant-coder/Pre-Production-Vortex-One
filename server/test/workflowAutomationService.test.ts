@@ -13,7 +13,7 @@ assert.equal(evaluateCondition({field:'lead.createdAt',operator:'before',value:'
 assert.equal(evaluateCondition({field:'lead.createdAt',operator:'on_or_after',value:'$now'}, {...context,lead:{...context.lead,createdAt:new Date(Date.now()+60_000).toISOString()}}),true);
 
 
-import { claimDueWorkflowSchedules } from '../services/workflowAutomationService';
+import { claimDueWorkflowSchedules, reconcileStaleCommunicationDeliveries } from '../services/workflowAutomationService';
 
 {
   const calls:string[]=[];
@@ -34,4 +34,24 @@ import { claimDueWorkflowSchedules } from '../services/workflowAutomationService
   await assert.rejects(() => claimDueWorkflowSchedules(pool), /simulated enqueue failure/);
   assert.equal(calls.at(-1),'ROLLBACK');
   assert.equal(calls.includes('COMMIT'),false);
+}
+
+
+{
+  const calls:string[]=[];
+  const pool:any={
+    query: async (sql:string) => {
+      calls.push(sql);
+      if(sql.startsWith('UPDATE workflow_communication_deliveries')) return {rows:[{
+        id:'wcd_test',workflow_run_id:'wfr_test',workflow_step_id:'step_1',
+        channel:'webhook',destination:'hook',idempotency_key:'wfr_test:step_1'
+      }]};
+      if(sql.startsWith('INSERT INTO workflow_execution_logs')) return {rows:[]};
+      throw new Error('unexpected reconciliation query');
+    }
+  };
+  const rows=await reconcileStaleCommunicationDeliveries(pool,'org_test',600);
+  assert.equal(rows.length,1);
+  assert.match(calls[0],/status='sending'/);
+  assert.match(calls[0],/status='manual_review'/);
 }
