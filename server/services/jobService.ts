@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { requireOrganizationId } from './organizationContext';
 
 export const JOB_TYPES = {
@@ -8,6 +8,14 @@ export const JOB_TYPES = {
 } as const;
 
 export interface JobRecord { id: string; organization_id: string; job_type: string; payload: Record<string, unknown>; status: string; attempts: number; max_attempts: number; }
+
+export async function enqueueJobWithClient(client: PoolClient, organizationId: string, jobType: string, payload: Record<string, unknown>, maxAttempts = 3, delaySeconds = 0): Promise<string> {
+  const orgId = requireOrganizationId(organizationId);
+  const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (!Number.isFinite(delaySeconds) || delaySeconds < 0) throw new Error('delaySeconds must be zero or greater');
+  await client.query(`INSERT INTO jobs (id, organization_id, job_type, payload, max_attempts, available_at) VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP + ($6 * INTERVAL '1 second'))`, [id, orgId, jobType, JSON.stringify(payload), maxAttempts, delaySeconds]);
+  return id;
+}
 
 export async function enqueueJob(pool: Pool, organizationId: string, jobType: string, payload: Record<string, unknown>, maxAttempts = 3, delaySeconds = 0): Promise<string> {
   const orgId = requireOrganizationId(organizationId);
