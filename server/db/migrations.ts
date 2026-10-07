@@ -1256,7 +1256,7 @@ export const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_agent_run_steps_org_run ON agent_run_steps(organization_id, run_id, step_no, created_at);
     `,
-  },,
+  },
   {
     version: 29,
     name: '029_enforce_request_scoped_tenant_rls',
