@@ -88,7 +88,7 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   const result = await pool.query(
-    `SELECT u.id,u.organization_id,u.email,u.name,u.role,u.password_hash,u.disabled_at,u.email_verified_at,u.mfa_enabled,
+    `SELECT u.id, u.organization_id, u.email, u.name, u.role, u.password_hash, u.disabled_at, u.email_verified_at, u.mfa_enabled,
             o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
      FROM users u JOIN organizations o ON o.id=u.organization_id
      WHERE lower(u.email)=$1 LIMIT 1`, [email]);
@@ -160,9 +160,10 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
 
     const passwordHash=await hashPassword(password);
     const created=await client.query(
-      `INSERT INTO users (id,organization_id,email,name,role,password_hash,password_changed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP) RETURNING id,organization_id,email,name,role`,
-      [`user_${randomUUID()}`,organizationId,email,name,assignedRole,passwordHash]);
+      `INSERT INTO users (id, organization_id, email, name, role, password_hash)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, organization_id, email, name, role`,
+      [`user_${randomUUID()}`, organizationId, email, name, assignedRole, passwordHash]);
+    await client.query('UPDATE users SET password_changed_at=CURRENT_TIMESTAMP WHERE id=$1', [created.rows[0].id]);
     await client.query('COMMIT');
 
     const user=created.rows[0];

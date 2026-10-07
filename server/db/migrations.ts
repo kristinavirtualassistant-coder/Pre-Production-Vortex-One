@@ -1074,8 +1074,6 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
-,
-
   {
     version: 26,
     name: '026_create_unified_communications',
@@ -1361,15 +1359,29 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 34,
-    name: '034_extend_workflow_delivery_idempotency',
+    name: '034_owner_enrichment_conflicts',
     sql: `
-      ALTER TABLE workflow_communication_deliveries
-        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
-      ALTER TABLE workflow_communication_deliveries
-        ADD CONSTRAINT workflow_communication_deliveries_channel_check
-        CHECK (channel IN ('email','sms','phone','webhook'));
-      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
-        ON workflow_communication_deliveries(organization_id, status, updated_at);
+      CREATE TABLE IF NOT EXISTS owner_enrichment_conflicts (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        conflict_type VARCHAR(50) NOT NULL,
+        field_name VARCHAR(100) NOT NULL,
+        conflicting_value TEXT NOT NULL,
+        conflicting_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'open',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_enrichment_conflict
+        ON owner_enrichment_conflicts(
+          organization_id, owner_id, conflict_type, field_name,
+          conflicting_value, COALESCE(conflicting_owner_id, '')
+        );
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
+        ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
     `,
   },
   {
@@ -1390,8 +1402,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 36,
-    name: '036_add_agent_run_controls',
+    version: 39,
+    name: '039_add_agent_run_controls',
     sql: `
       ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
@@ -1403,18 +1415,36 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 37,
-    name: '037_harden_agent_memory_audit_cancellation',
+    name: '037_extend_workflow_delivery_idempotency',
     sql: `
-      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS source_run_id VARCHAR(64) REFERENCES agent_runs(id) ON DELETE SET NULL;
-      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS source_tool VARCHAR(100);
-      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT false;
-      CREATE INDEX IF NOT EXISTS idx_agent_memories_verified
-        ON agent_memories(organization_id, agent_id, verified, updated_at DESC);
-
-      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL;
-      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE;
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_cancelled
-        ON agent_runs(organization_id, status, cancelled_at DESC);
+      ALTER TABLE workflow_communication_deliveries
+        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
+      ALTER TABLE workflow_communication_deliveries
+        ADD CONSTRAINT workflow_communication_deliveries_channel_check
+        CHECK (channel IN ('email','sms','phone','webhook'));
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
+        ON workflow_communication_deliveries(organization_id, status, updated_at);
     `,
   },
-];
+  {
+    version: 38,
+    name: '038_make_audit_logs_append_only',
+    sql: `
+      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_logs is append-only';
+      END;
+      $$;
+
+      DROP TRIGGER IF EXISTS trg_audit_logs_immutable ON audit_logs;
+      CREATE TRIGGER trg_audit_logs_immutable
+      BEFORE UPDATE OR DELETE ON audit_logs
+      FOR EACH ROW
+      EXECUTE FUNCTION prevent_audit_log_mutation();
+    `,
+  },
+ ];
+

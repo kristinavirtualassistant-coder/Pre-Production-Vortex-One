@@ -63,6 +63,9 @@ const xlsx = zipSingle(
   'xl/worksheets/sheet1.xml',
   '<worksheet><sheetData><row><c t="inlineStr"><is><t>Vortex XLSX</t></is></c><c><v>42</v></c></row></sheetData></worksheet>',
 );
-assert.equal(extractDocumentText(xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'), '42');
+assert.equal(
+  extractDocumentText(xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+  'Vortex XLSX\t42',
+);
 
 console.log('Document text extractor tests passed');

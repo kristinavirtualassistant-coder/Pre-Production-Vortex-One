@@ -23,7 +23,7 @@ const workflowListBlock = extractRouteBlock("  app.get('/api/workflows',", ["  a
 const workflowGetBlock = extractRouteBlock("  app.get('/api/workflows/:id',", ["  app.post('/api/workflows',"]);
 const workflowCreateBlock = extractRouteBlock("  app.post('/api/workflows',", ["  app.put('/api/workflows/:id',"]);
 const workflowUpdateBlock = extractRouteBlock("  app.put('/api/workflows/:id',", ["  app.delete('/api/workflows/:id',"]);
-const workflowDeleteBlock = extractRouteBlock("  app.delete('/api/workflows/:id',", ["  app.get('/api/runs',"]);
+const workflowDeleteBlock = extractRouteBlock("  app.delete('/api/workflows/:id',", ["  app.post('/api/workflows/:id/versions',"]);
 
 const operationsBlock = [
   taskListBlock,
