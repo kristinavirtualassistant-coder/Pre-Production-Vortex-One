@@ -69,11 +69,23 @@ async function main() {
       }
 
       const health = await page.evaluate(() => JSON.parse(document.body.innerText));
-      if (health.status !== 'ok' || health.db?.type !== 'postgresql') {
+      if (health.status !== 'ok') {
         throw new Error(`Unexpected health payload: ${JSON.stringify(health)}`);
       }
 
-      console.log('E2E smoke: PASS — browser, SPA, and PostgreSQL health verified.');
+      const readyResponse = await page.goto(`${baseUrl}/api/ready`, {
+        waitUntil: 'networkidle0',
+        timeout: 30_000,
+      });
+      if (!readyResponse || readyResponse.status() !== 200) {
+        throw new Error(`Readiness endpoint returned ${readyResponse?.status() ?? 'no response'}`);
+      }
+      const readiness = await page.evaluate(() => JSON.parse(document.body.innerText));
+      if (readiness.status !== 'ready' || readiness.database !== 'postgresql') {
+        throw new Error(`Unexpected readiness payload: ${JSON.stringify(readiness)}`);
+      }
+
+      console.log('E2E smoke: PASS — browser, SPA, and PostgreSQL readiness verified.');
     } finally {
       await browser.close();
     }
