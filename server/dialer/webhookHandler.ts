@@ -12,6 +12,7 @@ import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
+import { recordCostEvent } from '../services/analyticsService';
 import { archiveRingCentralRecording, attachCallTranscript, getRingCentralRecordingFileId } from '../services/fileStorageService';
 
 
@@ -104,7 +105,8 @@ export class WebhookHandler {
         const party = body?.parties?.[0] || {};
         const partyPhones = [party?.to?.phoneNumber, party?.from?.phoneNumber].filter(Boolean);
         const callLookup = await pool.query(
-          `SELECT id FROM call
+          `SELECT id, user_id, campaign_id, session_id, lead_id
+           FROM call
            WHERE organization_id = $1
              AND (telephony_session_id = $2 OR telephony_call_id = $2
                   OR (regexp_replace(phone_number, '\\D', '', 'g') = ANY($3::text[])
@@ -162,6 +164,35 @@ export class WebhookHandler {
           }).catch((transcriptError) => {
             console.error('[Files] Call transcript attachment failed:', transcriptError);
           });
+        }
+
+        if (normalized.status === 'completed' || normalized.status === 'busy' || normalized.status === 'no-answer' || normalized.status === 'voicemail') {
+          const durationSeconds = Math.max(0, Number(normalized.durationSeconds || 0));
+          const costPerMinute = Math.max(0, Number(process.env.ANALYTICS_RINGCENTRAL_COST_PER_MINUTE_USD || 0));
+          try {
+            await recordCostEvent(pool, {
+              organizationId,
+              id: `cost_call_${authoritativeCallId}`,
+              userId: callLookup.rows[0].user_id || undefined,
+              campaignId: callLookup.rows[0].campaign_id || undefined,
+              category: 'voice',
+              provider,
+              quantity: durationSeconds / 60,
+              unitCostUsd: costPerMinute,
+              totalCostUsd: (durationSeconds / 60) * costPerMinute,
+              referenceType: 'call',
+              referenceId: authoritativeCallId || undefined,
+              metadata: {
+                durationSeconds,
+                pricingConfigured: costPerMinute > 0,
+                pricingBasis: 'ANALYTICS_RINGCENTRAL_COST_PER_MINUTE_USD',
+                disposition: normalized.disposition || null,
+              },
+              occurredAt: normalized.timestamp,
+            });
+          } catch (costError) {
+            console.warn('[Analytics] Voice cost recording failed:', costError);
+          }
         }
 
         if (normalized.recordingUrl && authoritativeCallId) {
