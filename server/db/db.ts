@@ -1467,6 +1467,14 @@ export function getPgPool(): Pool | null {
   return pgPool ? getTenantAwarePool(pgPool) : null;
 }
 
+/**
+ * The un-scoped pool. Use ONLY for state that must persist independently of the request transaction
+ * (e.g. rate-limit counters must survive the rollback of a failed request). Never for tenant data.
+ */
+export function getRawPgPool(): Pool | null {
+  return pgPool;
+}
+
 /** Test-only dependency injection seam for database failure-path tests. */
 export function setPgPoolForTests(pool: Pool | null): void {
   pgPool = pool;

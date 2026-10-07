@@ -28,6 +28,8 @@ const baseEnv = {
   VORTEX_ONE_SKIP_LIVE_GIS: '1',
   SQL_SSL: 'false',
   APP_URL: 'http://localhost:4173',
+  // Suites share one client IP and sign in many times; the limiter suite resets the multiplier to 1.
+  RATE_LIMIT_MULTIPLIER: process.env.RATE_LIMIT_MULTIPLIER || '1000',
 };
 
 function run(label, env, args) {

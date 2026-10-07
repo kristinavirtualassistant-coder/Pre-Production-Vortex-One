@@ -27,7 +27,8 @@ mustContain(gemini, '{ skipCache: true, forceRefresh: options.forceRefresh }', '
 mustContain(gemini, '{ skipCache: true }', 'Gemini TTS caching is disabled');
 
 mustContain(tools, 'agent.allowedTools.includes(toolName)', 'agent tool allow-list is enforced');
-mustContain(rateLimit, 'org:${tenantId}:ip:${clientKey}', 'authenticated rate limits are tenant-scoped');
+mustContain(rateLimit, 'parts.push(`org:${tenantId}`)', 'authenticated rate limits are tenant-scoped');
+mustContain(rateLimit, 'parts.push(`ip:${clientAddress(req)}`)', 'rate limits are scoped by client address');
 mustContain(tools, "if (toolName === 'make_call')", 'outbound call approval gate exists');
 mustContain(tools, "status = 'approved'", 'outbound call requires approved status');
 mustContain(tools, 'organization_id = $2', 'approval lookup is tenant-scoped');

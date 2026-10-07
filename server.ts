@@ -45,6 +45,8 @@ import { createCheckoutSession, createPortalSession, verifyStripeWebhook, proces
 import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
 import { requirePermission } from './server/security/permissions';
+import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
+import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
 export interface CreateAppOptions {
@@ -64,13 +66,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   const app = express();
   const isProduction = process.env.NODE_ENV === 'production';
 
+  // req.ip (used by every rate limiter) is only correct behind a proxy when the hop count is configured.
+  app.set('trust proxy', resolveTrustProxy());
+  app.disable('x-powered-by');
+
   // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
   app.use(stripClientIdentityHeaders);
 
   // Stripe webhook: authenticated ONLY by the Stripe signature over the exact raw request bytes. It has no
   // user session and no role, so it must never sit behind requireAuth/requireRole. Registered before the
   // JSON body parser so the raw bytes are intact.
-  app.post('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+  app.post('/api/billing/webhook', limits.webhookIngressLimiter(), express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
     const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
     if (!secret) {
       console.error('STRIPE_WEBHOOK_SECRET is not configured; rejecting Stripe webhook');
@@ -104,8 +110,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Small pre-auth body limits (bulk-import routes get a bounded larger parser after authentication).
+  app.use(defaultBodyParsers);
+  app.use(rejectUnsafeBodies);
+
+  // Public authentication endpoints: abuse protection runs before any credential is checked.
+  app.use('/api/auth', limits.authAbuseProtection());
+  app.use('/api/telephony/webhook', limits.webhookIngressLimiter());
+  app.use('/api/communications/webhooks', limits.webhookIngressLimiter());
 
   // Initialize DB & Migrations on Boot
   try {
@@ -149,6 +161,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
     return requireAuth(req, res, next);
   });
+
+  app.use(largeBodyParser);
+  app.use(rejectUnsafeBodies);
+
+  // Cost-bearing routes: per-tenant (+IP) limits after authentication.
+  app.use('/api/tts', limits.expensiveLimiter('tts', 30));
+  app.use('/api/ai', limits.expensiveLimiter('ai', 30));
+  app.use('/api/ai-agents', limits.expensiveLimiter('ai-agents', 60));
+  app.use('/api/property-search', limits.expensiveLimiter('property-search', 60));
+  app.use('/api/skip-trace', limits.expensiveLimiter('skip-trace', 30));
+  app.use('/api/owner-enrichment', limits.expensiveLimiter('enrichment', 60));
+  app.use('/api/workflows/execute', limits.expensiveLimiter('wf-execute', 30));
+  app.use('/api/dial-batch', limits.expensiveLimiter('dial-batch', 10));
+  app.use('/api/communications/sms', limits.expensiveLimiter('sms', 120));
+  app.use('/api/communications/email', limits.expensiveLimiter('email', 120));
 
   app.use('/api/billing', billingRouter);
 
@@ -4552,6 +4579,7 @@ ${transcript}`;
     }
   });
 
+  app.use(jsonErrorHandler);
   return app;
 }
 
