@@ -11,3 +11,27 @@ console.log('Workflow automation condition tests passed.');
 
 assert.equal(evaluateCondition({field:'lead.createdAt',operator:'before',value:'2026-10-07T00:00:00Z'}, {...context,lead:{...context.lead,createdAt:'2026-10-06T12:00:00Z'}}),true);
 assert.equal(evaluateCondition({field:'lead.createdAt',operator:'on_or_after',value:'$now'}, {...context,lead:{...context.lead,createdAt:new Date(Date.now()+60_000).toISOString()}}),true);
+
+
+import { claimDueWorkflowSchedules } from '../services/workflowAutomationService';
+
+{
+  const calls:string[]=[];
+  const client:any={
+    query: async (sql:string) => {
+      calls.push(sql);
+      if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK') return {rows:[]};
+      if(sql.startsWith('SELECT * FROM workflow_schedules')) return {rows:[{
+        id:'wfs_test',organization_id:'org_test',workflow_id:'wf_test',workflow_version_id:'wfv_test',
+        trigger_payload:{source:'test'},schedule_type:'once',status:'active',next_run_at:new Date()
+      }]};
+      if(sql.startsWith('INSERT INTO jobs')) throw new Error('simulated enqueue failure');
+      return {rows:[]};
+    },
+    release:()=>{},
+  };
+  const pool:any={connect:async()=>client};
+  await assert.rejects(() => claimDueWorkflowSchedules(pool), /simulated enqueue failure/);
+  assert.equal(calls.at(-1),'ROLLBACK');
+  assert.equal(calls.includes('COMMIT'),false);
+}
