@@ -1065,435 +1065,311 @@ export const MIGRATIONS: Migration[] = [
       -- Tenant policies are created for every tenant-owned table. Activation is
       -- controlled by VORTEX_ONE_ENABLE_RLS at migration time; public_ca_parcels
       -- is intentionally excluded because it is global property intelligence.
-            ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE users FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON users;
+            DROP POLICY IF EXISTS vortex_one_tenant_isolation ON users;
       CREATE POLICY vortex_one_tenant_isolation ON users
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE property_owners ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE property_owners FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON property_owners;
       CREATE POLICY vortex_one_tenant_isolation ON property_owners
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE properties ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE properties FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON properties;
       CREATE POLICY vortex_one_tenant_isolation ON properties
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE leads FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON leads;
       CREATE POLICY vortex_one_tenant_isolation ON leads
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE crm_records ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE crm_records FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON crm_records;
       CREATE POLICY vortex_one_tenant_isolation ON crm_records
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE campaign ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE campaign FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON campaign;
       CREATE POLICY vortex_one_tenant_isolation ON campaign
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE campaign_contact ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE campaign_contact FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON campaign_contact;
       CREATE POLICY vortex_one_tenant_isolation ON campaign_contact
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE dialing_session ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE dialing_session FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON dialing_session;
       CREATE POLICY vortex_one_tenant_isolation ON dialing_session
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE call ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call;
       CREATE POLICY vortex_one_tenant_isolation ON call
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE call_event ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call_event FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call_event;
       CREATE POLICY vortex_one_tenant_isolation ON call_event
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE call_note ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call_note FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call_note;
       CREATE POLICY vortex_one_tenant_isolation ON call_note
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE suppression_record ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE suppression_record FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON suppression_record;
       CREATE POLICY vortex_one_tenant_isolation ON suppression_record
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE processed_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE processed_events FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON processed_events;
       CREATE POLICY vortex_one_tenant_isolation ON processed_events
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_configs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_configs;
       CREATE POLICY vortex_one_tenant_isolation ON agent_configs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON tasks;
       CREATE POLICY vortex_one_tenant_isolation ON tasks
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflows ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflows FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflows;
       CREATE POLICY vortex_one_tenant_isolation ON workflows
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE approvals ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE approvals FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON approvals;
       CREATE POLICY vortex_one_tenant_isolation ON approvals
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON audit_logs;
       CREATE POLICY vortex_one_tenant_isolation ON audit_logs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE contacts FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON contacts;
       CREATE POLICY vortex_one_tenant_isolation ON contacts
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE activities FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON activities;
       CREATE POLICY vortex_one_tenant_isolation ON activities
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON jobs;
       CREATE POLICY vortex_one_tenant_isolation ON jobs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE outreach_templates ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE outreach_templates FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON outreach_templates;
       CREATE POLICY vortex_one_tenant_isolation ON outreach_templates
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE email_outreach ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE email_outreach FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON email_outreach;
       CREATE POLICY vortex_one_tenant_isolation ON email_outreach
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE integration_connections ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE integration_connections FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON integration_connections;
       CREATE POLICY vortex_one_tenant_isolation ON integration_connections
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE integration_oauth_states ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE integration_oauth_states FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON integration_oauth_states;
       CREATE POLICY vortex_one_tenant_isolation ON integration_oauth_states
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_runs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_runs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_runs;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_runs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_versions ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_versions FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_versions;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_versions
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_schedules ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_schedules FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_schedules;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_schedules
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_execution_steps ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_execution_steps FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_execution_steps;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_execution_steps
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_execution_logs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_execution_logs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_execution_logs;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_execution_logs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_invites FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_invites;
       CREATE POLICY vortex_one_tenant_isolation ON organization_invites
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE webhook_endpoints FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON webhook_endpoints;
       CREATE POLICY vortex_one_tenant_isolation ON webhook_endpoints
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON webhook_deliveries;
       CREATE POLICY vortex_one_tenant_isolation ON webhook_deliveries
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE voicemail_library ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE voicemail_library FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON voicemail_library;
       CREATE POLICY vortex_one_tenant_isolation ON voicemail_library
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE organization_billing ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_billing FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_billing;
       CREATE POLICY vortex_one_tenant_isolation ON organization_billing
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE organization_usage ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_usage FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_usage;
       CREATE POLICY vortex_one_tenant_isolation ON organization_usage
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE analytics_cost_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_cost_events FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_cost_events;
       CREATE POLICY vortex_one_tenant_isolation ON analytics_cost_events
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE analytics_ai_usage ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_ai_usage FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_ai_usage;
       CREATE POLICY vortex_one_tenant_isolation ON analytics_ai_usage
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE analytics_value_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_value_events FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_value_events;
       CREATE POLICY vortex_one_tenant_isolation ON analytics_value_events
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE appointments FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON appointments;
       CREATE POLICY vortex_one_tenant_isolation ON appointments
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE file_assets ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE file_assets FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON file_assets;
       CREATE POLICY vortex_one_tenant_isolation ON file_assets
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_suppression ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_suppression FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_suppression;
       CREATE POLICY vortex_one_tenant_isolation ON communication_suppression
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE workflow_communication_deliveries ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_communication_deliveries FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_communication_deliveries;
       CREATE POLICY vortex_one_tenant_isolation ON workflow_communication_deliveries
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_enrichment_providers ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_enrichment_providers FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_enrichment_providers;
       CREATE POLICY vortex_one_tenant_isolation ON owner_enrichment_providers
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_enrichment_jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_enrichment_jobs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_enrichment_jobs;
       CREATE POLICY vortex_one_tenant_isolation ON owner_enrichment_jobs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_source_records ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_source_records FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_source_records;
       CREATE POLICY vortex_one_tenant_isolation ON owner_source_records
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_contact_points ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_contact_points FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_contact_points;
       CREATE POLICY vortex_one_tenant_isolation ON owner_contact_points
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_ownerships ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_ownerships FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_ownerships;
       CREATE POLICY vortex_one_tenant_isolation ON owner_ownerships
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_relationships ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_relationships FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_relationships;
       CREATE POLICY vortex_one_tenant_isolation ON owner_relationships
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_lead_signals ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_lead_signals FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_lead_signals;
       CREATE POLICY vortex_one_tenant_isolation ON owner_lead_signals
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE owner_identity_matches ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_identity_matches FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_identity_matches;
       CREATE POLICY vortex_one_tenant_isolation ON owner_identity_matches
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_threads ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_threads FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_threads;
       CREATE POLICY vortex_one_tenant_isolation ON communication_threads
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_messages ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_messages FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_messages;
       CREATE POLICY vortex_one_tenant_isolation ON communication_messages
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_events FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_events;
       CREATE POLICY vortex_one_tenant_isolation ON communication_events
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_suppressions ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_suppressions FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_suppressions;
       CREATE POLICY vortex_one_tenant_isolation ON communication_suppressions
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE messaging_numbers ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE messaging_numbers FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON messaging_numbers;
       CREATE POLICY vortex_one_tenant_isolation ON messaging_numbers
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_sequences ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_sequences FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_sequences;
       CREATE POLICY vortex_one_tenant_isolation ON communication_sequences
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE communication_sequence_enrollments ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_sequence_enrollments FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_sequence_enrollments;
       CREATE POLICY vortex_one_tenant_isolation ON communication_sequence_enrollments
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE file_processing_jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE file_processing_jobs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON file_processing_jobs;
       CREATE POLICY vortex_one_tenant_isolation ON file_processing_jobs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_memories FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_memories;
       CREATE POLICY vortex_one_tenant_isolation ON agent_memories
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_runs;
       CREATE POLICY vortex_one_tenant_isolation ON agent_runs
         FOR ALL
         USING (organization_id = current_setting('vortex_one.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      ALTER TABLE agent_run_steps ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_run_steps FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_run_steps;
       CREATE POLICY vortex_one_tenant_isolation ON agent_run_steps
         FOR ALL
