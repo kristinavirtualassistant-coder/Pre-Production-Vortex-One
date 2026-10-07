@@ -11,6 +11,10 @@ const TEXT_EXTRACTION_MIMES = new Set([
   'application/json',
   'application/xml',
   'text/xml',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]);
 
 function extractionJobType(category: string, mimeType: string): 'document_extract' | 'transcript_extract' | null {
