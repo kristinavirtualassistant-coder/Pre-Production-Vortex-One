@@ -10,10 +10,6 @@ export class SkipTraceService {
     if (!params?.ownerId) return { status: 'partial', reason: 'ownerId is required', contacts: { phones: [], emails: [] } };
     const pool = getPgPool();
     if (pool) await enforceUsageLimit(pool, organizationId, 'enrichment_credits_month', 1);
-    const pool = getPgPool();
-    if (pool) await enforceUsageLimit(pool, organizationId, 'enrichment_credits_month', 1);
-    const pool = getPgPool();
-    if (pool) await enforceUsageLimit(pool, organizationId, 'enrichment_credits_month', 1);
     const result = await OwnerEnrichmentService.enrichOwner({
       organizationId, ownerId: params.ownerId, propertyId: params.propertyId,
       provider: params.provider || 'public_records', capabilities: params.capabilities, supplied: params.supplied,
