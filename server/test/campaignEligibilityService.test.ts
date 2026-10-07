@@ -6,7 +6,7 @@ const result = buildCampaignEligibilityQuery('org_test', 'camp_test', { retryLim
 assert.equal(result.values[0], 'org_test');
 assert.equal(result.values[1], 'camp_test');
 assert.equal(result.values[2], 4);
-assert.match(result.text, /FOR UPDATE SKIP LOCKED/);
+assert.match(result.text, /FOR UPDATE OF cc SKIP LOCKED/, 'the claim locks only the campaign_contact row and skips rows held by other dialers');
 assert.match(result.text, /cc\.dial_status = 'queued'/);
 assert.match(result.text, /cc\.attempts < \$3/);
 assert.match(result.text, /c\.status = 'active'/);

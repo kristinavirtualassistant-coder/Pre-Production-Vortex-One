@@ -46,6 +46,7 @@ import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
 import { requirePermission } from './server/security/permissions';
 import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
+import { TENANT_GUC } from './server/db/tenantContext';
 import { isDemoModeEnabled } from './server/security/demoMode';
 import { logError, safeErrorMessage } from './server/security/logger';
 import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
@@ -1515,7 +1516,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       let result: any;
       try {
         await client.query('BEGIN');
-        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
+        await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, orgId]);
         await client.query('SET LOCAL statement_timeout = 5000');
         result = await client.query(
         `SELECT
@@ -3496,7 +3497,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
 
       await client.query('BEGIN');
-        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
+        await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, orgId]);
       const callUpdate = await client.query(
         `UPDATE call
          SET disposition = 'voicemail',
