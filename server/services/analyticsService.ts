@@ -59,6 +59,30 @@ export async function recordCostEvent(pool: Pool, input: {
   );
 }
 
+export async function recordValueEvent(pool: Pool, input: {
+  organizationId: string;
+  id: string;
+  eventType: 'revenue' | 'acquisition_value' | 'management_value' | 'other';
+  amountUsd: number;
+  leadId?: string;
+  propertyId?: string;
+  campaignId?: string;
+  metadata?: Record<string, unknown>;
+  occurredAt?: Date | string;
+}) {
+  const organizationId = requireOrganizationId(input.organizationId);
+  if (!Number.isFinite(input.amountUsd) || input.amountUsd < 0) throw new Error('Value event amount must be a non-negative number');
+  await pool.query(
+    `INSERT INTO analytics_value_events
+      (id, organization_id, lead_id, property_id, campaign_id, event_type, amount_usd, metadata, occurred_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,COALESCE($9::timestamptz,NOW()))`,
+    [
+      input.id, organizationId, input.leadId ?? null, input.propertyId ?? null, input.campaignId ?? null,
+      input.eventType, input.amountUsd, JSON.stringify(input.metadata ?? {}), input.occurredAt ?? null,
+    ],
+  );
+}
+
 export function estimateAiCostUsd(input: {
   model?: string;
   inputTokens?: number;
