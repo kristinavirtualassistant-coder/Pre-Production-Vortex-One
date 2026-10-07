@@ -1374,8 +1374,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 30,
-    name: '030_create_native_property_map_spatial_layer',
+    version: 34,
+    name: '034_create_native_property_map_spatial_layer',
     sql: `
       CREATE EXTENSION IF NOT EXISTS postgis;
       ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
