@@ -154,6 +154,28 @@ async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:s
 }
 async function finishCommunication(pool:Pool,orgId:string,idempotencyKey:string,status:'sent'|'failed'|'manual_review',reference?:string,error?:string){ await pool.query('UPDATE workflow_communication_deliveries SET status=$1,provider_reference=$2,error=$3,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$4 AND idempotency_key=$5',[status,reference||null,error||null,orgId,idempotencyKey]); }
 
+export async function reconcileStaleCommunicationDeliveries(pool:Pool, organizationId:string, staleSeconds=600){
+  const org=requireOrganizationId(organizationId);
+  const seconds=Math.max(60,Math.floor(Number(staleSeconds)||600));
+  const result=await pool.query(
+    `UPDATE workflow_communication_deliveries
+     SET status='manual_review',
+         error=COALESCE(error,'Delivery remained in sending state past the reconciliation threshold'),
+         updated_at=CURRENT_TIMESTAMP
+     WHERE organization_id=$1
+       AND status='sending'
+       AND updated_at < CURRENT_TIMESTAMP - ($2 * INTERVAL '1 second')
+     RETURNING id,workflow_run_id,workflow_step_id,channel,destination,idempotency_key`,
+    [org,seconds],
+  );
+  for(const row of result.rows){
+    if(row.workflow_run_id){
+      await logWorkflowEvent(pool,org,{runId:row.workflow_run_id,stepId:row.workflow_step_id||undefined,level:'warn',event:'communication_reconciled',message:'Communication delivery moved to manual review after becoming stale',metadata:{deliveryId:row.id,channel:row.channel,destination:row.destination,idempotencyKey:row.idempotency_key,staleSeconds:seconds}});
+    }
+  }
+  return result.rows;
+}
+
 async function executeAction(pool:Pool,orgId:string,step:any,context:any,runId:string,stepId:string){
   const action=(step.action_type||step.action||(step.type==='WAIT'?'wait':'noop')) as WorkflowActionType; const input=render(step.input_mapping||step.input||{},context);
   switch(action){
