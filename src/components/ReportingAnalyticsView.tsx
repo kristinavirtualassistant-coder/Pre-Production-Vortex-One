@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { AnalyticsValueEventRecorder } from './AnalyticsValueEventRecorder';
 import {
   Activity, BarChart3, Building2, CalendarCheck, DollarSign, Download,
   PhoneCall, RefreshCw, Sparkles, Target, Users, Workflow,
@@ -220,7 +221,9 @@ export const ReportingAnalyticsView: React.FC<Props> = ({ getAuthHeaders, organi
       )}
 
       {tab === 'roi' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="space-y-5">
+          <AnalyticsValueEventRecorder getAuthHeaders={getAuthHeaders} organizationId={organizationId} onRecorded={load} />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <section className="bg-white border border-slate-200 rounded-xl p-5"><div className="text-xs text-slate-500">Recorded revenue/value</div><div className="text-2xl font-bold mt-2">{money(data.roi.revenueUsd)}</div></section>
           <section className="bg-white border border-slate-200 rounded-xl p-5"><div className="text-xs text-slate-500">Recorded operating cost</div><div className="text-2xl font-bold mt-2">{money(data.roi.costUsd)}</div></section>
           <section className="bg-white border border-slate-200 rounded-xl p-5"><div className="text-xs text-slate-500">ROI</div><div className="text-2xl font-bold mt-2">{data.roi.roiPercent === null ? 'Not measurable yet' : pct(data.roi.roiPercent)}</div><p className="text-[11px] text-slate-500 mt-2">{data.roi.note}</p></section>
