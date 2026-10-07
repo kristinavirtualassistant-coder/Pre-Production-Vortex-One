@@ -3,7 +3,6 @@ import type { Pool } from 'pg';
 import { requireOrganizationId } from './organizationContext';
 import { enqueueJob, enqueueJobWithClient, claimNextJob, completeJob, failJob, recoverStaleJobs, type JobRecord } from './jobService';
 import { sendEmail } from './emailService';
-import { executeSubAgent } from '../agents/subAgents';
 import { executeAgentRun } from '../agents/agentRuntime';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { SuppressionService } from '../dialer/suppressionService';
