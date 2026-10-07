@@ -1417,12 +1417,6 @@ export const MIGRATIONS: Migration[] = [
       CREATE POLICY vortex_tenant_isolation ON activities
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON jobs;
-      CREATE POLICY vortex_tenant_isolation ON jobs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
       ALTER TABLE outreach_templates ENABLE ROW LEVEL SECURITY;
       ALTER TABLE outreach_templates FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_tenant_isolation ON outreach_templates;
@@ -1447,34 +1441,10 @@ export const MIGRATIONS: Migration[] = [
       CREATE POLICY vortex_tenant_isolation ON integration_oauth_states
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_runs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_runs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_runs;
-      CREATE POLICY vortex_tenant_isolation ON workflow_runs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
       ALTER TABLE workflow_versions ENABLE ROW LEVEL SECURITY;
       ALTER TABLE workflow_versions FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_versions;
       CREATE POLICY vortex_tenant_isolation ON workflow_versions
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_schedules ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_schedules FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_schedules;
-      CREATE POLICY vortex_tenant_isolation ON workflow_schedules
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_execution_steps ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_execution_steps FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_execution_steps;
-      CREATE POLICY vortex_tenant_isolation ON workflow_execution_steps
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_execution_logs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_execution_logs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_execution_logs;
-      CREATE POLICY vortex_tenant_isolation ON workflow_execution_logs
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
       ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
@@ -1643,30 +1613,6 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE communication_sequence_enrollments FORCE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_sequence_enrollments;
       CREATE POLICY vortex_tenant_isolation ON communication_sequence_enrollments
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE file_processing_jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE file_processing_jobs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON file_processing_jobs;
-      CREATE POLICY vortex_tenant_isolation ON file_processing_jobs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_memories FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON agent_memories;
-      CREATE POLICY vortex_tenant_isolation ON agent_memories
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON agent_runs;
-      CREATE POLICY vortex_tenant_isolation ON agent_runs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE agent_run_steps ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_run_steps FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON agent_run_steps;
-      CREATE POLICY vortex_tenant_isolation ON agent_run_steps
         USING (organization_id = current_setting('vortex.organization_id', true))
         WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
 
