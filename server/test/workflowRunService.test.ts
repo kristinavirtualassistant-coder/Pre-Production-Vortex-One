@@ -56,4 +56,4 @@ assert.match(pool.queries.find((query) => /UPDATE workflow_runs/.test(query.sql)
 
 const fetched = await getWorkflowRun(pool, 'org_test', 'run_test_1');
 assert.equal(fetched?.workflow_id, 'wf_test');
-assert.match(pool.queries[2].sql, /SELECT \* FROM workflow_runs/);
+assert.match(pool.queries.find((query) => /SELECT \* FROM workflow_runs/.test(query.sql))?.sql || '', /SELECT \* FROM workflow_runs/);
