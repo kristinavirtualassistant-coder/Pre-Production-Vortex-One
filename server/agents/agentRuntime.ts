@@ -31,6 +31,7 @@ const DANGEROUS_TOOLS = new Set([
   'make_call',
   'create_crm_task',
   'create_lead',
+  'enqueue_workflow',
   'reconcile_crm_import',
   'sync_google_drive_document',
 ]);
@@ -110,6 +111,7 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
     score_lead: 'read_only',
     create_crm_task: 'crm_read_write',
     create_lead: 'crm_read_write',
+    enqueue_workflow: 'workflow_dispatch',
     reconcile_crm_import: 'crm_read_write',
     make_call: 'telephony_trigger',
   };
