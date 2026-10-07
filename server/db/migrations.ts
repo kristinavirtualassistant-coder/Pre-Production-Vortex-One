@@ -1625,6 +1625,10 @@ export const MIGRATIONS: Migration[] = [
             AND s.organization_id = current_setting('vortex.organization_id', true)
         ));
 
+      -- Cross-tenant worker queue tables (jobs, workflow_schedules, workflow_runs,
+      -- workflow execution state, file processing jobs, and agent runtime state) remain
+      -- outside this RLS migration until workers establish tenant context before claiming
+      -- work. Their application queries must remain explicitly organization-scoped.
       -- Authentication tables (users, auth_sessions, MFA/reset tokens) remain
       -- outside tenant RLS because authentication must identify the tenant first.
       -- The global public_ca_parcels table intentionally has no organization_id.
