@@ -10,6 +10,7 @@ import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { DataImportService } from '../services/dataImportService';
 import { SkipTraceService } from '../services/skipTraceService';
 import { getAgent } from '../agents/registry';
+import { getProductionAgent } from '../agents/productionAgents';
 import { upsertCanonicalLead } from '../services/crmService';
 
 export interface ToolDefinition {
@@ -366,7 +367,7 @@ export async function executeTool(
   const tool = TOOLS[toolName];
   if (!tool) throw new Error(`Tool ${toolName} is not registered in the system.`);
 
-  const agent = getAgent(context.agentId);
+  const agent = getAgent(context.agentId) || getProductionAgent(context.agentId);
   if (!agent || !agent.enabled) throw new Error('Agent is disabled or not registered.');
   if (!agent.allowedTools.includes(toolName)) {
     throw new Error(`Agent ${context.agentId} is not authorized to execute tool ${toolName}.`);
@@ -381,7 +382,7 @@ export async function executeTool(
        WHERE id = $1
          AND organization_id = $2
          AND status = 'approved'
-         AND action_type IN ('make_call', 'outbound_call', 'outbound_campaign_dispatch')
+         AND action_type IN ('make_call', 'agent_tool:make_call', 'outbound_call', 'outbound_campaign_dispatch')
        LIMIT 1`,
       [context.approvalId, requireOrganizationId(context.organizationId)],
     );
