@@ -20,6 +20,41 @@ export interface ToolDefinition {
 }
 
 export const TOOLS: Record<string, ToolDefinition> = {
+  enqueue_workflow: {
+    name: 'enqueue_workflow',
+    description: 'Queue an existing tenant workflow for durable execution. The workflow engine remains responsible for executing its steps.',
+    parameters: {
+      workflow_id: 'string',
+      name: 'string',
+      objective: 'string',
+      payload: 'object',
+    },
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for workflow dispatch');
+      if (!args.workflow_id) throw new Error('workflow_id is required');
+      const workflow = await pool.query(
+        'SELECT id, name FROM workflows WHERE id=$1 AND organization_id=$2 LIMIT 1',
+        [args.workflow_id, context.organizationId],
+      );
+      if (!workflow.rows.length) throw new Error('Workflow not found for organization');
+      const runId = `agent_wfrun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+      await pool.query(
+        `INSERT INTO workflow_runs
+          (id, organization_id, workflow_id, name, status, initiated_by, tasks, node_states, step_outputs, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,'queued',$5,'[]'::jsonb,'{}'::jsonb,$6::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+        [
+          runId, context.organizationId, args.workflow_id,
+          args.name || workflow.rows[0].name,
+          context.agentId,
+          JSON.stringify({ objective: args.objective || '', payload: args.payload || {}, source: 'ai_agent' }),
+        ],
+      );
+      return { success: true, workflow_run_id: runId, workflow_id: args.workflow_id, status: 'queued', dispatched_by: context.agentId };
+    },
+  },
+
+
   create_lead: {
     name: 'create_lead',
     description: 'Create or retrieve the canonical CRM lead for a verified owner/property pair. Tenant-scoped and idempotent.',
