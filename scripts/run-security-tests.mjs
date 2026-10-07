@@ -29,7 +29,7 @@ const baseEnv = {
   SQL_SSL: 'false',
   APP_URL: 'http://localhost:4173',
   AUTH_ENCRYPTION_KEY: process.env.AUTH_ENCRYPTION_KEY || 'IgIHEDzfX63nIZ72ptfG1GXx8EAaJXWQEytbOCbJYh8=',
-  INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY || 'ci-only-integration-key-32-characters-min',
+  INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY || 'LmUBBZ+sEseYw1OU0qDWJheOoHi+jhQ0ciXL1VF0Vp4=',
   // Suites share one client IP and sign in many times; the limiter suite resets the multiplier to 1.
   RATE_LIMIT_MULTIPLIER: process.env.RATE_LIMIT_MULTIPLIER || '1000',
 };

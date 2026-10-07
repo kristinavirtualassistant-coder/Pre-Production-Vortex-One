@@ -1474,5 +1474,14 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_totp_step BIGINT;
     `,
   },
+  {
+    version: 42,
+    name: '042_bind_oauth_state_to_browser',
+    // The OAuth state is bound to the browser that started the flow (HttpOnly nonce cookie), so a callback URL
+    // cannot be completed from a different browser (login-CSRF / account-linking attack).
+    sql: `
+      ALTER TABLE integration_oauth_states ADD COLUMN IF NOT EXISTS browser_nonce_hash VARCHAR(64);
+    `,
+  },
 ];
 

@@ -48,6 +48,7 @@ import { requirePermission } from './server/security/permissions';
 import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
 import { isDemoModeEnabled } from './server/security/demoMode';
 import { logError, safeErrorMessage } from './server/security/logger';
+import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -119,6 +120,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   // Public authentication endpoints: abuse protection runs before any credential is checked.
   app.use('/api/auth', limits.authAbuseProtection());
   app.use('/api/telephony/webhook', limits.webhookIngressLimiter());
+  app.use('/api/integrations/oauth/callback', limits.webhookIngressLimiter());
+  app.use('/api/integrations/oauth', integrationOAuthCallbackRouter);
   app.use('/api/communications/webhooks', limits.webhookIngressLimiter());
 
   // Initialize DB & Migrations on Boot
@@ -179,6 +182,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   app.use('/api/communications/sms', limits.expensiveLimiter('sms', 120));
   app.use('/api/communications/email', limits.expensiveLimiter('email', 120));
 
+  app.use('/api/integrations', integrationsRouter);
   app.use('/api/billing', billingRouter);
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());

@@ -69,7 +69,9 @@ export function decryptSecret(value: string): string {
 }
 
 function baseUrl(): string {
-  return (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '');
+  const configured = process.env.APP_URL;
+  if (!configured && process.env.NODE_ENV === 'production') throw new Error('APP_URL is required in production');
+  return (configured || 'http://localhost:8080').replace(/\/$/, '');
 }
 
 export function callbackUrl(provider: OAuthProvider): string {
@@ -80,6 +82,8 @@ export async function createOAuthStart(pool: Pool, args: {
   provider: OAuthProvider;
   userId: string;
   organizationId: string;
+  /** Random per-browser value, also set as an HttpOnly cookie; the callback must present the same value. */
+  browserNonce: string;
 }): Promise<string> {
   const config = getProviderConfig(args.provider);
   const state = randomBytes(32).toString('base64url');
@@ -89,9 +93,9 @@ export async function createOAuthStart(pool: Pool, args: {
 
   await pool.query(
     `INSERT INTO integration_oauth_states
-      (state_hash, provider, user_id, organization_id, code_verifier, redirect_uri, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
-    [createHash('sha256').update(state).digest('hex'), args.provider, args.userId, args.organizationId, encryptSecret(codeVerifier), redirectUri],
+      (state_hash, provider, user_id, organization_id, code_verifier, redirect_uri, expires_at, browser_nonce_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP + INTERVAL '10 minutes', $7)`,
+    [createHash('sha256').update(state).digest('hex'), args.provider, args.userId, args.organizationId, encryptSecret(codeVerifier), redirectUri, createHash('sha256').update(args.browserNonce).digest('hex')],
   );
 
   const params = new URLSearchParams({
@@ -112,7 +116,7 @@ export async function createOAuthStart(pool: Pool, args: {
   return `${config.authorizationEndpoint}?${params.toString()}`;
 }
 
-export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider, state: string, code: string) {
+export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider, state: string, code: string, browserNonce: string) {
   const stateHash = createHash('sha256').update(state).digest('hex');
   const client = await pool.connect();
   try {
@@ -125,6 +129,12 @@ export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider,
     );
     const oauthState = stateResult.rows[0];
     if (!oauthState) throw new Error('OAuth state is invalid or expired');
+    const nonceHash = createHash('sha256').update(browserNonce || '').digest('hex');
+    if (!browserNonce || !oauthState.browser_nonce_hash || oauthState.browser_nonce_hash !== nonceHash) {
+      // Do not consume the state: the legitimate browser can still finish. Possible cross-browser replay.
+      await client.query('ROLLBACK');
+      throw new Error('OAuth state does not belong to this browser session');
+    }
 
     await client.query('DELETE FROM integration_oauth_states WHERE state_hash = $1', [stateHash]);
     const config = getProviderConfig(provider);

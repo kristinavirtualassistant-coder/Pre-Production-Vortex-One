@@ -26,6 +26,7 @@ export const PERMISSIONS = {
   'webhooks:manage': ADMIN_EXEC,
   // Data and files
   'files:read': MANAGERS,           // imported data files
+  'integrations:connect': MANAGERS, // connect/disconnect mailbox OAuth integrations
   // Dialer / communications
   'calls:read': OPERATORS,          // call records and recordings
   'dial:bulk': MANAGERS,            // bulk dialing
