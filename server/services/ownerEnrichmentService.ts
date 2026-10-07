@@ -196,6 +196,7 @@ async function ensureSchema(pool: Pool): Promise<void> {
       id VARCHAR(64) PRIMARY KEY,
       organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
       owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+      candidate_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
       candidate_name VARCHAR(255) NOT NULL,
       match_score NUMERIC(5,4) NOT NULL,
       match_status VARCHAR(30) NOT NULL DEFAULT 'candidate',
@@ -552,7 +553,7 @@ export class OwnerEnrichmentService {
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(organizationId);
     await ensureSchema(pool);
-    const [owner, contacts, ownerships, signals, relationships, jobs] = await Promise.all([
+    const [owner, contacts, ownerships, signals, relationships, identityMatches, jobs] = await Promise.all([
       pool.query('SELECT * FROM property_owners WHERE id=$1 AND organization_id=$2 LIMIT 1', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_contact_points WHERE owner_id=$1 AND organization_id=$2 ORDER BY is_primary DESC, last_seen_at DESC', [ownerId, orgId]),
       pool.query(`SELECT oo.*, p.address, p.city, p.state, p.zip, p.apn, p.estimated_value, p.assessed_tax_value, p.estimated_equity, p.units_count
@@ -560,6 +561,7 @@ export class OwnerEnrichmentService {
                    WHERE oo.owner_id=$1 AND oo.organization_id=$2 ORDER BY p.estimated_value DESC`, [ownerId, orgId]),
       pool.query('SELECT * FROM owner_lead_signals WHERE owner_id=$1 AND organization_id=$2 ORDER BY score DESC, observed_at DESC', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_relationships WHERE owner_id=$1 AND organization_id=$2 ORDER BY confidence_score DESC, created_at DESC', [ownerId, orgId]),
+      pool.query('SELECT * FROM owner_identity_matches WHERE owner_id=$1 AND organization_id=$2 ORDER BY match_score DESC, created_at DESC', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_enrichment_jobs WHERE owner_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 20', [ownerId, orgId]),
     ]);
     if (!owner.rows[0]) throw new Error('Owner record not found for organization');
@@ -569,6 +571,7 @@ export class OwnerEnrichmentService {
       ownerships: ownerships.rows,
       signals: signals.rows,
       relationships: relationships.rows,
+      identity_matches: identityMatches.rows,
       enrichment_jobs: jobs.rows,
     };
   }
