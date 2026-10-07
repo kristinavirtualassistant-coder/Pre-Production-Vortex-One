@@ -22,6 +22,7 @@ describe('Public records ingestion', () => {
     assert.match(source, /organization_id=\$1/);
     assert.match(source, /owner_identity_matches/);
     assert.match(source, /owner_ownerships/);
+    assert.match(source, /uq_owner_source_records_org_provider_hash/);
   });
 
   it('has a migration that deduplicates portfolio-level signals with NULL property IDs', async () => {
