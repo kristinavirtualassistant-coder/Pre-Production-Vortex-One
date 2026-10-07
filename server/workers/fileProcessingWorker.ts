@@ -181,3 +181,16 @@ export async function runFileProcessingWorkerOnce(
 }
 
 export { retryDelaySeconds };
+
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runFileProcessingWorkerOnce()
+    .then((result) => {
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('[file-processing-worker] failed:', error);
+      process.exit(1);
+    });
+}
