@@ -37,7 +37,7 @@ import { analyticsRouter } from './server/routes/analytics';
 import { appointmentsRouter } from './server/routes/appointments';
 import communicationsRouter from './server/services/communicationsRouter';
 import billingRouter from './server/routes/billing';
-import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow } from './server/services/workflowAutomationService';
+import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow, retryWorkflowRun } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
@@ -387,6 +387,20 @@ async function startServer() {
     if(req.query.status){ params.push(String(req.query.status)); where+=' AND status=$'+params.length; }
     params.push(limit);
     const result=await pool.query(`SELECT * FROM workflow_runs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`,params);
+    res.json(result.rows);
+  });
+
+  app.post('/api/workflow-runs/:id/retry', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow retry'});
+    try { res.status(202).json(await retryWorkflowRun(pool,orgId,req.params.id)); }
+    catch(err:any){ res.status(400).json({error:err.message||'Failed to retry workflow'}); }
+  });
+
+  app.get('/api/workflow-runs/:id/logs', async (req, res) => {
+    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow logs'});
+    const result=await pool.query('SELECT * FROM workflow_execution_logs WHERE workflow_run_id=$1 AND organization_id=$2 ORDER BY created_at ASC',[req.params.id,orgId]);
     res.json(result.rows);
   });
 
