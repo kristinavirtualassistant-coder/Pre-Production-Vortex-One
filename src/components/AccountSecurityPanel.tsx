@@ -14,16 +14,20 @@ export const AccountSecurityPanel: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [billing, setBilling] = useState<any>(null);
   const [billingLoading, setBillingLoading] = useState(false);
+  const [invoices, setInvoices] = useState<any[]>([]);
 
   const load = async () => {
-    const [sessionResponse, billingResponse] = await Promise.all([
+    const [sessionResponse, billingResponse, invoiceResponse] = await Promise.all([
       fetch('/api/auth/sessions', { credentials: 'include', headers: getAuthHeaders() }),
-      fetch('/api/organization/billing', { credentials: 'include', headers: getAuthHeaders() }),
+      fetch('/api/billing', { credentials: 'include', headers: getAuthHeaders() }),
+      fetch('/api/billing/invoices', { credentials: 'include', headers: getAuthHeaders() }),
     ]);
     const data = await sessionResponse.json().catch(() => ({}));
     const billingData = await billingResponse.json().catch(() => ({}));
+    const invoiceData = await invoiceResponse.json().catch(() => ([]));
     if (sessionResponse.ok) setSessions(data.sessions || []);
     if (billingResponse.ok) setBilling(billingData);
+    if (invoiceResponse.ok) setInvoices(Array.isArray(invoiceData) ? invoiceData : []);
   };
 
   useEffect(() => { load().catch(() => undefined); }, [getAuthHeaders]);
@@ -70,7 +74,7 @@ export const AccountSecurityPanel: React.FC = () => {
   const startCheckout = async (plan: 'starter' | 'professional' | 'enterprise') => {
     setBillingLoading(true);
     try {
-      const response = await fetch('/api/organization/billing/checkout', {
+      const response = await fetch('/api/billing/checkout', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ plan }),
@@ -85,11 +89,24 @@ export const AccountSecurityPanel: React.FC = () => {
   const openBillingPortal = async () => {
     setBillingLoading(true);
     try {
-      const response = await fetch('/api/organization/billing/portal', { method: 'POST', credentials: 'include', headers: getAuthHeaders() });
+      const response = await fetch('/api/billing/portal', { method: 'POST', credentials: 'include', headers: getAuthHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.url) throw new Error(data.error || 'Billing portal unavailable');
       window.location.assign(data.url);
     } catch (error: any) { addToast(error.message || 'Billing portal unavailable', 'error'); }
+    finally { setBillingLoading(false); }
+  };
+
+  const cancelSubscription = async () => {
+    if (!window.confirm('Cancel this subscription at the end of the current billing period?')) return;
+    setBillingLoading(true);
+    try {
+      const response = await fetch('/api/billing/cancel', { method: 'POST', credentials: 'include', headers: getAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Unable to cancel subscription');
+      addToast('Subscription cancellation scheduled.', 'success');
+      await load();
+    } catch (error: any) { addToast(error.message || 'Unable to cancel subscription', 'error'); }
     finally { setBillingLoading(false); }
   };
 
@@ -146,20 +163,24 @@ export const AccountSecurityPanel: React.FC = () => {
       {billing && (
         <div className="rounded-xl border border-slate-200 p-4">
           <div className="flex items-center justify-between">
-            <div><h3 className="text-sm font-bold text-slate-900">Subscription and usage</h3><div className="mt-1 text-xs text-slate-600">Plan: <strong>{billing.billing?.plan || 'free'}</strong> · Status: <strong>{billing.billing?.subscription_status || 'active'}</strong></div></div>
-            {billing.billing?.billing_customer_id && <button type="button" onClick={openBillingPortal} disabled={billingLoading} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700">Manage billing</button>}
+            <div><h3 className="text-sm font-bold text-slate-900">Subscription and usage</h3><div className="mt-1 text-xs text-slate-600">Plan: <strong>{billing.plan || 'free'}</strong> · Status: <strong>{billing.subscription_status || 'active'}</strong></div></div>
+            {billing.billing_customer_id && <button type="button" onClick={openBillingPortal} disabled={billingLoading} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700">Manage billing</button>}
           </div>
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {Object.entries(billing.usage || {}).map(([metric, value]) => <div key={metric} className="rounded-lg bg-slate-50 p-2"><div className="text-[10px] text-slate-400">{metric}</div><div className="text-xs font-semibold">{String(value)}</div></div>)}
+            {Object.entries(billing.usage || {}).map(([metric, value]: [string, any]) => <div key={metric} className="rounded-lg bg-slate-50 p-2"><div className="text-[10px] text-slate-400">{metric}</div><div className="text-xs font-semibold">{value.used} / {value.limit}</div><div className="text-[10px] text-slate-500">{value.remaining} remaining</div></div>)}
           </div>
-          {(!billing.billing?.billing_customer_id || billing.billing?.subscription_status === 'canceled') && (
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
-              {(['starter','professional','enterprise'] as const).map(plan => <button key={plan} type="button" onClick={() => startCheckout(plan)} disabled={billingLoading} className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-left"><div className="text-xs font-bold capitalize text-cyan-900">{plan}</div><div className="mt-1 text-[10px] text-cyan-700">Start subscription</div></button>)}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+            {(['starter','professional','enterprise'] as const).map(plan => <button key={plan} type="button" onClick={() => startCheckout(plan)} disabled={billingLoading} className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-left"><div className="text-xs font-bold capitalize text-cyan-900">{plan}</div><div className="mt-1 text-[10px] text-cyan-700">14-day trial · subscribe</div></button>)}
+          </div>
+          {billing.cancel_at_period_end ? <div className="mt-3 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">Cancellation is scheduled for the end of the current billing period.</div> : billing.billing_subscription_id ? <button type="button" onClick={cancelSubscription} disabled={billingLoading} className="mt-3 text-xs font-semibold text-rose-700">Cancel subscription at period end</button> : null}
+          {invoices.length > 0 && (
+            <div className="mt-4">
+              <div className="text-xs font-bold text-slate-900">Invoice history</div>
+              <div className="mt-2 space-y-2">{invoices.map(invoice => <div key={invoice.stripe_invoice_id} className="flex items-center justify-between rounded-lg bg-slate-50 p-2 text-[11px]"><span>{invoice.status || 'invoice'} · {invoice.currency || ''} {((invoice.amount_paid ?? invoice.amount_due ?? 0) / 100).toFixed(2)}</span>{invoice.hosted_invoice_url ? <a href={invoice.hosted_invoice_url} target="_blank" rel="noreferrer" className="font-semibold text-cyan-700">View</a> : null}</div>)}</div>
             </div>
           )}
         </div>
       )}
-
       <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 flex gap-2">
         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
         <span>Session credentials are stored server-side as one-way hashes and delivered to the browser only through an HttpOnly cookie.</span>

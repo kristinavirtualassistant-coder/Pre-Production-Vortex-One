@@ -10,10 +10,10 @@ const PLAN_PRICES: Record<Exclude<PlanName, 'free'>, string | undefined> = {
 };
 
 const PLAN_LIMITS: Record<PlanName, Record<string, number>> = {
-  free: { users: 5, calls_month: 250, emails_month: 500, sms_month: 100, ai_actions_month: 250, properties: 10000 },
-  starter: { users: 10, calls_month: 2000, emails_month: 5000, sms_month: 1000, ai_actions_month: 2500, properties: 50000 },
-  professional: { users: 50, calls_month: 10000, emails_month: 25000, sms_month: 5000, ai_actions_month: 10000, properties: 250000 },
-  enterprise: { users: 1000000, calls_month: 1000000, emails_month: 1000000, sms_month: 1000000, ai_actions_month: 1000000, properties: 100000000 },
+  free: { users: 5, calls_month: 250, emails_month: 500, sms_month: 100, ai_actions_month: 250, enrichment_credits_month: 25, property_searches_month: 100, storage_mb: 500 },
+  starter: { users: 10, calls_month: 2000, emails_month: 5000, sms_month: 1000, ai_actions_month: 2500, enrichment_credits_month: 500, property_searches_month: 2000, storage_mb: 5000 },
+  professional: { users: 50, calls_month: 10000, emails_month: 25000, sms_month: 5000, ai_actions_month: 10000, enrichment_credits_month: 5000, property_searches_month: 10000, storage_mb: 50000 },
+  enterprise: { users: 1000000, calls_month: 1000000, emails_month: 1000000, sms_month: 1000000, ai_actions_month: 1000000, enrichment_credits_month: 1000000, property_searches_month: 1000000, storage_mb: 1000000 },
 };
 
 function stripeSecret(): string {
@@ -37,6 +37,13 @@ async function stripeRequest(path: string, method: string, params: Record<string
   if (!response.ok) throw new Error(data?.error?.message || `Stripe request failed (${response.status})`);
   return data;
 }
+
+export const PLAN_CATALOG = Object.freeze({
+  free: { name: 'Free', priceCents: 0, trialDays: 0, limits: PLAN_LIMITS.free },
+  starter: { name: 'Starter', priceCents: 4900, trialDays: 14, limits: PLAN_LIMITS.starter },
+  professional: { name: 'Professional', priceCents: 14900, trialDays: 14, limits: PLAN_LIMITS.professional },
+  enterprise: { name: 'Enterprise', priceCents: 49900, trialDays: 14, limits: PLAN_LIMITS.enterprise },
+});
 
 export function planLimits(plan: string): Record<string, number> {
   return PLAN_LIMITS[(plan as PlanName)] || PLAN_LIMITS.free;
@@ -76,6 +83,7 @@ export async function createCheckoutSession(pool: Pool, organizationId: string, 
     cancel_url: `${base}/settings?billing=cancelled`,
     'subscription_data[metadata][organization_id]': organizationId,
     'subscription_data[metadata][plan]': plan,
+    'subscription_data[trial_period_days]': String(PLAN_CATALOG[plan].trialDays),
     'metadata[organization_id]': organizationId,
     'metadata[plan]': plan,
   });
@@ -111,24 +119,64 @@ export function verifyStripeWebhook(rawBody: Buffer, signatureHeader: string, se
   });
 }
 
+export async function listBillingInvoices(pool: Pool, organizationId: string, limit = 50) {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+  const result = await pool.query(
+    `SELECT id,stripe_invoice_id,status,currency,amount_due,amount_paid,amount_remaining,
+            hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,created_at
+       FROM billing_invoices WHERE organization_id=$1 ORDER BY created_at DESC LIMIT $2`,
+    [organizationId, safeLimit],
+  );
+  return result.rows;
+}
+
+async function upsertBillingInvoice(pool: Pool, organizationId: string, invoice: any) {
+  const periodStart = invoice.period_start ? new Date(Number(invoice.period_start) * 1000).toISOString() : null;
+  const periodEnd = invoice.period_end ? new Date(Number(invoice.period_end) * 1000).toISOString() : null;
+  const dueDate = invoice.due_date ? new Date(Number(invoice.due_date) * 1000).toISOString() : null;
+  const paidAt = invoice.status_transitions?.paid_at ? new Date(Number(invoice.status_transitions.paid_at) * 1000).toISOString() : null;
+  await pool.query(
+    `INSERT INTO billing_invoices(id,organization_id,stripe_invoice_id,stripe_customer_id,stripe_subscription_id,status,collection_method,currency,amount_due,amount_paid,amount_remaining,hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,metadata)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
+     ON CONFLICT(stripe_invoice_id) DO UPDATE SET status=EXCLUDED.status,collection_method=EXCLUDED.collection_method,currency=EXCLUDED.currency,amount_due=EXCLUDED.amount_due,amount_paid=EXCLUDED.amount_paid,amount_remaining=EXCLUDED.amount_remaining,hosted_invoice_url=EXCLUDED.hosted_invoice_url,invoice_pdf=EXCLUDED.invoice_pdf,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,due_date=EXCLUDED.due_date,paid_at=EXCLUDED.paid_at,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP`,
+    ['inv_' + invoice.id, organizationId, invoice.id, invoice.customer || null, invoice.subscription || null, invoice.status || null, invoice.collection_method || null, invoice.currency || null,
+     Number.isFinite(Number(invoice.amount_due)) ? Number(invoice.amount_due) : null, Number.isFinite(Number(invoice.amount_paid)) ? Number(invoice.amount_paid) : null, Number.isFinite(Number(invoice.amount_remaining)) ? Number(invoice.amount_remaining) : null,
+     invoice.hosted_invoice_url || null, invoice.invoice_pdf || null, periodStart, periodEnd, dueDate, paidAt, JSON.stringify(invoice.metadata || {})],
+  );
+}
 export async function handleStripeEvent(pool: Pool, event: any) {
   const object = event?.data?.object || {};
   const metadata = object.metadata || {};
   const organizationId = metadata.organization_id || metadata.organizationId;
-  if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
 
   const subscription = event.type.startsWith('customer.subscription.') ? object : null;
+
+  if (event.type.startsWith('invoice.')) {
+    let orgId = organizationId;
+    if (!orgId && object.customer) {
+      const customerResult = await pool.query('SELECT organization_id FROM organization_billing WHERE billing_customer_id=$1 LIMIT 1', [object.customer]);
+      orgId = customerResult.rows[0]?.organization_id;
+    }
+    if (orgId && object.id) {
+      await upsertBillingInvoice(pool, orgId, object);
+      return { updated: true, organizationId: orgId, invoiceId: object.id };
+    }
+    return { ignored: true, reason: 'invoice missing organization mapping' };
+  }
+
+  if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
+
   if (subscription) {
     const plan = metadata.plan || subscription.items?.data?.[0]?.price?.metadata?.plan || 'free';
     const status = subscription.status || 'active';
     await pool.query(
       `UPDATE organization_billing
        SET plan=$1,subscription_status=$2,billing_customer_id=$3,billing_subscription_id=$4,
-           current_period_start=to_timestamp($5),current_period_end=to_timestamp($6),
-           cancel_at_period_end=$7,limits=$8::jsonb,updated_at=CURRENT_TIMESTAMP
-       WHERE organization_id=$9`,
+           trial_ends_at=CASE WHEN $5 > 0 THEN to_timestamp($5) ELSE NULL END,current_period_start=to_timestamp($6),current_period_end=to_timestamp($7),
+           cancel_at_period_end=$8,limits=$9::jsonb,updated_at=CURRENT_TIMESTAMP
+       WHERE organization_id=$10`,
       [plan,status,subscription.customer || null,subscription.id || null,
-       Number(subscription.current_period_start || 0),Number(subscription.current_period_end || 0),
+       Number(subscription.trial_end || 0),Number(subscription.current_period_start || 0),Number(subscription.current_period_end || 0),
        Boolean(subscription.cancel_at_period_end),JSON.stringify(planLimits(plan)),organizationId],
     );
     return { updated: true, organizationId, plan, status };
@@ -139,7 +187,7 @@ export async function handleStripeEvent(pool: Pool, event: any) {
     const subscriptionId = object.subscription;
     const plan = metadata.plan || 'free';
     await pool.query(
-      `UPDATE organization_billing SET plan=$1,subscription_status='active',billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
+      `UPDATE organization_billing SET plan=$1,billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
       [plan,customerId,subscriptionId,JSON.stringify(planLimits(plan)),organizationId],
     );
     return { updated: true, organizationId, plan };
@@ -154,7 +202,17 @@ export async function recordUsage(pool: Pool, organizationId: string, metric: st
 
 export async function enforceUsageLimit(pool: Pool, organizationId: string, metric: string, increment = 1) {
   const billing = await getOrganizationBilling(pool, organizationId);
-  const limits = billing?.limits || planLimits(billing?.plan || 'free');
+  const plan = (billing?.plan || 'free') as PlanName;
+  const status = String(billing?.subscription_status || 'active');
+  const paidPlan = plan !== 'free';
+  if (paidPlan && !['active', 'trialing'].includes(status)) {
+    const error: any = new Error('Subscription is not active');
+    error.statusCode = 402;
+    error.code = 'SUBSCRIPTION_INACTIVE';
+    error.subscriptionStatus = status;
+    throw error;
+  }
+  const limits = billing?.limits || planLimits(plan);
   const limit = Number(limits[metric] ?? Number.MAX_SAFE_INTEGER);
   if (!Number.isFinite(increment) || increment <= 0) throw new Error('Usage increment must be positive');
   const period = new Date();
@@ -180,4 +238,23 @@ export async function enforceUsageLimit(pool: Pool, organizationId: string, metr
     throw error;
   }
   return { used, limit };
+}
+
+export async function getUsageSummary(pool: Pool, organizationId: string) {
+  const billing = await getOrganizationBilling(pool, organizationId);
+  const period = new Date(); period.setUTCDate(1);
+  const periodStart = period.toISOString().slice(0, 10);
+  const result = await pool.query('SELECT metric, used FROM organization_usage WHERE organization_id=$1 AND period_start=$2 ORDER BY metric',[organizationId,periodStart]);
+  const limits = billing?.limits || planLimits(billing?.plan || 'free');
+  const usage: Record<string, {used:number;limit:number;remaining:number}> = {};
+  for (const [metric, value] of Object.entries(limits)) { const used=Number(result.rows.find((row:any)=>row.metric===metric)?.used||0); const limit=Number(value); usage[metric]={used,limit,remaining:Math.max(0,limit-used)}; }
+  return {period_start:periodStart,plan:billing?.plan||'free',subscription_status:billing?.subscription_status||'active',usage};
+}
+
+export async function cancelSubscription(pool: Pool, organizationId: string) {
+  const billing=await getOrganizationBilling(pool,organizationId);
+  if (!billing?.billing_subscription_id) throw new Error('No active Stripe subscription exists for this organization');
+  const subscription=await stripeRequest(`subscriptions/${encodeURIComponent(billing.billing_subscription_id)}`,'POST',{cancel_at_period_end:'true'});
+  await pool.query('UPDATE organization_billing SET cancel_at_period_end=true,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$1',[organizationId]);
+  return {cancel_at_period_end:true,current_period_end:subscription.current_period_end?new Date(subscription.current_period_end*1000).toISOString():billing.current_period_end};
 }

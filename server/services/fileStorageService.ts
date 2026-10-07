@@ -78,6 +78,13 @@ export async function removeStoredObject(path:string){
 export function createFileId(){return `file_${randomUUID()}`;}
 
 
+export function getRingCentralRecordingFileId(recordingUrl:string): string {
+  const url=new URL(String(recordingUrl||'').trim());
+  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
+  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
+  return `file_callrec_${safeRecordingId}`;
+}
+
 export async function archiveRingCentralRecording(input:{organizationId:string;callId:string;recordingUrl:string;contactName?:string}){
   const organizationId=String(input.organizationId||'').trim();
   const callId=String(input.callId||'').trim();
@@ -104,6 +111,19 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
   );
   if(existing.rowCount) return existing.rows[0];
 
+  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
+  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
+  const fileId=getRingCentralRecordingFileId(recordingUrl);
+  const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId};
+
+  await pool.query(
+    `INSERT INTO file_assets
+      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
+     VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,'audio/mpeg',0,$7::jsonb,'pending')
+     ON CONFLICT (id) DO UPDATE SET metadata=EXCLUDED.metadata,status='pending',deleted_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+    [fileId,organizationId,callId,`call-recording-${safeRecordingId}.mp3`,getFileStorageBucket(),buildStoragePath(organizationId,'call',callId,fileId,'call-recording.mp3'),JSON.stringify(metadata)],
+  );
+
   const {SDK}=await import('@ringcentral/sdk');
   const clientId=process.env.RINGCENTRAL_CLIENT_ID?.trim();
   const clientSecret=process.env.RINGCENTRAL_CLIENT_SECRET?.trim()||'';
@@ -129,9 +149,6 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
   const sizeBytes=contentLength?Number(contentLength):0;
   if(sizeBytes>0) validateFileRequest({originalName:'call-recording.mp3',mimeType:contentType,sizeBytes,category:'call_recording'});
 
-  const recordingId=url.pathname.split('/').filter(Boolean).pop()||'recording';
-  const safeRecordingId=recordingId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)||'recording';
-  const fileId=`file_callrec_${safeRecordingId}`;
   const extension=contentType.includes('wav')?'wav':contentType.includes('mp4')?'mp4':contentType.includes('ogg')?'ogg':'mp3';
   const storagePath=buildStoragePath(organizationId,'call',callId,fileId,`call-recording.${extension}`);
   const {url:storageBase,key}=config();
@@ -142,26 +159,76 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
     'x-upsert':'false',
   });
   if(contentLength) uploadHeaders.set('Content-Length',contentLength);
-  const uploadResponse=await fetch(`${storageBase}/object/${getFileStorageBucket()}/${storagePath}`,{
+  const uploadResponse=await fetch(`${storageBase}/object/${getFileStorageBucket()}/${storagePath}`,({
     method:'POST',
     headers:uploadHeaders,
     body:sourceResponse.body as any,
-    duplex:'half' as any,
-  });
+    duplex:'half',
+  } as any));
   if(!uploadResponse.ok){
     const body=await uploadResponse.text().catch(()=> '');
     throw new Error(`Private storage upload failed (${uploadResponse.status}): ${body.slice(0,300)}`);
   }
 
-  const metadata={source:'ringcentral',source_url:recordingUrl,recording_id:recordingId,archived_at:new Date().toISOString()};
+  const finalMetadata={...metadata,archived_at:new Date().toISOString()};
+  const result=await pool.query(
+    `UPDATE file_assets
+       SET original_name=$2,storage_path=$3,mime_type=$4,size_bytes=$5,metadata=$6::jsonb,status='ready',updated_at=CURRENT_TIMESTAMP,deleted_at=NULL
+       WHERE id=$1 AND organization_id=$7
+       RETURNING id,storage_path,status`,
+    [fileId,`call-recording-${safeRecordingId}.${extension}`,storagePath,contentType,sizeBytes||0,JSON.stringify(finalMetadata),organizationId],
+  );
+  return result.rows[0];
+
+
+}
+
+
+export async function attachCallTranscript(input:{organizationId:string;callId:string;transcript:string;source?:string}) {
+  const organizationId=String(input.organizationId||'').trim();
+  const callId=String(input.callId||'').trim();
+  const transcript=String(input.transcript||'').trim();
+  if(!organizationId||!callId||!transcript) throw new Error('Transcript attachment requires organizationId, callId, and transcript');
+
+  const {getPgPool}=await import('../db/db');
+  const pool=getPgPool();
+  if(!pool) throw new Error('PostgreSQL is required to attach call transcripts');
+
+  const existing=await pool.query(
+    `SELECT id FROM file_assets
+     WHERE organization_id=$1 AND entity_type='call' AND entity_id=$2
+       AND category='call_transcript' AND status='ready'
+     ORDER BY created_at DESC LIMIT 1`,
+    [organizationId,callId],
+  );
+  if(existing.rowCount) {
+    await pool.query(
+      `UPDATE file_assets SET extracted_text=$1,description='Call transcript',metadata=metadata||$2::jsonb,updated_at=CURRENT_TIMESTAMP
+       WHERE id=$3 AND organization_id=$4`,
+      [transcript,JSON.stringify({source:input.source||'telephony',updated_at:new Date().toISOString()}),existing.rows[0].id,organizationId],
+    );
+    return existing.rows[0];
+  }
+
+  const fileId=createFileId();
+  const originalName=`call-transcript-${callId}.txt`;
+  const path=buildStoragePath(organizationId,'call',callId,fileId,originalName);
+  await ensureFileBucket();
+  const {url:keyUrl,key}=config();
+  const body=Buffer.from(transcript,'utf8');
+  const response=await fetch(`${keyUrl}/object/${getFileStorageBucket()}/${path}`,{
+    method:'POST',
+    headers:{Authorization:`Bearer ${key}`,apikey:key,'Content-Type':'text/plain; charset=utf-8','Content-Length':String(body.length),'x-upsert':'false'},
+    body,
+  });
+  if(!response.ok) throw new Error(`Transcript storage upload failed (${response.status})`);
+
   const result=await pool.query(
     `INSERT INTO file_assets
-      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
-     VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,$7,$8,$9::jsonb,'ready')
-     ON CONFLICT (organization_id,storage_bucket,storage_path) DO UPDATE
-       SET status='ready',mime_type=EXCLUDED.mime_type,size_bytes=EXCLUDED.size_bytes,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP,deleted_at=NULL
+      (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,description,extracted_text,metadata,status)
+     VALUES ($1,$2,'call',$3,'call_transcript',$4,$5,$6,'text/plain',$7,'Call transcript',$8,$9::jsonb,'ready')
      RETURNING id,storage_path,status`,
-    [fileId,organizationId,callId,`call-recording-${safeRecordingId}.${extension}`,getFileStorageBucket(),storagePath,contentType,sizeBytes||0,JSON.stringify(metadata)],
+    [fileId,organizationId,callId,originalName,getFileStorageBucket(),path,body.length,transcript,JSON.stringify({source:input.source||'telephony',created_at:new Date().toISOString()})],
   );
   return result.rows[0];
 }

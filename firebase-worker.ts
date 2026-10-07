@@ -2,6 +2,7 @@ import { getPgPool } from './server/db/db';
 import { runPropertyRefreshWorkerOnce } from './server/workers/schedulerWorker';
 import { runEmailWorkerOnce } from './server/workers/emailWorker';
 import { claimDueWorkflowSchedules, runWorkflowWorkerOnce } from './server/services/workflowAutomationService';
+import { runFileProcessingWorkerOnce } from './server/workers/fileProcessingWorker';
 
 export async function runFirebaseWorkerTick() {
   const pool = getPgPool();
@@ -10,6 +11,8 @@ export async function runFirebaseWorkerTick() {
   const workflowSchedules = await claimDueWorkflowSchedules(pool);
   const workflowJobs = await runWorkflowWorkerOnce(pool);
   const emailJobs = await runEmailWorkerOnce();
+
+  const fileProcessing = await runFileProcessingWorkerOnce(pool, 10);
 
   const propertyResults = [];
   for (let i = 0; i < 10; i += 1) {
@@ -23,5 +26,6 @@ export async function runFirebaseWorkerTick() {
     workflowJobs,
     emailJobs,
     propertyJobs: propertyResults.length,
+    fileProcessing,
   };
 }

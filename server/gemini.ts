@@ -1,6 +1,8 @@
 import { GoogleGenAI, ThinkingLevel, Modality } from '@google/genai';
 import { taskCacheService } from './services/cacheService';
 import { getPgPool } from './db/db';
+import { estimateAiCostUsd, recordAiUsage } from './services/analyticsService';
+import { enforceUsageLimit } from './services/billingService';
 
 // Lazy client initialization for resilience
 let geminiClient: GoogleGenAI | null = null;
@@ -74,12 +76,17 @@ export async function generateAgentText(
   options: ModelCallOptions = {}
 ): Promise<{ text: string; searchSources?: Array<{ uri: string; title: string }>; cached?: boolean }> {
   const category = 'gemini_text';
+  // Tenant CRM/owner data must never be returned from the process-global cache.
   const inputPayload = { prompt, model: options.model, systemInstruction: options.systemInstruction, temperature: options.temperature };
 
   const { result, isCached } = await taskCacheService.wrapTask(
     category,
     inputPayload,
     async () => {
+      if (options.organizationId) {
+        const pool = getPgPool();
+        if (pool) await enforceUsageLimit(pool, options.organizationId, 'ai_actions_month', 1);
+      }
       const ai = getGeminiClient();
       if (!ai) {
         return {
@@ -143,17 +150,34 @@ export async function generateAgentText(
             const analyticsPool = getPgPool();
             if (analyticsPool && options.organizationId) {
               try {
-                await analyticsPool.query(
-                  `INSERT INTO analytics_ai_usage
-                    (id, organization_id, provider, model, operation, input_tokens, output_tokens, total_tokens, estimated_cost_usd, latency_ms, success, metadata)
-                   VALUES ($1,$2,'google', $3,'generateAgentText',$4,$5,$6,0,$7,true,$8::jsonb)`,
-                  [
-                    `aiu_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
-                    options.organizationId,
-                    currentModel, inputTokens, outputTokens, totalTokens, 0,
-                    JSON.stringify({ userId: options.userId, agentId: options.agentId, workflowRunId: options.workflowRunId, cached: false, requestedModel, hasSearch: Boolean(options.useSearch), hasMaps: Boolean(options.useMaps) }),
-                  ],
-                );
+                const estimatedCostUsd = estimateAiCostUsd({
+                  model: currentModel,
+                  inputTokens,
+                  outputTokens,
+                });
+                await recordAiUsage(analyticsPool, {
+                  id: `aiu_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+                  organizationId: options.organizationId,
+                  userId: options.userId,
+                  agentId: options.agentId,
+                  workflowRunId: options.workflowRunId,
+                  provider: 'google',
+                  model: currentModel,
+                  operation: 'generateAgentText',
+                  inputTokens,
+                  outputTokens,
+                  totalTokens,
+                  estimatedCostUsd: estimatedCostUsd ?? 0,
+                  success: true,
+                  metadata: {
+                    cached: false,
+                    requestedModel,
+                    hasSearch: Boolean(options.useSearch),
+                    hasMaps: Boolean(options.useMaps),
+                    pricingKnown: estimatedCostUsd !== null,
+                    pricingBasis: 'Google Gemini Developer API Standard pricing through 2026-12-31',
+                  },
+                });
               } catch (analyticsError) {
                 console.warn('AI analytics recording skipped:', (analyticsError as any)?.message || analyticsError);
               }
@@ -204,10 +228,10 @@ export async function generateAgentText(
         text: `[Vortex One Intelligence Synthesis]\nRequest analyzed: ${prompt.slice(0, 140)}...\nProcessed against property records, CRM data structures, and operational rules engine.`,
       };
     },
-    { skipCache: options.skipCache, forceRefresh: options.forceRefresh }
+    { skipCache: true, forceRefresh: options.forceRefresh }
   );
 
-  return { ...result, cached: isCached };
+  return { ...result, cached: false };
 }
 
 /**
@@ -247,7 +271,8 @@ export async function generateSpeechTTS(
         console.warn('TTS Generation temporarily unavailable:', err.message || err);
         return null;
       }
-    }
+    },
+    { skipCache: true }
   );
 
   return result;

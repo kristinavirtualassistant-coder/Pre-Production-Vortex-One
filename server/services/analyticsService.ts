@@ -22,6 +22,11 @@ function n(value: unknown): number {
   return Number(value || 0);
 }
 
+/**
+ * Persist an organization's cost event using the supplied PostgreSQL pool.
+ * Quantity defaults to one and unit cost to zero; an omitted total is their product.
+ * Resolves after insertion and rejects on an invalid organization or database error.
+ */
 export async function recordCostEvent(pool: Pool, input: {
   organizationId: string;
   id: string;
@@ -52,6 +57,25 @@ export async function recordCostEvent(pool: Pool, input: {
       input.referenceId ?? null, JSON.stringify(input.metadata ?? {}), input.occurredAt ?? null,
     ],
   );
+}
+
+export function estimateAiCostUsd(input: {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}): number | null {
+  // Google Gemini Developer API Standard pricing effective through 2026-12-31.
+  // Return null for unknown models so analytics never invents a cost.
+  const rates: Record<string, { input: number; output: number }> = {
+    'gemini-3.7-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.8-flash': { input: 0.75, output: 3.75 },
+    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
+  };
+  const rate = input.model ? rates[input.model] : undefined;
+  if (!rate) return null;
+  return ((input.inputTokens ?? 0) / 1_000_000) * rate.input
+    + ((input.outputTokens ?? 0) / 1_000_000) * rate.output;
 }
 
 export async function recordAiUsage(pool: Pool, input: {
@@ -109,6 +133,8 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
           (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND stage='won') AS won_leads,
           (SELECT COUNT(*) FROM leads WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3 AND stage='lost') AS lost_leads,
           (SELECT COUNT(*) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_added,
+          (SELECT COALESCE(SUM(estimated_value),0) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_value_usd,
+          (SELECT COALESCE(SUM(estimated_equity),0) FROM properties WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS properties_equity_usd,
           (SELECT COUNT(*) FROM property_owners WHERE organization_id=$1 AND created_at >= $2 AND created_at < $3) AS owners_added
         `,
         [organizationId, start, end],
@@ -252,7 +278,10 @@ export async function getAnalytics(pool: Pool, input: AnalyticsRange) {
     overview: {
       leads, contacts: n(o.contacts), calls, connectedCalls: connected, appointments,
       completedAppointments: n(o.completed_appointments), wonLeads: won, lostLeads: n(o.lost_leads),
-      propertiesAdded: n(o.properties_added), ownersAdded: n(o.owners_added),
+      propertiesAdded: n(o.properties_added),
+      propertyValueUsd: n(o.properties_value_usd),
+      propertyEquityUsd: n(o.properties_equity_usd),
+      ownersAdded: n(o.owners_added),
       contactRate: leads ? connected / leads * 100 : 0,
       appointmentRate: leads ? appointments / leads * 100 : 0,
       winRate: leads ? won / leads * 100 : 0,

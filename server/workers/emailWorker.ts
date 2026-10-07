@@ -1,6 +1,12 @@
 import { getPgPool } from '../db/db';
 import { processEmailJob } from '../services/emailWorker';
+import { runCommunicationWorkerOnce } from './communicationWorker';
 
+/**
+ * Process up to ten outreach jobs and 25 communication jobs per selected organization.
+ * Use the configured organization or discover organizations with due or stale jobs,
+ * and return the total number handled; require PostgreSQL.
+ */
 export async function runEmailWorkerOnce(): Promise<number> {
   const pool = getPgPool();
   if (!pool) throw new Error('PostgreSQL is required for email worker execution');
@@ -11,7 +17,7 @@ export async function runEmailWorkerOnce(): Promise<number> {
     : (await pool.query<{ organization_id: string }>(`
         SELECT DISTINCT organization_id
         FROM jobs
-        WHERE job_type = 'email_outreach.send'
+        WHERE job_type IN ('email_outreach.send','communication.email.send','communication.sms.send','communication.sequence.step')
           AND (
             (status = 'queued' AND available_at <= CURRENT_TIMESTAMP)
             OR (status = 'processing' AND locked_at < CURRENT_TIMESTAMP - INTERVAL '300 seconds')
@@ -24,5 +30,6 @@ export async function runEmailWorkerOnce(): Promise<number> {
       result.processed += 1;
     }
   }
+  result.processed += await runCommunicationWorkerOnce(pool, organizations);
   return result.processed;
 }

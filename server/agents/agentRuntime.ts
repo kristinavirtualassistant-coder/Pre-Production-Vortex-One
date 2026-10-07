@@ -30,6 +30,8 @@ export interface AgentRunResult {
 const DANGEROUS_TOOLS = new Set([
   'make_call',
   'create_crm_task',
+  'create_lead',
+  'enqueue_workflow',
   'reconcile_crm_import',
   'sync_google_drive_document',
 ]);
@@ -71,8 +73,11 @@ async function getAgentConfig(pool: any, organizationId: string, agentId: string
       allowedTools: row.allowed_tools || [],
       allowedData: row.allowed_data || [],
       model: row.model,
+      provider: row.provider || undefined,
       temperature: Number(row.temperature ?? 0.2),
       maxTokens: row.max_tokens || 4096,
+      maxRetries: row.max_retries ?? 3,
+      memoryEnabled: row.memory_enabled !== false,
       permissions: row.permissions || [],
       parentAgentId: row.parent_agent_id || null,
       enabled: row.enabled,
@@ -105,6 +110,8 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
     search_owner: 'read_only',
     score_lead: 'read_only',
     create_crm_task: 'crm_read_write',
+    create_lead: 'crm_read_write',
+    enqueue_workflow: 'workflow_dispatch',
     reconcile_crm_import: 'crm_read_write',
     make_call: 'telephony_trigger',
   };
@@ -147,14 +154,15 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   const pool = getPgPool();
   if (!pool) throw new Error('PostgreSQL is required for real AI agent execution');
   const agent = await getAgentConfig(pool, request.organizationId, request.agentId);
-  const provider = inferAgentProvider(agent.model);
+  const provider = agent.provider || inferAgentProvider(agent.model);
   const runId = `arun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-  const maxAttempts = Math.min(5, Math.max(1, request.maxAttempts || 3));
+  const maxAttempts = Math.min(5, Math.max(1, request.maxAttempts || agent.maxRetries || 3));
   const started = Date.now();
   let totalInput = 0;
   let totalOutput = 0;
   let totalCost = 0;
-  const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, await loadMemory(pool, request.organizationId, agent.id), request.objective, request.context || {}) }];
+  const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
+  const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, memory, request.objective, request.context || {}) }];
 
   await pool.query(
     `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
@@ -258,7 +266,7 @@ export async function continueApprovedAgentRun(organizationId: string, runId: st
   await pool.query(`UPDATE agent_runs SET status='running', pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`, [runId, organizationId]);
   const agent = await getAgentConfig(pool, organizationId, payload.agent_id);
   const result = await generateWithAgentProvider({
-    provider: inferAgentProvider(agent.model),
+    provider: agent.provider || inferAgentProvider(agent.model),
     model: agent.model,
     systemInstruction: agent.systemInstructions,
     messages: [{ role:'user', content: `The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId, runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]} with the final answer.` }],
@@ -269,5 +277,5 @@ export async function continueApprovedAgentRun(organizationId: string, runId: st
     `UPDATE agent_runs SET status='completed', output=$2::jsonb, output_tokens=COALESCE(output_tokens,0)+$3, input_tokens=COALESCE(input_tokens,0)+$4, estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5, completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
     [runId, JSON.stringify({ final: parseEnvelope(result.text).final || result.text }), result.outputTokens || 0, result.inputTokens || 0, estimateCost(inferAgentProvider(agent.model), result.inputTokens, result.outputTokens), organizationId],
   );
-  return { runId, status:'completed', finalText:parseEnvelope(result.text).final || result.text, provider:inferAgentProvider(agent.model), model:agent.model };
+  return { runId, status:'completed', finalText:parseEnvelope(result.text).final || result.text, provider:agent.provider || inferAgentProvider(agent.model), model:agent.model };
 }
