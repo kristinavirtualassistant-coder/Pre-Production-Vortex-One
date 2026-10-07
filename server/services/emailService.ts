@@ -33,7 +33,7 @@ function dotStuff(value: string): string {
 }
 
 export async function sendEmail(message: EmailMessage): Promise<EmailSendResult> {
-  if (!/^\\S+@\\S+\\.\\S+$/.test(message.to)) throw new Error('Invalid recipient email');
+  if (!/^\S+@\S+\.\S+$/.test(message.to)) throw new Error('Invalid recipient email');
   const from = message.from?.trim() || required('SMTP_FROM');
   const smtp = parseAddress(required('SMTP_HOST'));
   const username = process.env.SMTP_USER?.trim();

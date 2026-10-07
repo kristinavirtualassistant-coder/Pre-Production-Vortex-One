@@ -112,11 +112,12 @@ async function runAllTests() {
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
   // Append-only guard: bump EXPECTED_MIGRATION_COUNT deliberately when a migration is added.
-  const EXPECTED_MIGRATION_COUNT = 39;
+  const EXPECTED_MIGRATION_COUNT = 40;
   assert(MIGRATIONS.length === EXPECTED_MIGRATION_COUNT, `Migration list contains ${EXPECTED_MIGRATION_COUNT} defined migrations`, `Expected ${EXPECTED_MIGRATION_COUNT}, got ${MIGRATIONS.length}`);
   assert(new Set(MIGRATIONS.map((migration) => migration.version)).size === MIGRATIONS.length, 'Migration versions are unique');
   assert(MIGRATIONS.some((migration) => migration.version === 12 && migration.name === '012_auth_webhook_voicemail_foundation'), 'Auth foundation migration 12 is part of the migration chain');
   assert(MIGRATIONS.some((migration) => migration.version === 40 && migration.name === '040_add_campaign_scheduling_columns'), 'Campaign scheduling migration 40 present');
+  assert(MIGRATIONS.some((migration) => migration.version === 41 && migration.name === '041_add_totp_replay_protection'), 'TOTP replay protection migration 41 present');
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');

@@ -28,6 +28,8 @@ const baseEnv = {
   VORTEX_ONE_SKIP_LIVE_GIS: '1',
   SQL_SSL: 'false',
   APP_URL: 'http://localhost:4173',
+  AUTH_ENCRYPTION_KEY: process.env.AUTH_ENCRYPTION_KEY || 'IgIHEDzfX63nIZ72ptfG1GXx8EAaJXWQEytbOCbJYh8=',
+  INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY || 'ci-only-integration-key-32-characters-min',
   // Suites share one client IP and sign in many times; the limiter suite resets the multiplier to 1.
   RATE_LIMIT_MULTIPLIER: process.env.RATE_LIMIT_MULTIPLIER || '1000',
 };

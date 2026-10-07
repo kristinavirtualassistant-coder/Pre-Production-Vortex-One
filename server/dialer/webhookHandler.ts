@@ -66,7 +66,7 @@ export function handleRingCentralValidation(headers: Record<string, any> = {}): 
 // callbacks use RingCentral's Validation-Token mechanism above.
 export function verifyWebhookSecret(headers: Record<string, any> = {}): boolean {
   const configured = process.env.RINGCENTRAL_WEBHOOK_SECRET?.trim();
-  if (!configured) return process.env.NODE_ENV === 'test';
+  if (!configured) return false; // fail closed: an unconfigured secret never authenticates anything
   const supplied = getHeader(headers, 'x-vortex-webhook-secret');
   return !!supplied && secureTokenEqual(supplied, configured);
 }

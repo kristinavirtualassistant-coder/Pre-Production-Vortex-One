@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
 import { enforceUsageLimit } from './billingService';
 import { decryptSecret, encryptSecret } from './integrationOAuth';
@@ -140,8 +140,14 @@ function escapeHtml(value: string): string {
 /**
  * Return the configured integration key or the local fallback for tracking signatures.
  */
+let ephemeralTrackingSecret: string | undefined;
 function trackingSecret(): string {
-  return process.env.INTEGRATION_ENCRYPTION_KEY || 'vortex-one-local-tracking-secret';
+  const configured = process.env.INTEGRATION_ENCRYPTION_KEY;
+  if (configured) return configured;
+  // No hard-coded fallback: a known key would let anyone forge tracking/unsubscribe links.
+  if (process.env.NODE_ENV === 'production') throw new Error('INTEGRATION_ENCRYPTION_KEY is required in production');
+  ephemeralTrackingSecret ??= randomBytes(32).toString('hex');
+  return ephemeralTrackingSecret;
 }
 
 /**

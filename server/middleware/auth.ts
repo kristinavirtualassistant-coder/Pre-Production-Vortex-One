@@ -4,7 +4,7 @@ import { getPgPool } from '../db/db';
 import { getOrganizationBilling, planLimits } from '../services/billingService';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
-import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
+import { matchTotpStep, appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 import { can } from '../security/permissionMatrix';
@@ -145,11 +145,24 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!inviteToken && (organizationName.length < 2 || organizationName.length > 255)) return res.status(400).json({ error: 'Organization name must be between 2 and 255 characters' });
 
+  // Self-service organization creation can be closed or restricted to approved email domains.
+  if (!inviteToken) {
+    if (process.env.SIGNUP_ENABLED === 'false') return res.status(403).json({ error: 'Self-service sign-up is disabled. Ask an administrator for an invitation.' });
+    const allowed = (process.env.SIGNUP_ALLOWED_DOMAINS || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+    if (allowed.length && !allowed.includes(email.split('@')[1] || '')) return res.status(403).json({ error: 'Sign-up is not available for this email domain.' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const existingEmail = await client.query('SELECT id FROM users WHERE lower(email)=lower($1) LIMIT 1',[email]);
-    if (existingEmail.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'An account with this email already exists' }); }
+    if (existingEmail.rowCount) {
+      // Anti-enumeration: respond exactly as for a new account and do equivalent work (hashing), so neither the
+      // response nor its timing reveals that the address is registered.
+      await client.query('ROLLBACK');
+      await hashPassword(password);
+      return res.status(201).json({ verificationRequired:true, email });
+    }
 
     let organizationId: string;
     let assignedRole = 'admin';
@@ -164,7 +177,7 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
       await client.query('UPDATE organization_invites SET accepted_at=CURRENT_TIMESTAMP WHERE id=$1',[row.id]);
     } else {
       const existingOrganization = await client.query('SELECT id FROM organizations WHERE lower(name)=lower($1) LIMIT 1',[organizationName]);
-      if (existingOrganization.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'An organization with this name already exists. Ask an administrator to invite you.' }); }
+      if (existingOrganization.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'Unable to create an account with these details' }); }
       organizationId=`org_${randomUUID()}`;
       const slugBase=organizationName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80)||'organization';
       let slug=slugBase;
@@ -208,7 +221,7 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
     });
   } catch(error:any) {
     try { await client.query('ROLLBACK'); } catch {}
-    if(error?.code==='23505') return res.status(409).json({error:'An account or organization with these details already exists'});
+    if(error?.code==='23505') return res.status(409).json({error:'Unable to create an account with these details'});
     console.error('PostgreSQL signup error:',error);
     return res.status(500).json({error:'Account creation failed'});
   } finally { client.release(); }
@@ -218,7 +231,7 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const role = typeof req.body?.role === 'string' ? req.body.role : 'member';
   const allowedRoles = ['member', 'agent', 'manager', 'executive'];
-  if (!email || !/^\\S+@\\S+\\.\\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid invite role' });
   if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
   if (!['admin', 'executive', 'manager'].includes(req.dbUser.role)) return res.status(403).json({ error: 'Only tenant administrators and managers can invite members' });
@@ -352,14 +365,16 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const result=await client.query(`SELECT c.id,c.user_id,c.attempts,u.email,u.name,u.role,u.organization_id,u.mfa_secret,u.mfa_backup_codes,
+    const result=await client.query(`SELECT c.id,c.user_id,c.attempts,u.email,u.name,u.role,u.organization_id,u.mfa_secret,u.mfa_backup_codes,u.mfa_last_totp_step,
       o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
       FROM auth_mfa_challenges c JOIN users u ON u.id=c.user_id JOIN organizations o ON o.id=u.organization_id
       WHERE c.challenge_hash=$1 AND c.expires_at>CURRENT_TIMESTAMP AND u.disabled_at IS NULL FOR UPDATE`,
       [hashOneTimeToken(challengeToken)]);
     const row=result.rows[0];
     if(!row||row.attempts>=5){await client.query('ROLLBACK');return res.status(401).json({error:'MFA challenge is invalid or expired'});}
-    const totpValid=row.mfa_secret?verifyTotp(decryptMfaSecret(row.mfa_secret),code):false;
+    const totpStep=row.mfa_secret?matchTotpStep(decryptMfaSecret(row.mfa_secret),code):null;
+    // Replay protection: a TOTP time-step that was already used (or an older one) is never accepted again.
+    const totpValid=totpStep!==null&&(row.mfa_last_totp_step===null||row.mfa_last_totp_step===undefined||totpStep>Number(row.mfa_last_totp_step));
     const backups=Array.isArray(row.mfa_backup_codes)?row.mfa_backup_codes:[];
     const backupIndex=totpValid?-1:backups.findIndex((hash:string)=>hashOneTimeToken(code)===hash);
     if(!totpValid&&backupIndex<0){
@@ -368,6 +383,7 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
       return res.status(401).json({error:'Invalid MFA code'});
     }
     if(backupIndex>=0){backups.splice(backupIndex,1);await client.query('UPDATE users SET mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(backups),row.user_id]);}
+    if(totpValid)await client.query('UPDATE users SET mfa_last_totp_step=$1 WHERE id=$2',[totpStep,row.user_id]);
     await client.query('DELETE FROM auth_mfa_challenges WHERE id=$1',[row.id]);
     await client.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[row.user_id]);
     await client.query('COMMIT');

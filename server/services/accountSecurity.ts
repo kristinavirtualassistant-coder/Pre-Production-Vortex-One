@@ -168,14 +168,19 @@ export function totpCode(secret: string, timestamp = Date.now()): string {
   return String(binary % 1_000_000).padStart(6, '0');
 }
 
-export function verifyTotp(secret: string, code: string, timestamp = Date.now()): boolean {
-  if (!/^\d{6}$/.test(code)) return false;
+/** Returns the matched 30-second time-step (for replay protection) or null when the code is not valid. */
+export function matchTotpStep(secret: string, code: string, timestamp = Date.now()): number | null {
+  if (!/^\d{6}$/.test(code)) return null;
   const current = Number(code);
   for (let drift = -1; drift <= 1; drift += 1) {
-    const expected = Number(totpCode(secret, timestamp + drift * 30_000));
-    if (current === expected) return true;
+    const at = timestamp + drift * 30_000;
+    if (current === Number(totpCode(secret, at))) return Math.floor(at / 1000 / 30);
   }
-  return false;
+  return null;
+}
+
+export function verifyTotp(secret: string, code: string, timestamp = Date.now()): boolean {
+  return matchTotpStep(secret, code, timestamp) !== null;
 }
 
 export function generateBackupCodes(count = 10): string[] {

@@ -1466,5 +1466,13 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_campaign_due_schedule ON campaign(scheduled_at) WHERE status = 'scheduled';
     `,
   },
+  {
+    version: 41,
+    name: '041_add_totp_replay_protection',
+    // The last accepted TOTP time-step per user: a code (or an earlier step) can never be accepted twice.
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_totp_step BIGINT;
+    `,
+  },
 ];
 

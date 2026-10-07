@@ -2,6 +2,7 @@
  * Vortex One - PostgreSQL Database Layer & In-Memory Development Store
  */
 
+import { isDemoModeEnabled } from '../security/demoMode';
 import { Pool, PoolClient } from 'pg';
 import { MIGRATIONS } from './migrations';
 import { shouldSkipPostgresMigrations } from './migrationPolicy';
@@ -24,6 +25,17 @@ import {
   PropertyRefreshLog,
   OutreachTemplate,
 } from '../../src/types';
+
+/**
+ * TLS to PostgreSQL verifies the server certificate by default. Provide the provider CA with DATABASE_SSL_CA
+ * (PEM). Verification can only be disabled explicitly with DATABASE_SSL_REJECT_UNAUTHORIZED=false.
+ */
+function databaseSslOptions() {
+  const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false';
+  if (!rejectUnauthorized) console.warn('DATABASE_SSL_REJECT_UNAUTHORIZED=false: PostgreSQL TLS certificate verification is disabled.');
+  const ca = process.env.DATABASE_SSL_CA?.trim();
+  return { rejectUnauthorized, ...(ca ? { ca: ca.includes('\\n') ? ca.replace(/\\n/g, '\n') : ca } : {}) };
+}
 
 export interface DatabaseStatus {
   connected: boolean;
@@ -1309,7 +1321,7 @@ Sincerely,
 }
 
 // Demo fixtures are opt-in only. Production must never create synthetic CRM data.
-if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production') {
+if (isDemoModeEnabled()) {
   seedInitialData();
 }
 
@@ -1340,7 +1352,7 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         database: database,
         max: 10,
         connectionTimeoutMillis: 5000,
-        ssl: config?.ssl ? { rejectUnauthorized: false } : undefined,
+        ssl: config?.ssl ? databaseSslOptions() : undefined,
       });
 
       const client = await migrationPool.connect();
@@ -1405,7 +1417,7 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         database,
         max: 10,
         connectionTimeoutMillis: 5000,
-        ssl: process.env.SQL_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+        ssl: process.env.SQL_SSL === 'true' ? databaseSslOptions() : undefined,
       });
 
       const runtimeRole = await pgPool.query(
@@ -1427,7 +1439,7 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         instance: `${host}:${port}`,
         database,
         appliedMigrationsCount: 0,
-        error: `PostgreSQL connection attempt failed (${host}:${port}/${database}): ${err.message}`,
+        error: 'PostgreSQL connection attempt failed',
       };
       console.error(`[Database] PostgreSQL initialization failed (${host}:${port}/${database}): ${err.message}`);
       throw err;

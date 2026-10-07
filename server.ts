@@ -46,6 +46,8 @@ import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
 import { requirePermission } from './server/security/permissions';
 import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
+import { isDemoModeEnabled } from './server/security/demoMode';
+import { logError } from './server/security/logger';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -193,7 +195,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   app.get('/api/db/status', requirePermission('system:read'), (req, res) => {
-    res.json(getDatabaseStatus());
+    const { instance: _instance, error, ...status } = getDatabaseStatus();
+    res.json({ ...status, ...(error ? { error: 'Database unavailable' } : {}) });
   });
 
   app.get('/api/operational/metrics', requirePermission('metrics:read'), async (req, res) => {
@@ -3949,7 +3952,7 @@ ${transcript}`;
   // 1. List Templates with optional filters
   app.get('/api/outreach-templates', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
-    if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production' && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
+    if (isDemoModeEnabled() && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
       seedInitialData();
     }
 
@@ -4584,7 +4587,20 @@ ${transcript}`;
 }
 
 /** Builds the app and binds the HTTP port. Invoked by server-bootstrap.ts, never on import. */
+let processHandlersInstalled = false;
+function installProcessHandlers() {
+  if (processHandlersInstalled) return;
+  processHandlersInstalled = true;
+  process.on('unhandledRejection', (reason) => logError('unhandledRejection', reason));
+  process.on('uncaughtException', (error) => {
+    logError('uncaughtException', error);
+    // State is undefined after an uncaught exception; exit and let the supervisor restart the process.
+    setTimeout(() => process.exit(1), 100).unref();
+  });
+}
+
 export async function startServer() {
+  installProcessHandlers();
   const PORT = Number(process.env.PORT || 8080);
   const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
