@@ -1,49 +1,33 @@
-import type { Pool, PoolClient, QueryConfig, QueryResult, QueryResultRow } from 'pg';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { PoolClient } from 'pg';
 
-export const TENANT_GUC = 'vortex_one.organization_id';
-
-export function requireTenantId(organizationId: string): string {
-  const value = String(organizationId || '').trim();
-  if (!/^org_[A-Za-z0-9_-]{1,120}$/.test(value)) {
-    throw new Error('Invalid tenant organization identifier');
-  }
-  return value;
+export interface TenantDbContext {
+  organizationId: string;
+  client: PoolClient;
+  rollbackOnly: boolean;
 }
 
-/**
- * Execute database work in a transaction with a transaction-local tenant
- * context. SET LOCAL prevents a pooled connection from retaining a tenant
- * identity for a later request.
- */
-export async function withTenantTransaction<T>(
-  pool: Pool,
-  organizationId: string,
-  work: (client: PoolClient) => Promise<T>,
-): Promise<T> {
-  const tenantId = requireTenantId(organizationId);
-  const client = await pool.connect();
+const storage = new AsyncLocalStorage<TenantDbContext>();
 
+export function getTenantContext(): TenantDbContext | undefined {
+  return storage.getStore();
+}
+
+export function enterTenantContext(context: TenantDbContext): void {
+  storage.enterWith(context);
+}
+
+export async function beginTenantContext(client: PoolClient, organizationId: string): Promise<TenantDbContext> {
+  await client.query('BEGIN');
+  await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', organizationId]);
+  return { organizationId, client, rollbackOnly: false };
+}
+
+export async function finishTenantContext(context: TenantDbContext, commit: boolean): Promise<void> {
   try {
-    await client.query('BEGIN');
-    await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, tenantId]);
-    const result = await work(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    try { await client.query('ROLLBACK'); } catch {}
-    throw error;
+    if (context.rollbackOnly || !commit) await context.client.query('ROLLBACK');
+    else await context.client.query('COMMIT');
   } finally {
-    client.release();
+    context.client.release();
   }
-}
-
-export async function queryAsTenant<T extends QueryResultRow = QueryResultRow>(
-  pool: Pool,
-  organizationId: string,
-  query: string | QueryConfig<any[]>,
-  values?: any[],
-): Promise<QueryResult<T>> {
-  return withTenantTransaction(pool, organizationId, (client) =>
-    client.query<T>(query as any, values),
-  );
 }

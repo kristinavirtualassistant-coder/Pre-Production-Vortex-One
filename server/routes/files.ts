@@ -33,7 +33,15 @@ export function createFilesRouter(): Router {
     const entityType=b.entityType==null?null:String(b.entityType).trim().slice(0,50), entityId=b.entityId==null?null:String(b.entityId).trim().slice(0,64);
     const description=b.description==null?null:String(b.description).slice(0,2000);
     try{
-      validateFileRequest({originalName,mimeType,sizeBytes,category}); await ensureFileBucket();
+      validateFileRequest({originalName,mimeType,sizeBytes,category});
+      const billing = (await pool.query('SELECT plan,limits FROM organization_billing WHERE organization_id=$1',[org])).rows[0];
+      const storageLimitMb = Number(billing?.limits?.storage_mb ?? 500);
+      const storageUsage = (await pool.query("SELECT COALESCE(SUM(size_bytes),0)::bigint AS bytes FROM file_assets WHERE organization_id=$1 AND deleted_at IS NULL AND status IN ('pending','ready')",[org])).rows[0];
+      const usedMb = Number(storageUsage?.bytes || 0) / (1024 * 1024);
+      if (usedMb + sizeBytes / (1024 * 1024) > storageLimitMb) {
+        return res.status(402).json({error:'Storage limit reached',code:'STORAGE_LIMIT_REACHED',limitMb:storageLimitMb,usedMb:Number(usedMb.toFixed(2))});
+      }
+      await ensureFileBucket();
       const fileId=createFileId(), bucket=process.env.VORTEX_FILES_BUCKET||'vortex-files', path=buildStoragePath(org,entityType,entityId,fileId,originalName);
       const {signedUrl,token}=await createSignedUploadUrl(path);
       await pool.query(`INSERT INTO file_assets(id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,description,metadata,status,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13)`,[fileId,org,entityType,entityId,category,originalName,bucket,path,mimeType,sizeBytes,description,JSON.stringify(b.metadata||{}),userId]);

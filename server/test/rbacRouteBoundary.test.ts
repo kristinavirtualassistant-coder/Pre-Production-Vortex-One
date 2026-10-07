@@ -8,6 +8,7 @@ const mutationLines = source
   .filter((line) => /app\.(post|put|patch|delete)\('/.test(line));
 
 const explicitlyUnprotected = new Set([
+  "app.post('/internal/scheduler/workflows'",
   "app.post('/internal/scheduler/email-outreach'",
 
   "app.post('/internal/scheduler/property-refresh'",
@@ -40,6 +41,11 @@ const rbacExpectations: Array<[string, string]> = [
   ["app.post('/api/approvals/:id/decide'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/outreach-templates'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/dial-batch'", "requireRole(['admin', 'executive', 'manager', 'agent'])"],
+  ["app.post('/api/workflows/:id/versions'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/versions/:versionId/publish'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/schedules'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.patch('/api/workflows/:id/schedules/:scheduleId'", "requireRole(['admin', 'executive', 'manager'])"],
+  ["app.post('/api/workflows/:id/schedules/:scheduleId/run-now'", "requireRole(['admin', 'executive', 'manager'])"],
 ];
 
 for (const [route, middleware] of rbacExpectations) {

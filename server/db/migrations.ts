@@ -638,6 +638,70 @@ export const MIGRATIONS: Migration[] = [
     version: 19,
     name: '019_production_auth_account_management',
     sql: `
+      CREATE TABLE IF NOT EXISTS organization_invites (
+        id VARCHAR(128) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL DEFAULT 'member',
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        invited_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        accepted_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_org_invites_org ON organization_invites(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_org_invites_email ON organization_invites(lower(email), expires_at);
+
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        id VARCHAR(128) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+
+      CREATE TABLE IF NOT EXISTS webhook_endpoints (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        url VARCHAR(2048) NOT NULL,
+        events JSONB NOT NULL,
+        enabled BOOLEAN DEFAULT true NOT NULL,
+        description TEXT,
+        secret VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_endpoints_org ON webhook_endpoints(organization_id);
+
+      CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id VARCHAR(64) PRIMARY KEY,
+        endpoint_id VARCHAR(64) NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        event_id VARCHAR(128) NOT NULL,
+        event_type VARCHAR(100) NOT NULL,
+        url VARCHAR(2048) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        status_code INTEGER,
+        attempts INTEGER DEFAULT 0 NOT NULL,
+        error TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_org ON webhook_deliveries(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint ON webhook_deliveries(endpoint_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS voicemail_library (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        label VARCHAR(255) NOT NULL,
+        url VARCHAR(2048) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_voicemail_library_org ON voicemail_library(organization_id, created_at DESC);
+
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP WITH TIME ZONE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false NOT NULL;
@@ -1009,373 +1073,229 @@ export const MIGRATIONS: Migration[] = [
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
     `,
-  },,
+  },
+,
+
   {
     version: 26,
-    name: '026_enforce_tenant_security_boundaries',
+    name: '026_create_unified_communications',
     sql: `
-      CREATE TABLE IF NOT EXISTS public_ca_parcels (
-        id VARCHAR(128) PRIMARY KEY,
-        county_fips VARCHAR(5) NOT NULL,
-        county_name VARCHAR(120) NOT NULL,
-        apn VARCHAR(128) NOT NULL,
-        address VARCHAR(500),
-        city VARCHAR(160),
-        state VARCHAR(2) NOT NULL DEFAULT 'CA',
-        zip VARCHAR(20),
-        property_type VARCHAR(120),
-        units_count INTEGER,
-        square_feet INTEGER,
-        year_built INTEGER,
-        assessed_value NUMERIC(18,2),
-        parcel_geometry JSONB,
-        source_record_id VARCHAR(255),
-        source_url TEXT,
-        provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
-        source_updated_at TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        CONSTRAINT uq_public_ca_parcels_county_apn UNIQUE (county_fips, apn)
+      ALTER TABLE outreach_templates DROP CONSTRAINT IF EXISTS outreach_templates_channel_check;
+      ALTER TABLE outreach_templates ALTER COLUMN subject DROP NOT NULL;
+      ALTER TABLE outreach_templates ADD CONSTRAINT outreach_templates_channel_check CHECK (channel IN ('email','sms','call_script'));
+
+      CREATE TABLE IF NOT EXISTS communication_threads (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')), provider VARCHAR(100) NOT NULL,
+        contact_key VARCHAR(320) NOT NULL, external_thread_id VARCHAR(255), subject TEXT,
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL, owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL, last_message_at TIMESTAMP WITH TIME ZONE,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_apn ON public_ca_parcels(county_fips, apn);
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_address ON public_ca_parcels(state, county_name, city, address);
+      CREATE INDEX IF NOT EXISTS idx_communication_threads_org_channel_time ON communication_threads(organization_id, channel, last_message_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_communication_threads_org_contact ON communication_threads(organization_id, channel, contact_key);
+      CREATE INDEX IF NOT EXISTS idx_communication_threads_org_lead ON communication_threads(organization_id, lead_id, updated_at DESC);
 
-      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
-      RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN
-        RAISE EXCEPTION 'audit_logs is append-only; UPDATE/DELETE is prohibited';
-      END;
-      $$;
-      DROP TRIGGER IF EXISTS audit_logs_immutable ON audit_logs;
-      CREATE TRIGGER audit_logs_immutable
-        BEFORE UPDATE OR DELETE ON audit_logs
-        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+      CREATE TABLE IF NOT EXISTS communication_messages (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        thread_id VARCHAR(64) NOT NULL REFERENCES communication_threads(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')), provider VARCHAR(100) NOT NULL,
+        direction VARCHAR(20) NOT NULL CHECK (direction IN ('inbound','outbound')), external_message_id VARCHAR(255),
+        from_address VARCHAR(320), to_address VARCHAR(320), subject TEXT, body TEXT NOT NULL, html_body TEXT,
+        status VARCHAR(40) NOT NULL DEFAULT 'queued', error_message TEXT, tracking_token VARCHAR(128), idempotency_key VARCHAR(255),
+        lead_id VARCHAR(64) REFERENCES leads(id) ON DELETE SET NULL, owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL, created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        sent_at TIMESTAMP WITH TIME ZONE, received_at TIMESTAMP WITH TIME ZONE, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_communication_messages_org_idempotency ON communication_messages(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_communication_messages_provider_external ON communication_messages(organization_id, provider, external_message_id) WHERE external_message_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_communication_messages_org_thread_time ON communication_messages(organization_id, thread_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_communication_messages_tracking ON communication_messages(tracking_token) WHERE tracking_token IS NOT NULL;
 
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_call_id_global
-        ON call(telephony_call_id) WHERE telephony_call_id IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_session_id_global
-        ON call(telephony_session_id) WHERE telephony_session_id IS NOT NULL;
-    `
-  }
-,
+      CREATE TABLE IF NOT EXISTS communication_events (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        message_id VARCHAR(64) NOT NULL REFERENCES communication_messages(id) ON DELETE CASCADE,
+        event_type VARCHAR(50) NOT NULL, event_url TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_events_org_message ON communication_events(organization_id, message_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS communication_suppressions (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms','voice','all')), contact_key VARCHAR(320) NOT NULL,
+        reason TEXT NOT NULL, source VARCHAR(100), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, channel, contact_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_suppressions_lookup ON communication_suppressions(organization_id, channel, contact_key);
+
+      CREATE TABLE IF NOT EXISTS messaging_numbers (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        provider VARCHAR(100) NOT NULL, phone_number VARCHAR(32) NOT NULL, friendly_name VARCHAR(255),
+        capabilities JSONB NOT NULL DEFAULT '{}'::jsonb, status VARCHAR(30) NOT NULL DEFAULT 'active',
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE (organization_id, provider, phone_number)
+      );
+      CREATE INDEX IF NOT EXISTS idx_messaging_numbers_org_status ON messaging_numbers(organization_id, status);
+
+      CREATE TABLE IF NOT EXISTS communication_sequences (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL, description TEXT, status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_sequences_org_status ON communication_sequences(organization_id, status, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS communication_sequence_steps (
+        id VARCHAR(64) PRIMARY KEY, sequence_id VARCHAR(64) NOT NULL REFERENCES communication_sequences(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL, channel VARCHAR(20) NOT NULL CHECK (channel IN ('email','sms')),
+        template_id VARCHAR(64) REFERENCES outreach_templates(id) ON DELETE SET NULL, delay_minutes INTEGER NOT NULL DEFAULT 0 CHECK (delay_minutes >= 0),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, UNIQUE (sequence_id, step_order)
+      );
+
+      CREATE TABLE IF NOT EXISTS communication_sequence_enrollments (
+        id VARCHAR(64) PRIMARY KEY, organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        sequence_id VARCHAR(64) NOT NULL REFERENCES communication_sequences(id) ON DELETE CASCADE,
+        lead_id VARCHAR(64) NOT NULL REFERENCES leads(id) ON DELETE CASCADE, status VARCHAR(30) NOT NULL DEFAULT 'active',
+        current_step_order INTEGER NOT NULL, next_run_at TIMESTAMP WITH TIME ZONE,
+        created_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, UNIQUE (sequence_id, lead_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_communication_sequence_enrollments_due ON communication_sequence_enrollments(organization_id, status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_communication_sequence_enrollments_lead ON communication_sequence_enrollments(organization_id, lead_id, status);
+    `,
+  },
   {
     version: 27,
-    name: '027_define_tenant_row_level_security',
+    name: '027_create_file_processing_jobs',
     sql: `
-      -- Tenant policies are created for every tenant-owned table. Activation is
-      -- controlled by VORTEX_ONE_ENABLE_RLS at migration time; public_ca_parcels
-      -- is intentionally excluded because it is global property intelligence.
-            DROP POLICY IF EXISTS vortex_one_tenant_isolation ON users;
-      CREATE POLICY vortex_one_tenant_isolation ON users
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON property_owners;
-      CREATE POLICY vortex_one_tenant_isolation ON property_owners
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON properties;
-      CREATE POLICY vortex_one_tenant_isolation ON properties
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON leads;
-      CREATE POLICY vortex_one_tenant_isolation ON leads
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON crm_records;
-      CREATE POLICY vortex_one_tenant_isolation ON crm_records
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON campaign;
-      CREATE POLICY vortex_one_tenant_isolation ON campaign
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON campaign_contact;
-      CREATE POLICY vortex_one_tenant_isolation ON campaign_contact
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON dialing_session;
-      CREATE POLICY vortex_one_tenant_isolation ON dialing_session
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call;
-      CREATE POLICY vortex_one_tenant_isolation ON call
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call_event;
-      CREATE POLICY vortex_one_tenant_isolation ON call_event
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON call_note;
-      CREATE POLICY vortex_one_tenant_isolation ON call_note
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON suppression_record;
-      CREATE POLICY vortex_one_tenant_isolation ON suppression_record
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON processed_events;
-      CREATE POLICY vortex_one_tenant_isolation ON processed_events
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_configs;
-      CREATE POLICY vortex_one_tenant_isolation ON agent_configs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON tasks;
-      CREATE POLICY vortex_one_tenant_isolation ON tasks
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflows;
-      CREATE POLICY vortex_one_tenant_isolation ON workflows
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON approvals;
-      CREATE POLICY vortex_one_tenant_isolation ON approvals
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON audit_logs;
-      CREATE POLICY vortex_one_tenant_isolation ON audit_logs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON contacts;
-      CREATE POLICY vortex_one_tenant_isolation ON contacts
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON activities;
-      CREATE POLICY vortex_one_tenant_isolation ON activities
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON jobs;
-      CREATE POLICY vortex_one_tenant_isolation ON jobs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON outreach_templates;
-      CREATE POLICY vortex_one_tenant_isolation ON outreach_templates
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON email_outreach;
-      CREATE POLICY vortex_one_tenant_isolation ON email_outreach
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON integration_connections;
-      CREATE POLICY vortex_one_tenant_isolation ON integration_connections
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON integration_oauth_states;
-      CREATE POLICY vortex_one_tenant_isolation ON integration_oauth_states
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_runs;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_runs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_versions;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_versions
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_schedules;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_schedules
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_execution_steps;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_execution_steps
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_execution_logs;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_execution_logs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_invites;
-      CREATE POLICY vortex_one_tenant_isolation ON organization_invites
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON webhook_endpoints;
-      CREATE POLICY vortex_one_tenant_isolation ON webhook_endpoints
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON webhook_deliveries;
-      CREATE POLICY vortex_one_tenant_isolation ON webhook_deliveries
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON voicemail_library;
-      CREATE POLICY vortex_one_tenant_isolation ON voicemail_library
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_billing;
-      CREATE POLICY vortex_one_tenant_isolation ON organization_billing
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON organization_usage;
-      CREATE POLICY vortex_one_tenant_isolation ON organization_usage
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_cost_events;
-      CREATE POLICY vortex_one_tenant_isolation ON analytics_cost_events
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_ai_usage;
-      CREATE POLICY vortex_one_tenant_isolation ON analytics_ai_usage
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON analytics_value_events;
-      CREATE POLICY vortex_one_tenant_isolation ON analytics_value_events
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON appointments;
-      CREATE POLICY vortex_one_tenant_isolation ON appointments
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON file_assets;
-      CREATE POLICY vortex_one_tenant_isolation ON file_assets
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_suppression;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_suppression
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON workflow_communication_deliveries;
-      CREATE POLICY vortex_one_tenant_isolation ON workflow_communication_deliveries
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_enrichment_providers;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_enrichment_providers
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_enrichment_jobs;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_enrichment_jobs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_source_records;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_source_records
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_contact_points;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_contact_points
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_ownerships;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_ownerships
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_relationships;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_relationships
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_lead_signals;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_lead_signals
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON owner_identity_matches;
-      CREATE POLICY vortex_one_tenant_isolation ON owner_identity_matches
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_threads;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_threads
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_messages;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_messages
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_events;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_events
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_suppressions;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_suppressions
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON messaging_numbers;
-      CREATE POLICY vortex_one_tenant_isolation ON messaging_numbers
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_sequences;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_sequences
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON communication_sequence_enrollments;
-      CREATE POLICY vortex_one_tenant_isolation ON communication_sequence_enrollments
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON file_processing_jobs;
-      CREATE POLICY vortex_one_tenant_isolation ON file_processing_jobs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_memories;
-      CREATE POLICY vortex_one_tenant_isolation ON agent_memories
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_runs;
-      CREATE POLICY vortex_one_tenant_isolation ON agent_runs
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-      DROP POLICY IF EXISTS vortex_one_tenant_isolation ON agent_run_steps;
-      CREATE POLICY vortex_one_tenant_isolation ON agent_run_steps
-        FOR ALL
-        USING (organization_id = current_setting('vortex_one.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex_one.organization_id', true));
-    `
-  }
+      CREATE TABLE IF NOT EXISTS file_processing_jobs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        file_id VARCHAR(64) NOT NULL REFERENCES file_assets(id) ON DELETE CASCADE,
+        job_type VARCHAR(40) NOT NULL CHECK (job_type IN ('recording_archive','transcript_extract','document_extract','malware_scan')),
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        locked_at TIMESTAMP WITH TIME ZONE,
+        last_error TEXT,
+        result JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (file_id, job_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_processing_jobs_ready ON file_processing_jobs(status, available_at);
+      CREATE INDEX IF NOT EXISTS idx_file_processing_jobs_org ON file_processing_jobs(organization_id, created_at DESC);
+    `,
+  },
+
+  {
+    version: 28,
+    name: '028_create_real_ai_agent_runtime',
+    sql: `
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS provider VARCHAR(20);
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 3;
+      ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT true;
+
+      CREATE TABLE IF NOT EXISTS agent_memories (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        agent_id VARCHAR(64) NOT NULL,
+        memory_key VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        importance NUMERIC(4,3) NOT NULL DEFAULT 0.500,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(organization_id, agent_id, memory_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_memories_org_agent ON agent_memories(organization_id, agent_id, importance DESC, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        agent_id VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+        objective TEXT NOT NULL,
+        provider VARCHAR(20) NOT NULL,
+        model VARCHAR(100) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'running',
+        input_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+        output JSONB,
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_cost_usd NUMERIC(14,8) NOT NULL DEFAULT 0,
+        execution_time_ms INTEGER,
+        pending_approval_id VARCHAR(64),
+        started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_started ON agent_runs(organization_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_agent ON agent_runs(organization_id, agent_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_status ON agent_runs(organization_id, status, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_run_steps (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        run_id VARCHAR(64) NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        step_no INTEGER NOT NULL,
+        step_type VARCHAR(30) NOT NULL,
+        tool_name VARCHAR(100),
+        status VARCHAR(30) NOT NULL,
+        input JSONB NOT NULL DEFAULT '{}'::jsonb,
+        output JSONB NOT NULL DEFAULT '{}'::jsonb,
+        error TEXT,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_run_steps_org_run ON agent_run_steps(organization_id, run_id, step_no, created_at);
+    `,
+  },
+  {
+    version: 29,
+    name: '029_billing_invoice_history',
+    sql: `
+      CREATE TABLE IF NOT EXISTS billing_invoices (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        stripe_invoice_id VARCHAR(255) NOT NULL UNIQUE,
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
+        status VARCHAR(40),
+        collection_method VARCHAR(40),
+        currency VARCHAR(10),
+        amount_due BIGINT,
+        amount_paid BIGINT,
+        amount_remaining BIGINT,
+        hosted_invoice_url TEXT,
+        invoice_pdf TEXT,
+        period_start TIMESTAMP WITH TIME ZONE,
+        period_end TIMESTAMP WITH TIME ZONE,
+        due_date TIMESTAMP WITH TIME ZONE,
+        paid_at TIMESTAMP WITH TIME ZONE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_created
+        ON billing_invoices(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
+        ON billing_invoices(organization_id, status, created_at DESC);
+      UPDATE organization_billing
+         SET limits = limits || CASE plan
+           WHEN 'starter' THEN '{"enrichment_credits_month":500,"property_searches_month":2000,"storage_mb":5000}'::jsonb
+           WHEN 'professional' THEN '{"enrichment_credits_month":5000,"property_searches_month":10000,"storage_mb":50000}'::jsonb
+           WHEN 'enterprise' THEN '{"enrichment_credits_month":1000000,"property_searches_month":1000000,"storage_mb":1000000}'::jsonb
+           ELSE '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb
+         END,
+             updated_at=CURRENT_TIMESTAMP;
+    `,
+  },
 
 ];

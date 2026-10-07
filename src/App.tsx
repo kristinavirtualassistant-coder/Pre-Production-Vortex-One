@@ -23,6 +23,7 @@ import { AgentBuilderView } from './components/AgentBuilderView';
 import { DatabaseView } from './components/DatabaseView';
 import { GoogleDriveView } from './components/GoogleDriveView';
 import { PropertySearchView } from './components/PropertySearchView';
+import { NativeMapView } from './components/NativeMapView';
 import { OwnersView } from './components/OwnersView';
 import { PortfoliosView } from './components/PortfoliosView';
 import { OpportunitiesView } from './components/OpportunitiesView';
@@ -33,6 +34,7 @@ import { ReportingAnalyticsView } from './components/ReportingAnalyticsView';
 import { FilesDocumentsView } from './components/FilesDocumentsView';
 import { SettingsView } from './components/SettingsView';
 import { IntegrationCenterView } from './components/IntegrationCenterView';
+import { CommunicationsView } from './components/CommunicationsView';
 import { ContextInspector } from './components/ContextInspector';
 import { CommandPalette } from './components/CommandPalette';
 import { EasyHelpModal } from './components/EasyHelpModal';
@@ -60,6 +62,7 @@ const VALID_VIEWS = [
   'home',
   'dashboard',
   'property_search',
+  'map',
   'properties',
   'owners',
   'portfolios',
@@ -67,6 +70,7 @@ const VALID_VIEWS = [
   'leads',
   'dialer',
   'campaigns',
+  'communications',
   'tasks',
   'research_queue',
   'activity',
@@ -103,6 +107,10 @@ function getViewFromUrl(): string {
   return 'home';
 }
 
+/**
+ * Render the authenticated workspace and active view, coordinating tenant data, navigation,
+ * and shared dialogs across CRM, communications, and other tools.
+ */
 export default function App() {
   const { user, userProfile, activeTenant, loading: authLoading, getAuthHeaders, getAccessToken } = useAuth();
 
@@ -534,7 +542,7 @@ export default function App() {
   const handleRegisterAgent = async (newAgent: AgentDefinition) => {
     const orgId = getActiveOrgId();
     try {
-      const res = await fetch('/api/agents', {
+      const res = await fetch('/api/ai-agents', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -656,6 +664,7 @@ export default function App() {
             <AgentMonitorView
               agents={agents}
               initialSelectedAgentId={selectedAgentId}
+              organizationId={getActiveOrgId()}
             />
           )}
 
@@ -665,6 +674,13 @@ export default function App() {
 
           {currentView === 'tasks' && (
             <TasksView tasks={tasks} onAddTask={handleAddTask} />
+          )}
+
+          {currentView === 'map' && (
+            <NativeMapView
+              onNavigate={handleNavigate}
+              onOpenInspector={handleOpenInspector}
+            />
           )}
 
           {currentView === 'property_search' && (
@@ -790,6 +806,14 @@ export default function App() {
               getAuthHeaders={getAuthHeaders}
               organizationId={getActiveOrgId()}
               onRefresh={() => fetchAllData(getActiveOrgId())}
+            />
+          )}
+
+          {currentView === 'communications' && (
+            <CommunicationsView
+              getAuthHeaders={getAuthHeaders}
+              organizationId={getActiveOrgId()}
+              selectedLeadId={selectedLeadId}
             />
           )}
 

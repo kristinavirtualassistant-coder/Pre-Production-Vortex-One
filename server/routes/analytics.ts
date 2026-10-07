@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getPgPool } from '../db/db';
-import { requireOrganizationId } from './organizationContext';
-import { getAnalytics } from './analyticsService';
+import { requireOrganizationId } from '../services/organizationContext';
+import { getAnalytics } from '../services/analyticsService';
 import type { AuthRequest } from '../middleware/auth';
 
 export const analyticsRouter = Router();

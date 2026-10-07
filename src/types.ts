@@ -43,8 +43,11 @@ export interface AgentDefinition {
   allowedTools: string[];
   allowedData: string[];
   model: string;
+  provider?: 'gemini' | 'openai' | 'anthropic';
   temperature: number;
   maxTokens?: number;
+  maxRetries?: number;
+  memoryEnabled?: boolean;
   permissions: string[];
   parentAgentId: string | null;
   enabled: boolean;
@@ -113,7 +116,6 @@ export interface WorkflowStep {
   type: WorkflowStepType;
   assigned_agent: AgentId;
   objective: string;
-  input_mapping?: Record<string, string>;
   dependencies: string[];
   requiresApproval?: boolean;
   condition?: string;

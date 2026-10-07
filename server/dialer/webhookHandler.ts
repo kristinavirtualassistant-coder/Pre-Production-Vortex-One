@@ -12,6 +12,9 @@ import { NormalizedCallEvent, TelephonyProvider } from './types';
 import { DialerStateTransitionService } from './dialerStateTransitionService';
 import { eventTypeForState } from './callStateMachine';
 import { publishDialerEvent } from './realtime';
+import { recordCostEvent } from '../services/analyticsService';
+import { archiveRingCentralRecording, attachCallTranscript, getRingCentralRecordingFileId } from '../services/fileStorageService';
+
 
 export interface WebhookProcessResult {
   status: 'processed' | 'duplicate_ignored' | 'error';
@@ -102,8 +105,10 @@ export class WebhookHandler {
         const party = body?.parties?.[0] || {};
         const partyPhones = [party?.to?.phoneNumber, party?.from?.phoneNumber].filter(Boolean);
         const callLookup = await pool.query(
-          `SELECT id FROM call
-           WHERE organization_id = $1
+          `SELECT c.id, ds.agent_user_id AS user_id, c.campaign_id, c.session_id, c.lead_id
+           FROM call c
+           LEFT JOIN dialing_session ds ON ds.id = c.session_id AND ds.organization_id = c.organization_id
+           WHERE c.organization_id = $1
              AND (telephony_session_id = $2 OR telephony_call_id = $2
                   OR (regexp_replace(phone_number, '\\D', '', 'g') = ANY($3::text[])
                       AND status IN ('initiated','ringing','connected','in-progress')
@@ -145,6 +150,79 @@ export class WebhookHandler {
           payload: { ...normalized.rawPayload, normalizedStatus: normalized.status, telephonySessionId: normalized.telephonySessionId, partyId: normalized.ringcentralPartyId },
           occurredAt: normalized.timestamp,
         });
+
+        const transcriptCandidate =
+          normalized.rawPayload?.transcript ||
+          normalized.rawPayload?.transcription ||
+          normalized.rawPayload?.body?.transcript ||
+          normalized.rawPayload?.body?.transcription;
+        if (typeof transcriptCandidate === 'string' && transcriptCandidate.trim() && authoritativeCallId) {
+          attachCallTranscript({
+            organizationId,
+            callId: authoritativeCallId,
+            transcript: transcriptCandidate,
+            source: provider,
+          }).catch((transcriptError) => {
+            console.error('[Files] Call transcript attachment failed:', transcriptError);
+          });
+        }
+
+        if (normalized.status === 'completed' || normalized.status === 'busy' || normalized.status === 'no-answer' || normalized.status === 'voicemail') {
+          const durationSeconds = Math.max(0, Number(normalized.durationSeconds || 0));
+          const costPerMinute = Math.max(0, Number(process.env.ANALYTICS_RINGCENTRAL_COST_PER_MINUTE_USD || 0));
+          try {
+            await recordCostEvent(pool, {
+              organizationId,
+              id: `cost_call_${authoritativeCallId}`,
+              userId: callLookup.rows[0].user_id || undefined,
+              campaignId: callLookup.rows[0].campaign_id || undefined,
+              category: 'voice',
+              provider,
+              quantity: durationSeconds / 60,
+              unitCostUsd: costPerMinute,
+              totalCostUsd: (durationSeconds / 60) * costPerMinute,
+              referenceType: 'call',
+              referenceId: authoritativeCallId || undefined,
+              metadata: {
+                durationSeconds,
+                pricingConfigured: costPerMinute > 0,
+                pricingBasis: 'ANALYTICS_RINGCENTRAL_COST_PER_MINUTE_USD',
+                disposition: normalized.disposition || null,
+              },
+              occurredAt: normalized.timestamp,
+            });
+          } catch (costError) {
+            console.warn('[Analytics] Voice cost recording failed:', costError);
+          }
+        }
+
+        if (normalized.recordingUrl && authoritativeCallId) {
+          archiveRingCentralRecording({
+            organizationId,
+            callId: authoritativeCallId,
+            recordingUrl: normalized.recordingUrl,
+          }).catch(async (archiveError) => {
+            console.error('[Files] RingCentral call recording archive failed:', archiveError);
+            try {
+              await pool.query(
+                `INSERT INTO file_processing_jobs
+                  (id,organization_id,file_id,job_type,status,max_attempts,last_error,result)
+                 VALUES ($1,$2,$3,'recording_archive','pending',5,$4,$5::jsonb)
+                 ON CONFLICT (file_id,job_type) DO UPDATE
+                   SET status='pending',last_error=EXCLUDED.last_error,updated_at=CURRENT_TIMESTAMP`,
+                [
+                  `fpj_${normalized.eventId}`,
+                  organizationId,
+                  getRingCentralRecordingFileId(normalized.recordingUrl),
+                  String(archiveError?.message || archiveError),
+                  JSON.stringify({ call_id: authoritativeCallId, recording_url: normalized.recordingUrl }),
+                ],
+              );
+            } catch (queueError) {
+              console.error('[Files] Unable to enqueue recording retry:', queueError);
+            }
+          });
+        }
 
         await pool.query(
           `INSERT INTO processed_events (event_id, organization_id, provider, event_type, processed_at)
