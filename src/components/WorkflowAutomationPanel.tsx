@@ -9,6 +9,7 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [steps, setSteps] = useState<any[]>([]);
   const [selectedRunId, setSelectedRunId] = useState('');
   const [scheduleType, setScheduleType] = useState<'once'|'interval'|'cron'>('once');
   const [runAt, setRunAt] = useState('');
@@ -84,8 +85,12 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
 
   const loadLogs = async (runId: string) => {
     setSelectedRunId(runId);
-    const res = await fetch(`/api/workflow-runs/${runId}/logs`);
-    setLogs(res.ok ? await res.json() : []);
+    const [logsRes, stepsRes] = await Promise.all([
+      fetch(`/api/workflow-runs/${runId}/logs`),
+      fetch(`/api/workflow-runs/${runId}/steps`),
+    ]);
+    setLogs(logsRes.ok ? await logsRes.json() : []);
+    setSteps(stepsRes.ok ? await stepsRes.json() : []);
   };
 
   const updateSchedule = async (scheduleId: string, status: 'active'|'paused'|'cancelled') => {
@@ -199,7 +204,15 @@ export const WorkflowAutomationPanel: React.FC<Props> = ({ workflow }) => {
               </div>
             ))}
           </div>
-          {selectedRunId && <div className="max-h-28 overflow-auto rounded-lg border border-slate-100 bg-slate-950 p-2 font-mono text-[9px] text-slate-200">{logs.map(l => <div key={l.id} className="mb-1"><span className="text-cyan-300">{l.event}</span> {l.message}</div>)}</div>}
+          {selectedRunId && (
+            <>
+              <div className="max-h-32 overflow-auto rounded-lg border border-slate-100 bg-slate-50 p-2 text-[9px]">
+                <div className="mb-1 font-semibold text-slate-600">Steps</div>
+                {steps.map(s => <div key={s.id} className="mb-1 flex justify-between gap-2"><span>{s.step_index + 1}. {s.workflow_step_id}</span><span className="font-semibold">{s.status}</span></div>)}
+              </div>
+              <div className="max-h-28 overflow-auto rounded-lg border border-slate-100 bg-slate-950 p-2 font-mono text-[9px] text-slate-200">{logs.map(l => <div key={l.id} className="mb-1"><span className="text-cyan-300">{l.event}</span> {l.message}</div>)}</div>
+            </>
+          )}
         </div>
       </div>
       {message && <div className="border-t border-slate-100 px-4 py-2 text-[10px] font-medium text-slate-600">{message}</div>}
