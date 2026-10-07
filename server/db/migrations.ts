@@ -1349,6 +1349,17 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 33,
+    name: '033_owner_identity_match_candidate_reference',
+    sql: `
+      ALTER TABLE owner_identity_matches
+        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
+        REFERENCES property_owners(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
+        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
+    `,
+  },
+  {
     version: 34,
     name: '034_owner_enrichment_conflicts',
     sql: `
@@ -1376,19 +1387,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 33,
-    name: '033_owner_identity_match_candidate_reference',
-    sql: `
-      ALTER TABLE owner_identity_matches
-        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
-        REFERENCES property_owners(id) ON DELETE SET NULL;
-      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
-        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
-    `,
-  },
-  {
-    version: 34,
-    name: '034_extend_workflow_delivery_idempotency',
+    version: 37,
+    name: '037_extend_workflow_delivery_idempotency',
     sql: `
       ALTER TABLE workflow_communication_deliveries
         DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
@@ -1400,8 +1400,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 35,
-    name: '035_create_native_property_map_spatial_layer',
+    version: 38,
+    name: '038_create_native_property_map_spatial_layer',
     sql: `
       CREATE EXTENSION IF NOT EXISTS postgis;
       ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
@@ -1417,8 +1417,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 36,
-    name: '036_add_agent_run_controls',
+    version: 39,
+    name: '039_add_agent_run_controls',
     sql: `
       ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
