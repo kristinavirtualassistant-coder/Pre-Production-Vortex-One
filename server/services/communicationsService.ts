@@ -364,7 +364,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
       : await sendGmail(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id});
     const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status='sent',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
     const emailUnitCostUsd = Math.max(0, Number(process.env.ANALYTICS_EMAIL_UNIT_COST_USD || 0));
-    try { await recordCostEvent(pool, {
+    await recordCostEvent(pool, {
       organizationId: args.organizationId,
       id: 'cost_email_' + pending.id,
       userId: args.userId,
