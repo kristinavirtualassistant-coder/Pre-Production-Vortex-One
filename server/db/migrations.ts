@@ -1349,33 +1349,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 34,
-    name: '034_owner_enrichment_conflicts',
-    sql: `
-      CREATE TABLE IF NOT EXISTS owner_enrichment_conflicts (
-        id VARCHAR(64) PRIMARY KEY,
-        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-        conflict_type VARCHAR(50) NOT NULL,
-        field_name VARCHAR(100) NOT NULL,
-        conflicting_value TEXT NOT NULL,
-        conflicting_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
-        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-        status VARCHAR(30) NOT NULL DEFAULT 'open',
-        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        resolved_at TIMESTAMPTZ
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_enrichment_conflict
-        ON owner_enrichment_conflicts(
-          organization_id, owner_id, conflict_type, field_name,
-          conflicting_value, COALESCE(conflicting_owner_id, '')
-        );
-      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
-        ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
-    `,
-  },
-  {
     version: 33,
     name: '033_owner_identity_match_candidate_reference',
     sql: `
@@ -1426,6 +1399,22 @@ export const MIGRATIONS: Migration[] = [
         WHERE idempotency_key IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
         ON agent_runs(organization_id, started_at, estimated_cost_usd);
+    `,
+  },
+  {
+    version: 37,
+    name: '037_harden_agent_memory_audit_cancellation',
+    sql: `
+      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS source_run_id VARCHAR(64) REFERENCES agent_runs(id) ON DELETE SET NULL;
+      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS source_tool VARCHAR(100);
+      ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT false;
+      CREATE INDEX IF NOT EXISTS idx_agent_memories_verified
+        ON agent_memories(organization_id, agent_id, verified, updated_at DESC);
+
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE;
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_cancelled
+        ON agent_runs(organization_id, status, cancelled_at DESC);
     `,
   },
 ];
