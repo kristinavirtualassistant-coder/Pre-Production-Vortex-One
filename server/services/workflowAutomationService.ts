@@ -187,7 +187,7 @@ async function executeAction(pool:Pool,orgId:string,step:any,context:any,runId:s
     case 'webhook': {
       const allowed=(process.env.WORKFLOW_WEBHOOK_ALLOWLIST||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
       const u=await validateWebhookTarget(String(input.url||''),allowed);
-      const delivery=await reserveCommunication(pool,orgId,runId,stepId,'webhook',u,runId+':'+stepId,input);
+      const delivery=await reserveCommunication(pool,orgId,runId,stepId,'webhook',u.toString(),runId+':'+stepId,input);
       if(delivery.state==='sent') return {ok:true,replayed:true,providerReference:delivery.row.provider_reference};
       if(delivery.state==='manual_review') throw new Error('Webhook delivery is already in progress or requires manual reconciliation');
       try {
