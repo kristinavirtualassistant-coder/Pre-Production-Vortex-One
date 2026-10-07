@@ -1349,6 +1349,17 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 33,
+    name: '033_owner_identity_match_candidate_reference',
+    sql: `
+      ALTER TABLE owner_identity_matches
+        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
+        REFERENCES property_owners(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
+        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
+    `,
+  },
+  {
     version: 34,
     name: '034_owner_enrichment_conflicts',
     sql: `
@@ -1373,30 +1384,6 @@ export const MIGRATIONS: Migration[] = [
         );
       CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
         ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
-    `,
-  },
-  {
-    version: 33,
-    name: '033_owner_identity_match_candidate_reference',
-    sql: `
-      ALTER TABLE owner_identity_matches
-        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
-        REFERENCES property_owners(id) ON DELETE SET NULL;
-      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
-        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
-    `,
-  },
-  {
-    version: 34,
-    name: '034_extend_workflow_delivery_idempotency',
-    sql: `
-      ALTER TABLE workflow_communication_deliveries
-        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
-      ALTER TABLE workflow_communication_deliveries
-        ADD CONSTRAINT workflow_communication_deliveries_channel_check
-        CHECK (channel IN ('email','sms','phone','webhook'));
-      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
-        ON workflow_communication_deliveries(organization_id, status, updated_at);
     `,
   },
   {
@@ -1426,6 +1413,19 @@ export const MIGRATIONS: Migration[] = [
         WHERE idempotency_key IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
         ON agent_runs(organization_id, started_at, estimated_cost_usd);
+    `,
+  },
+  {
+    version: 37,
+    name: '037_extend_workflow_delivery_idempotency',
+    sql: `
+      ALTER TABLE workflow_communication_deliveries
+        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
+      ALTER TABLE workflow_communication_deliveries
+        ADD CONSTRAINT workflow_communication_deliveries_channel_check
+        CHECK (channel IN ('email','sms','phone','webhook'));
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
+        ON workflow_communication_deliveries(organization_id, status, updated_at);
     `,
   },
 ];
