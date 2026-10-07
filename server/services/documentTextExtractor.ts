@@ -166,11 +166,11 @@ function extractPdf(buffer: Buffer): string {
     }
     const text = decoded.toString('latin1');
     for (const tj of text.matchAll(/\\((?:\\\\.|[^\\)])*\\)\\s*Tj/g)) {
-      chunks.push(tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\()])/g, '$1'));
+      chunks.push(tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\\()])/g, '$1'));
     }
     for (const tjArray of text.matchAll(/\\[([\\s\\S]*?)\\]\\s*TJ/g)) {
       for (const part of tjArray[1].matchAll(/\\((?:\\\\.|[^\\)])*\\)/g)) {
-        chunks.push(part[0].slice(1, -1).replace(/\\([\()])/g, '$1'));
+        chunks.push(part[0].slice(1, -1).replace(/\\([\\()])/g, '$1'));
       }
     }
   }
