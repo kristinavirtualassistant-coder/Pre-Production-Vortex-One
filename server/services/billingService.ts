@@ -10,10 +10,10 @@ const PLAN_PRICES: Record<Exclude<PlanName, 'free'>, string | undefined> = {
 };
 
 const PLAN_LIMITS: Record<PlanName, Record<string, number>> = {
-  free: { users: 5, calls_month: 250, emails_month: 500, sms_month: 100, ai_actions_month: 250, properties: 10000 },
-  starter: { users: 10, calls_month: 2000, emails_month: 5000, sms_month: 1000, ai_actions_month: 2500, properties: 50000 },
-  professional: { users: 50, calls_month: 10000, emails_month: 25000, sms_month: 5000, ai_actions_month: 10000, properties: 250000 },
-  enterprise: { users: 1000000, calls_month: 1000000, emails_month: 1000000, sms_month: 1000000, ai_actions_month: 1000000, properties: 100000000 },
+  free: { users: 5, calls_month: 250, emails_month: 500, sms_month: 100, ai_actions_month: 250, enrichment_credits_month: 25, property_searches_month: 100, storage_mb: 500 },
+  starter: { users: 10, calls_month: 2000, emails_month: 5000, sms_month: 1000, ai_actions_month: 2500, enrichment_credits_month: 500, property_searches_month: 2000, storage_mb: 5000 },
+  professional: { users: 50, calls_month: 10000, emails_month: 25000, sms_month: 5000, ai_actions_month: 10000, enrichment_credits_month: 5000, property_searches_month: 10000, storage_mb: 50000 },
+  enterprise: { users: 1000000, calls_month: 1000000, emails_month: 1000000, sms_month: 1000000, ai_actions_month: 1000000, enrichment_credits_month: 1000000, property_searches_month: 1000000, storage_mb: 1000000 },
 };
 
 function stripeSecret(): string {
@@ -37,6 +37,13 @@ async function stripeRequest(path: string, method: string, params: Record<string
   if (!response.ok) throw new Error(data?.error?.message || `Stripe request failed (${response.status})`);
   return data;
 }
+
+export const PLAN_CATALOG = Object.freeze({
+  free: { name: 'Free', priceCents: 0, trialDays: 0, limits: PLAN_LIMITS.free },
+  starter: { name: 'Starter', priceCents: 4900, trialDays: 14, limits: PLAN_LIMITS.starter },
+  professional: { name: 'Professional', priceCents: 14900, trialDays: 14, limits: PLAN_LIMITS.professional },
+  enterprise: { name: 'Enterprise', priceCents: 49900, trialDays: 14, limits: PLAN_LIMITS.enterprise },
+});
 
 export function planLimits(plan: string): Record<string, number> {
   return PLAN_LIMITS[(plan as PlanName)] || PLAN_LIMITS.free;
@@ -180,4 +187,23 @@ export async function enforceUsageLimit(pool: Pool, organizationId: string, metr
     throw error;
   }
   return { used, limit };
+}
+
+export async function getUsageSummary(pool: Pool, organizationId: string) {
+  const billing = await getOrganizationBilling(pool, organizationId);
+  const period = new Date(); period.setUTCDate(1);
+  const periodStart = period.toISOString().slice(0, 10);
+  const result = await pool.query('SELECT metric, used FROM organization_usage WHERE organization_id=$1 AND period_start=$2 ORDER BY metric',[organizationId,periodStart]);
+  const limits = billing?.limits || planLimits(billing?.plan || 'free');
+  const usage: Record<string, {used:number;limit:number;remaining:number}> = {};
+  for (const [metric, value] of Object.entries(limits)) { const used=Number(result.rows.find((row:any)=>row.metric===metric)?.used||0); const limit=Number(value); usage[metric]={used,limit,remaining:Math.max(0,limit-used)}; }
+  return {period_start:periodStart,plan:billing?.plan||'free',subscription_status:billing?.subscription_status||'active',usage};
+}
+
+export async function cancelSubscription(pool: Pool, organizationId: string) {
+  const billing=await getOrganizationBilling(pool,organizationId);
+  if (!billing?.billing_subscription_id) throw new Error('No active Stripe subscription exists for this organization');
+  const subscription=await stripeRequest(`subscriptions/${encodeURIComponent(billing.billing_subscription_id)}`,'POST',{cancel_at_period_end:'true'});
+  await pool.query('UPDATE organization_billing SET cancel_at_period_end=true,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$1',[organizationId]);
+  return {cancel_at_period_end:true,current_period_end:subscription.current_period_end?new Date(subscription.current_period_end*1000).toISOString():billing.current_period_end};
 }
