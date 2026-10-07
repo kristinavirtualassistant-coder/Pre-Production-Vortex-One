@@ -40,12 +40,44 @@ import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, update
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
-import { createCheckoutSession, createPortalSession } from './server/services/billingService';
+import { createCheckoutSession, createPortalSession, verifyStripeWebhook, handleStripeEvent, enforceUsageLimit } from './server/services/billingService';
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
+
+  // Stripe requires the exact raw request bytes for webhook signature verification.
+  app.post('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+    const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+    const signature = req.header('stripe-signature') || '';
+    if (!secret || !signature || !Buffer.isBuffer(req.body)) {
+      return res.status(400).json({ error: 'Stripe webhook is not configured correctly' });
+    }
+    if (!verifyStripeWebhook(req.body, signature, secret)) {
+      return res.status(400).json({ error: 'Invalid Stripe webhook signature' });
+    }
+    try {
+      const event = JSON.parse(req.body.toString('utf8'));
+      if (!event?.id || typeof event.id !== 'string' || !event.type) {
+        return res.status(400).json({ error: 'Invalid Stripe event' });
+      }
+      const pool = getPgPool();
+      if (!pool) return res.status(503).json({ error: 'Database unavailable' });
+      const inserted = await pool.query(
+        `INSERT INTO stripe_webhook_events(id,event_type,payload)
+         VALUES($1,$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [event.id, event.type, JSON.stringify(event)],
+      );
+      if (inserted.rowCount === 1) {
+        await handleStripeEvent(pool, event);
+      }
+      return res.json({ received: true, processed: inserted.rowCount === 1 });
+    } catch (error: any) {
+      console.error('Stripe webhook processing failed:', error);
+      return res.status(500).json({ error: 'Stripe webhook processing failed' });
+    }
+  });
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -4388,6 +4420,9 @@ ${transcript}`;
   // Multi-Dialer Execution Route
   app.post('/api/dial-batch', async (req, res) => {
     try {
+      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      const pool = getPgPool();
+      if (pool) await enforceUsageLimit(pool, orgId, 'calls_month', Math.max(1, Array.isArray(req.body?.leads) ? req.body.leads.length : 1));
       const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
 
       if (!campaignId || !leads || !Array.isArray(leads)) {
