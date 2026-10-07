@@ -47,6 +47,7 @@ import './fileProcessingWorkerContract.test';
 import './workflowRunService.test';
 import './accountSecurity.test';
 import './workflowAutomationService.test';
+import './communicationsSecurity.test';
 
 let passedTests = 0;
 let failedTests = 0;
