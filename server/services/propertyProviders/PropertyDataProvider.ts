@@ -506,10 +506,6 @@ export class UnifiedPropertyDataProvider {
             );
           }
 
-          // Capture authoritative county/GIS provenance and owner linkage separately from the CRM property row.
-          // Providers that legally redact owner identity still produce a durable parcel source record.
-          await PublicRecordsIngestionService.recordResults(pool, orgId, [item]);
-
           await pool.query(
             `INSERT INTO properties (
               id, organization_id, owner_id, address, city, state, zip, county,
@@ -573,6 +569,10 @@ export class UnifiedPropertyDataProvider {
               [property.longitude, property.latitude, property.id, orgId],
             );
           }
+
+          // Capture authoritative county/GIS provenance only after the parcel row exists so ownership
+          // provenance can safely reference the persisted property.
+          await PublicRecordsIngestionService.recordResults(pool, orgId, [item]);
         } catch (dbErr: any) {
           if (process.env.NODE_ENV === 'production') throw dbErr;
           console.error('[PropertyDataProvider] PostgreSQL persistence error:', dbErr.message);
