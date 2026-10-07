@@ -427,8 +427,12 @@ export async function continueApprovedAgentRun(organizationId:string,runId:strin
   let output:any;
   if(prior.rows.length) output=prior.rows[0].output;
   else {
+    await auditAgentAction(pool,{organizationId,agentId:payload.agent_id,runId,toolName:payload.tool_name,action:'requested',input:payload.args || {},source:'approval'});
+    const approvalToolStart=Date.now();
     output=await executeTool(payload.tool_name,{...(payload.args || {}),_idempotency_key:actionKey},{organizationId,agentId:payload.agent_id});
-    await writeRunStep(pool,organizationId,runId,Date.now(),'completed',{...(payload.args || {}),_idempotency_key:actionKey},output,undefined,payload.tool_name,0);
+    const approvalToolLatency=Date.now()-approvalToolStart;
+    await writeRunStep(pool,organizationId,runId,Date.now(),'completed',{...(payload.args || {}),_idempotency_key:actionKey},output,undefined,payload.tool_name,approvalToolLatency);
+    await auditAgentAction(pool,{organizationId,agentId:payload.agent_id,runId,toolName:payload.tool_name,action:'completed',input:payload.args || {},output,latencyMs:approvalToolLatency,source:'approval'});
   }
   await pool.query(`UPDATE agent_runs SET status='running',pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`,[runId,organizationId]);
   const agent=await getAgentConfig(pool,organizationId,payload.agent_id);
