@@ -25,6 +25,13 @@ describe('Public records ingestion', () => {
     assert.match(source, /uq_owner_source_records_org_provider_hash/);
   });
 
+  it('persists only explicit source relationships', async () => {
+    const source = await readFile(new URL('../services/publicRecordsIngestionService.ts', repoRoot), 'utf8');
+    assert.match(source, /explicitRelationships/);
+    assert.match(source, /owner_relationships/);
+    assert.match(source, /relationship\.relationshipType/);
+  });
+
   it('has a migration that deduplicates portfolio-level signals with NULL property IDs', async () => {
     const source = await readFile(new URL('../db/migrations.ts', repoRoot), 'utf8');
     assert.match(source, /030_harden_owner_signal_dedupe/);
