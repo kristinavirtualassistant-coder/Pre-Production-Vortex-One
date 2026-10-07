@@ -1074,7 +1074,6 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
-,
 
   {
     version: 26,
