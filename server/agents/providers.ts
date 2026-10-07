@@ -2,12 +2,6 @@ import { getGeminiClient } from '../gemini';
 
 export type AgentProvider = 'gemini' | 'openai' | 'anthropic';
 
-export interface AgentMessage {
-  role: 'user' | 'assistant' | 'tool';
-  content: string;
-  name?: string;
-}
-
 export interface AgentToolDefinition {
   name: string;
   description: string;
@@ -141,9 +135,7 @@ async function callAnthropic(request: AgentProviderRequest): Promise<AgentProvid
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
   const messages = request.messages.map((m) => {
-    if (m.role === 'tool') {
-      return { role: 'user', content: [{ type: 'tool_result', tool_use_id: m.toolCallId, content: m.content }] };
-    }
+    if (m.role === 'tool') return { role: 'user', content: `Tool ${m.name || 'result'} result:\n${m.content}` };
     return { role: m.role, content: m.content };
   });
   const response = await fetch(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1/messages', {
@@ -193,12 +185,10 @@ export async function generateWithAgentProvider(request: AgentProviderRequest): 
   if (request.provider === 'anthropic') return callAnthropic(request);
   const ai = getGeminiClient();
   if (!ai) throw new Error('GEMINI_API_KEY is not configured');
-  const contents = request.messages.map((m) => {
-    if (m.role === 'tool') {
-      return { role: 'user', parts: [{ functionResponse: { name: m.name, response: JSON.parse(m.content || '{}') } }] };
-    }
-    return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
-  });
+  const contents = request.messages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.role === 'tool' ? `Tool ${m.name || 'result'} result:\n${m.content}` : m.content }],
+  }));
   const config: any = {
     systemInstruction: request.systemInstruction,
     temperature: request.temperature,
