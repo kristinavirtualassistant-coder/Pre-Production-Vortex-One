@@ -36,6 +36,9 @@ import { analyticsRouter } from './server/routes/analytics';
 import communicationsRouter from './server/services/communicationsRouter';
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
+import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
+import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
+import { createCheckoutSession, createPortalSession } from './server/services/billingService';
 
 async function startServer() {
   const app = express();
