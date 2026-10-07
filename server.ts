@@ -36,6 +36,7 @@ import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 import { analyticsRouter } from './server/routes/analytics';
 import { appointmentsRouter } from './server/routes/appointments';
 import communicationsRouter from './server/services/communicationsRouter';
+import billingRouter from './server/routes/billing';
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
@@ -96,6 +97,7 @@ async function startServer() {
 
   // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
   app.use('/api/appointments', requireAuth, appointmentsRouter);
+  app.use('/api/billing', billingRouter);
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
