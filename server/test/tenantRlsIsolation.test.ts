@@ -7,16 +7,14 @@ const tenantTables = [
   'dialing_session','call','call_event','call_note','suppression_record','processed_events',
   'agent_configs','tasks','workflows','approvals','audit_logs','contacts','activities',
   'outreach_templates','email_outreach','integration_connections','integration_oauth_states',
-  'workflow_versions',
-  '__REMOVED__','organization_invites','webhook_endpoints','webhook_deliveries',
+  'workflow_versions','organization_invites','webhook_endpoints','webhook_deliveries',
   'voicemail_library','organization_billing','organization_usage','analytics_cost_events',
   'analytics_ai_usage','analytics_value_events','appointments','file_assets',
   'communication_suppression','workflow_communication_deliveries','owner_enrichment_providers',
   'owner_enrichment_jobs','owner_source_records','owner_contact_points','owner_ownerships',
   'owner_relationships','owner_lead_signals','owner_identity_matches','communication_threads',
   'communication_messages','communication_events','communication_suppressions','messaging_numbers',
-  'communication_sequences','communication_sequence_enrollments','__REMOVED__',
-  '__REMOVED__',
+  'communication_sequences','communication_sequence_enrollments'
 ];
 
 const pool = getPgPool();
