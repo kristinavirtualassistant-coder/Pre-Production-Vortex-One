@@ -97,6 +97,19 @@ export const AccountSecurityPanel: React.FC = () => {
     finally { setBillingLoading(false); }
   };
 
+  const cancelSubscription = async () => {
+    if (!window.confirm('Cancel this subscription at the end of the current billing period?')) return;
+    setBillingLoading(true);
+    try {
+      const response = await fetch('/api/billing/cancel', { method: 'POST', credentials: 'include', headers: getAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Unable to cancel subscription');
+      addToast('Subscription cancellation scheduled.', 'success');
+      await load();
+    } catch (error: any) { addToast(error.message || 'Unable to cancel subscription', 'error'); }
+    finally { setBillingLoading(false); }
+  };
+
   const copyCodes = async () => {
     await navigator.clipboard.writeText(backupCodes.join('\n'));
     addToast('Backup codes copied.', 'success');
@@ -159,7 +172,7 @@ export const AccountSecurityPanel: React.FC = () => {
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
             {(['starter','professional','enterprise'] as const).map(plan => <button key={plan} type="button" onClick={() => startCheckout(plan)} disabled={billingLoading} className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-left"><div className="text-xs font-bold capitalize text-cyan-900">{plan}</div><div className="mt-1 text-[10px] text-cyan-700">14-day trial · subscribe</div></button>)}
           </div>
-          {billing.cancel_at_period_end && <div className="mt-3 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">Cancellation is scheduled for the end of the current billing period.</div>}
+          {billing.cancel_at_period_end ? <div className="mt-3 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">Cancellation is scheduled for the end of the current billing period.</div> : billing.billing_subscription_id ? <button type="button" onClick={cancelSubscription} disabled={billingLoading} className="mt-3 text-xs font-semibold text-rose-700">Cancel subscription at period end</button> : null}
           {invoices.length > 0 && (
             <div className="mt-4">
               <div className="text-xs font-bold text-slate-900">Invoice history</div>
