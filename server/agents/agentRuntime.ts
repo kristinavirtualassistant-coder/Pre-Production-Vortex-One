@@ -71,8 +71,11 @@ async function getAgentConfig(pool: any, organizationId: string, agentId: string
       allowedTools: row.allowed_tools || [],
       allowedData: row.allowed_data || [],
       model: row.model,
+      provider: row.provider || undefined,
       temperature: Number(row.temperature ?? 0.2),
       maxTokens: row.max_tokens || 4096,
+      maxRetries: row.max_retries ?? 3,
+      memoryEnabled: row.memory_enabled !== false,
       permissions: row.permissions || [],
       parentAgentId: row.parent_agent_id || null,
       enabled: row.enabled,
@@ -147,14 +150,15 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   const pool = getPgPool();
   if (!pool) throw new Error('PostgreSQL is required for real AI agent execution');
   const agent = await getAgentConfig(pool, request.organizationId, request.agentId);
-  const provider = inferAgentProvider(agent.model);
+  const provider = agent.provider || inferAgentProvider(agent.model);
   const runId = `arun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-  const maxAttempts = Math.min(5, Math.max(1, request.maxAttempts || 3));
+  const maxAttempts = Math.min(5, Math.max(1, request.maxAttempts || agent.maxRetries || 3));
   const started = Date.now();
   let totalInput = 0;
   let totalOutput = 0;
   let totalCost = 0;
-  const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, await loadMemory(pool, request.organizationId, agent.id), request.objective, request.context || {}) }];
+  const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
+  const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, memory, request.objective, request.context || {}) }];
 
   await pool.query(
     `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
