@@ -1125,6 +1125,7 @@ async function startServer() {
         sortDirection: req.query.sortDirection as PropertySearchQuery['sortDirection'],
       };
 
+      await enforceUsageLimit(pool, organizationId, 'property_searches_month', 1);
       const result = await searchProperties(pool, organizationId, query);
       res.json({
         success: true,
@@ -1132,7 +1133,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Database property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
+      res.status(err?.statusCode || 500).json({ error: err.message || 'Property search failed', code: err?.code });
     }
   });
 
@@ -1148,6 +1149,7 @@ async function startServer() {
       }
 
       const query = req.body as PropertySearchQuery;
+      await enforceUsageLimit(pool, organizationId, 'property_searches_month', 1);
       const result = await searchProperties(pool, organizationId, query);
       res.json({ success: true, ...result });
     } catch (err: any) {
