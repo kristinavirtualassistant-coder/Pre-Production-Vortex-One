@@ -554,7 +554,7 @@ function gmailBody(part:any):string {
  * Suppress a bounce recipient only when exactly one address in the bounce
  * matches a recipient previously contacted by this organization.
  */
-async function suppressBounceRecipient(pool: Pool, organizationId: string, body: string, subject: string, sender: string) {
+export async function suppressBounceRecipient(pool: Pool, organizationId: string, body: string, subject: string, sender: string) {
   const candidates = Array.from(new Set(
     (String(body || '') + '\n' + String(subject || ''))
       .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []
