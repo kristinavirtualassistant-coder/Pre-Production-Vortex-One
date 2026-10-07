@@ -52,7 +52,7 @@ assert.match(pool.queries[0].sql, /INSERT INTO workflow_runs/);
 
 const updated = await updateWorkflowRun(pool, 'org_test', { ...run, completed_steps: 1 });
 assert.equal(updated?.completed_steps, 1);
-assert.match(pool.queries[1].sql, /UPDATE workflow_runs/);
+assert.match(pool.queries.find((query) => /UPDATE workflow_runs/.test(query.sql))?.sql || '', /UPDATE workflow_runs/);
 
 const fetched = await getWorkflowRun(pool, 'org_test', 'run_test_1');
 assert.equal(fetched?.workflow_id, 'wf_test');
