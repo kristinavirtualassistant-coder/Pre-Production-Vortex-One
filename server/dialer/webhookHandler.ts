@@ -105,9 +105,10 @@ export class WebhookHandler {
         const party = body?.parties?.[0] || {};
         const partyPhones = [party?.to?.phoneNumber, party?.from?.phoneNumber].filter(Boolean);
         const callLookup = await pool.query(
-          `SELECT id, user_id, campaign_id, session_id, lead_id
-           FROM call
-           WHERE organization_id = $1
+          `SELECT c.id, ds.agent_user_id AS user_id, c.campaign_id, c.session_id, c.lead_id
+           FROM call c
+           LEFT JOIN dialing_session ds ON ds.id = c.session_id AND ds.organization_id = c.organization_id
+           WHERE c.organization_id = $1
              AND (telephony_session_id = $2 OR telephony_call_id = $2
                   OR (regexp_replace(phone_number, '\\D', '', 'g') = ANY($3::text[])
                       AND status IN ('initiated','ringing','connected','in-progress')
