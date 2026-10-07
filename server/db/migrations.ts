@@ -1402,8 +1402,8 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 36,
-    name: '036_add_agent_run_controls',
+    version: 39,
+    name: '039_add_agent_run_controls',
     sql: `
       ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
