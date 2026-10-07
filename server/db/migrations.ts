@@ -1434,11 +1434,9 @@ export const MIGRATIONS: Migration[] = [
       CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
       RETURNS trigger
       LANGUAGE plpgsql
-      AS $
-      BEGIN
-        RAISE EXCEPTION 'audit_logs are append-only';
-      END;
-      $;
+      AS 'BEGIN
+        RAISE EXCEPTION ''audit_logs are append-only'';
+      END;';
 
       DROP TRIGGER IF EXISTS trg_audit_logs_append_only ON audit_logs;
       CREATE TRIGGER trg_audit_logs_append_only
