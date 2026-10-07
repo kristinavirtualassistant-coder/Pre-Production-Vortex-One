@@ -139,7 +139,7 @@ async function upsertBillingInvoice(pool: Pool, organizationId: string, invoice:
     `INSERT INTO billing_invoices(id,organization_id,stripe_invoice_id,stripe_customer_id,stripe_subscription_id,status,collection_method,currency,amount_due,amount_paid,amount_remaining,hosted_invoice_url,invoice_pdf,period_start,period_end,due_date,paid_at,metadata)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
      ON CONFLICT(stripe_invoice_id) DO UPDATE SET status=EXCLUDED.status,collection_method=EXCLUDED.collection_method,currency=EXCLUDED.currency,amount_due=EXCLUDED.amount_due,amount_paid=EXCLUDED.amount_paid,amount_remaining=EXCLUDED.amount_remaining,hosted_invoice_url=EXCLUDED.hosted_invoice_url,invoice_pdf=EXCLUDED.invoice_pdf,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,due_date=EXCLUDED.due_date,paid_at=EXCLUDED.paid_at,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP`,
-    [`inv_\${invoice.id}`, organizationId, invoice.id, invoice.customer || null, invoice.subscription || null, invoice.status || null, invoice.collection_method || null, invoice.currency || null,
+    ['inv_' + invoice.id, organizationId, invoice.id, invoice.customer || null, invoice.subscription || null, invoice.status || null, invoice.collection_method || null, invoice.currency || null,
      Number.isFinite(Number(invoice.amount_due)) ? Number(invoice.amount_due) : null, Number.isFinite(Number(invoice.amount_paid)) ? Number(invoice.amount_paid) : null, Number.isFinite(Number(invoice.amount_remaining)) ? Number(invoice.amount_remaining) : null,
      invoice.hosted_invoice_url || null, invoice.invoice_pdf || null, periodStart, periodEnd, dueDate, paidAt, JSON.stringify(invoice.metadata || {})],
   );
@@ -148,7 +148,6 @@ export async function handleStripeEvent(pool: Pool, event: any) {
   const object = event?.data?.object || {};
   const metadata = object.metadata || {};
   const organizationId = metadata.organization_id || metadata.organizationId;
-  if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
 
   const subscription = event.type.startsWith('customer.subscription.') ? object : null;
 
@@ -164,6 +163,9 @@ export async function handleStripeEvent(pool: Pool, event: any) {
     }
     return { ignored: true, reason: 'invoice missing organization mapping' };
   }
+
+  if (!organizationId) return { ignored: true, reason: 'missing organization metadata' };
+
   if (subscription) {
     const plan = metadata.plan || subscription.items?.data?.[0]?.price?.metadata?.plan || 'free';
     const status = subscription.status || 'active';
