@@ -198,9 +198,9 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
     );
     if (Number(spend.rows[0]?.spend || 0) >= maxCostUsd) {
       throw new Error('AI agent budget exceeded for organization (limit 
-    `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,CURRENT_TIMESTAMP)`,
-    [runId, request.organizationId, agent.id, request.userId || null, request.objective, provider, agent.model, JSON.stringify({ ...(request.context || {}), idempotency_key: idempotencyKey }), maxAttempts],
+    `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, idempotency_key, started_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,$10,CURRENT_TIMESTAMP)`,
+    [runId, request.organizationId, agent.id, request.userId || null, request.objective, provider, agent.model, JSON.stringify({ ...(request.context || {}), idempotency_key: idempotencyKey }), maxAttempts, idempotencyKey],
   );
 
   try {
