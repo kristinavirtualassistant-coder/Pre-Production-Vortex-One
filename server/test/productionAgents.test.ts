@@ -22,11 +22,13 @@ for (const agent of PRODUCTION_AGENTS) {
 const research = PRODUCTION_AGENTS.find((a) => a.id === 'production_property_research')!;
 assert.ok(research.allowedTools.includes('run_5_step_skip_trace'));
 assert.ok(research.allowedTools.includes('create_lead'));
+assert.ok(TOOLS.enqueue_workflow);
 assert.ok(research.permissions.includes('research_tools'));
 assert.ok(research.permissions.includes('crm_read_write'));
 
 const outbound = PRODUCTION_AGENTS.find((a) => a.id === 'production_outbound')!;
 assert.ok(outbound.allowedTools.includes('make_call'));
+assert.ok(outbound.allowedTools.includes('enqueue_workflow'));
 assert.ok(outbound.permissions.includes('telephony_trigger'));
 
 const qualification = PRODUCTION_AGENTS.find((a) => a.id === 'production_lead_qualification')!;
@@ -34,5 +36,7 @@ assert.ok(qualification.allowedTools.includes('score_lead'));
 
 const followUp = PRODUCTION_AGENTS.find((a) => a.id === 'production_follow_up')!;
 assert.ok(followUp.allowedTools.includes('create_crm_task'));
+assert.ok(followUp.allowedTools.includes('enqueue_workflow'));
+assert.ok(followUp.permissions.includes('workflow_dispatch'));
 
 console.log('productionAgents.test.ts: passed');
