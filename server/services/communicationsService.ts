@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
 import { decryptSecret, encryptSecret } from './integrationOAuth';
 import { enqueueJob } from './jobService';
