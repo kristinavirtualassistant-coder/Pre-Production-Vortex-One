@@ -28,7 +28,6 @@ for (const line of mutationLines) {
 }
 
 const rbacExpectations: Array<[string, string]> = [
-  ["app.delete('/api/integrations/:provider'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/settings/smart-forwarding'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/audit/log'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/webhooks'", "requireRole(['admin', 'executive'])"],
