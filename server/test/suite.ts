@@ -96,7 +96,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 28, 'Migration list contains 26 defined migrations', `Expected 28, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 28, 'Migration list contains 28 defined migrations', `Expected 28, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
@@ -1031,6 +1031,7 @@ async function runAllTests() {
     });
   
     assert(laSearchResult.success === true, 'LA County Assessor search returned success');
+    assert(laSearchResult.totalFound > 0, 'LA County Assessor returned at least 1 real parcel');
   }
 }
 
