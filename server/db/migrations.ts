@@ -1258,15 +1258,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 31,
-    name: '031_owner_source_record_idempotency',
-    sql: `
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
-        ON owner_source_records(organization_id, provider_key, raw_hash);
-    `,
-  },
-
-  {
     version: 29,
     name: '029_billing_invoice_history',
     sql: `
@@ -1324,7 +1315,15 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 31,
-    name: '031_scope_agent_config_keys_to_organization',
+    name: '031_owner_source_record_idempotency',
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
+        ON owner_source_records(organization_id, provider_key, raw_hash);
+    `,
+  },
+  {
+    version: 32,
+    name: '032_scope_agent_config_keys_to_organization',
     sql: `
       DO $$
       BEGIN
@@ -1349,5 +1348,4 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_agent_configs_org_id ON agent_configs(organization_id, id);
     `,
   },
-
 ];
