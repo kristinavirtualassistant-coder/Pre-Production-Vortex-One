@@ -30,6 +30,7 @@ export interface AgentRunResult {
 const DANGEROUS_TOOLS = new Set([
   'make_call',
   'create_crm_task',
+  'create_lead',
   'reconcile_crm_import',
   'sync_google_drive_document',
 ]);
@@ -108,6 +109,7 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
     search_owner: 'read_only',
     score_lead: 'read_only',
     create_crm_task: 'crm_read_write',
+    create_lead: 'crm_read_write',
     reconcile_crm_import: 'crm_read_write',
     make_call: 'telephony_trigger',
   };
@@ -262,7 +264,7 @@ export async function continueApprovedAgentRun(organizationId: string, runId: st
   await pool.query(`UPDATE agent_runs SET status='running', pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`, [runId, organizationId]);
   const agent = await getAgentConfig(pool, organizationId, payload.agent_id);
   const result = await generateWithAgentProvider({
-    provider: inferAgentProvider(agent.model),
+    provider: agent.provider || inferAgentProvider(agent.model),
     model: agent.model,
     systemInstruction: agent.systemInstructions,
     messages: [{ role:'user', content: `The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId, runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]} with the final answer.` }],
@@ -273,5 +275,5 @@ export async function continueApprovedAgentRun(organizationId: string, runId: st
     `UPDATE agent_runs SET status='completed', output=$2::jsonb, output_tokens=COALESCE(output_tokens,0)+$3, input_tokens=COALESCE(input_tokens,0)+$4, estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5, completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
     [runId, JSON.stringify({ final: parseEnvelope(result.text).final || result.text }), result.outputTokens || 0, result.inputTokens || 0, estimateCost(inferAgentProvider(agent.model), result.inputTokens, result.outputTokens), organizationId],
   );
-  return { runId, status:'completed', finalText:parseEnvelope(result.text).final || result.text, provider:inferAgentProvider(agent.model), model:agent.model };
+  return { runId, status:'completed', finalText:parseEnvelope(result.text).final || result.text, provider:agent.provider || inferAgentProvider(agent.model), model:agent.model };
 }
