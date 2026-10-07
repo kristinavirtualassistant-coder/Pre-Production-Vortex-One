@@ -187,7 +187,7 @@ export async function handleStripeEvent(pool: Pool, event: any) {
     const subscriptionId = object.subscription;
     const plan = metadata.plan || 'free';
     await pool.query(
-      `UPDATE organization_billing SET plan=$1,subscription_status='active',billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
+      `UPDATE organization_billing SET plan=$1,billing_customer_id=$2,billing_subscription_id=$3,limits=$4::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$5`,
       [plan,customerId,subscriptionId,JSON.stringify(planLimits(plan)),organizationId],
     );
     return { updated: true, organizationId, plan };
