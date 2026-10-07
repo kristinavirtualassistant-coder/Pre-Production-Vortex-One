@@ -108,6 +108,32 @@ export class PublicRecordsIngestionService {
 
       if (!ownerId) continue;
 
+      const explicitRelationships = [
+        ...(Array.isArray((result.rawAttributes as any)?.relatedOwners) ? (result.rawAttributes as any).relatedOwners : []),
+        ...(Array.isArray((result.rawAttributes as any)?.relatedEntities) ? (result.rawAttributes as any).relatedEntities : []),
+      ];
+      for (const relationship of explicitRelationships) {
+        if (!relationship?.name || !relationship?.relationshipType) continue;
+        await pool.query(
+          `INSERT INTO owner_relationships
+            (id, organization_id, owner_id, related_entity_type, related_entity_id, related_name, relationship_type, confidence_score, source_record_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (organization_id, owner_id, related_entity_type, related_name, relationship_type)
+           DO UPDATE SET confidence_score=EXCLUDED.confidence_score, source_record_id=EXCLUDED.source_record_id`,
+          [
+            id('rel'),
+            orgId,
+            ownerId,
+            String(relationship.entityType || 'entity'),
+            relationship.id || null,
+            String(relationship.name),
+            String(relationship.relationshipType),
+            Number(relationship.confidence ?? 0.75),
+            sourceId,
+          ],
+        );
+      }
+
       const candidateOwners = await pool.query(
         `SELECT id, name
            FROM property_owners
