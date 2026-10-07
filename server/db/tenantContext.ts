@@ -16,3 +16,18 @@ export function runTenantContext<T>(context: TenantDbContext, callback: () => T)
 export function getTenantContext(): TenantDbContext | undefined {
   return storage.getStore();
 }
+
+export async function beginTenantContext(client: PoolClient, organizationId: string): Promise<TenantDbContext> {
+  await client.query('BEGIN');
+  await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', organizationId]);
+  return { organizationId, client, rollbackOnly: false };
+}
+
+export async function finishTenantContext(context: TenantDbContext, commit: boolean): Promise<void> {
+  try {
+    if (context.rollbackOnly || !commit) await context.client.query('ROLLBACK');
+    else await context.client.query('COMMIT');
+  } finally {
+    context.client.release();
+  }
+}
