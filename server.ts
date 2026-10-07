@@ -1428,6 +1428,7 @@ async function startServer() {
       let result: any;
       try {
         await client.query('BEGIN');
+        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
         await client.query('SET LOCAL statement_timeout = 5000');
         result = await client.query(
         `SELECT
@@ -3390,6 +3391,7 @@ app.delete('/api/dialer/voicemails/:id', async (req, res) => {
       const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
 
       await client.query('BEGIN');
+        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
       const callUpdate = await client.query(
         `UPDATE call
          SET disposition = 'voicemail',
