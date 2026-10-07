@@ -45,6 +45,7 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "nodemailer": "^6.9.16",
     "papaparse": "^5.7.0",
     "pg": "^8.23.0",
     "puppeteer": "^25.9.0",
@@ -58,6 +59,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
     "@types/papaparse": "^5.5.2"
   },
   "overrides": {

@@ -112,7 +112,7 @@ async function runAllTests() {
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
   // Append-only guard: bump EXPECTED_MIGRATION_COUNT deliberately when a migration is added.
-  const EXPECTED_MIGRATION_COUNT = 41;
+  const EXPECTED_MIGRATION_COUNT = 42;
   assert(MIGRATIONS.length === EXPECTED_MIGRATION_COUNT, `Migration list contains ${EXPECTED_MIGRATION_COUNT} defined migrations`, `Expected ${EXPECTED_MIGRATION_COUNT}, got ${MIGRATIONS.length}`);
   assert(new Set(MIGRATIONS.map((migration) => migration.version)).size === MIGRATIONS.length, 'Migration versions are unique');
   assert(MIGRATIONS.some((migration) => migration.version === 12 && migration.name === '012_auth_webhook_voicemail_foundation'), 'Auth foundation migration 12 is part of the migration chain');

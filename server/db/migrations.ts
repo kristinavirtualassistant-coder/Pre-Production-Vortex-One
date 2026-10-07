@@ -1483,5 +1483,17 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE integration_oauth_states ADD COLUMN IF NOT EXISTS browser_nonce_hash VARCHAR(64);
     `,
   },
+  {
+    version: 43,
+    name: '043_email_outreach_delivery_safety',
+    // 'manual_review' / 'suppressed' are terminal states; provider_attempted_at is written BEFORE the provider call so a
+    // crash after the provider accepted the message can never lead to a second send (see emailWorker).
+    sql: `
+      ALTER TABLE email_outreach ADD COLUMN IF NOT EXISTS provider_attempted_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE email_outreach DROP CONSTRAINT IF EXISTS email_outreach_status_check;
+      ALTER TABLE email_outreach ADD CONSTRAINT email_outreach_status_check
+        CHECK (status IN ('queued','processing','sent','failed','manual_review','suppressed'));
+    `,
+  },
 ];
 
