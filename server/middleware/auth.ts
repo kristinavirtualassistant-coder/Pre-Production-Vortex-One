@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
-import { beginTenantContext, finishTenantContext, runTenantContext } from '../db/tenantContext';
+import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
@@ -407,12 +407,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     res.once('close', () => {
       if (!res.writableEnded) finish(false);
     });
-    try {
-      runTenantContext(context, () => next());
-    } catch (error) {
-      finish(false);
-      throw error;
-    }
+    enterTenantContext(context);
 
     if(req.path==='/auth/logout'&&req.method==='POST'){
       await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
@@ -452,6 +447,12 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
     }
 
+    try {
+      next();
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     return;
   }catch(error:any){
     if(error instanceof AuthorizationError)return res.status(error.statusCode).json({error:error.message});
