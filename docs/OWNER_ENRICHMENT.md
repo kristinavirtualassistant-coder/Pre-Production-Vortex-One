@@ -58,3 +58,5 @@ Do not treat a provider response as canonical merely because it exists. Store th
 4. Ownership rows are reconciled into `owner_ownerships` and candidate identity conflicts are stored in `owner_identity_matches`.
 5. Portfolio-level lead signals use dedicated partial unique indexes so `NULL` property IDs cannot create duplicate global signals.
 6. Commercial adapters remain separate and return `unavailable` until lawful credentials/data access are configured.
+
+7. Relationship intelligence is evidence-based: only explicit related-owner/entity records from a normalized source are persisted to `owner_relationships`; name similarity and shared addresses are never treated as proof of a relationship.
