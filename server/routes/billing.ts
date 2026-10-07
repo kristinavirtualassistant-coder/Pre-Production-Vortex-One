@@ -1,3 +1,4 @@
+import { requirePermission } from '../security/permissions';
 import { Router } from 'express';
 import type { AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/auth';
@@ -32,7 +33,7 @@ router.get('/plans', (_req, res) => {
   res.json(PLAN_CATALOG);
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -45,7 +46,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/usage', async (req, res) => {
+router.get('/usage', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -55,7 +56,7 @@ router.get('/usage', async (req, res) => {
   }
 });
 
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -66,7 +67,7 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
-router.post('/checkout', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/checkout', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   const plan = String(req.body?.plan || '').toLowerCase();
@@ -86,7 +87,7 @@ router.post('/checkout', requireRole(['admin', 'executive']), async (req, res) =
   }
 });
 
-router.post('/portal', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/portal', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -96,7 +97,7 @@ router.post('/portal', requireRole(['admin', 'executive']), async (req, res) => 
   }
 });
 
-router.post('/cancel', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/cancel', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {

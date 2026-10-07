@@ -1,3 +1,4 @@
+import { requirePermission } from '../security/permissions';
 import { randomUUID } from 'node:crypto';
 import { Router, type Response } from 'express';
 import { getPgPool } from '../db/db';
@@ -116,7 +117,7 @@ router.post('/sms/send', requireRole(['admin','executive','manager','agent']), a
 /**
  * Trigger an inbox sync for the requested email provider and return the imported count.
  */
-router.post('/email/sync', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest, res) => {
+router.post('/email/sync', requirePermission('inbox:sync'), async (req: AuthRequest, res) => {
   const pool=poolOrFail(res); if(!pool)return;
   const provider=req.body?.provider || req.query.provider;
   if(!['google-workspace','microsoft-365'].includes(provider)) return res.status(400).json({error:'provider is required'});
@@ -163,7 +164,7 @@ router.get('/suppressions', async (req: AuthRequest,res) => {
 /**
  * Validate the channel and contact key, then create or update a suppression entry.
  */
-router.post('/suppressions', requireRole(['admin','executive','manager','agent']), async (req: AuthRequest,res) => {
+router.post('/suppressions', requirePermission('suppressions:write'), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   if(!['email','sms','voice','all'].includes(req.body?.channel) || !req.body?.contactKey) return res.status(400).json({error:'channel and contactKey are required'});
   try { res.status(201).json(await suppress(pool,org(req),req.body.channel,req.body.contactKey,req.body.reason || 'manual opt-out',req.body.source || 'user')); }

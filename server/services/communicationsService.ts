@@ -262,8 +262,8 @@ async function thread(pool: Pool, args: any) {
   );
   if (existing.rowCount) {
     const updated = await pool.query(
-      'UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),subject=COALESCE($2,subject),lead_id=COALESCE($3,lead_id),owner_id=COALESCE($4,owner_id),property_id=COALESCE($5,property_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$6 RETURNING *',
-      [args.externalThreadId || null,args.subject || null,args.leadId || null,args.ownerId || null,args.propertyId || null,existing.rows[0].id],
+      'UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),subject=COALESCE($2,subject),lead_id=COALESCE($3,lead_id),owner_id=COALESCE($4,owner_id),property_id=COALESCE($5,property_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$6 AND organization_id=$7 RETURNING *',
+      [args.externalThreadId || null,args.subject || null,args.leadId || null,args.ownerId || null,args.propertyId || null,existing.rows[0].id,args.organizationId],
     );
     return updated.rows[0];
   }
@@ -284,7 +284,7 @@ async function record(pool: Pool, args: any) {
     ['cm_' + randomUUID(),args.organizationId,args.threadId,args.channel,args.provider,args.direction,args.externalMessageId || null,args.fromAddress || null,args.toAddress || null,args.subject || null,args.body,args.htmlBody || null,args.status,args.trackingToken || null,args.idempotencyKey || null,args.leadId || null,args.ownerId || null,args.propertyId || null,args.userId || null,JSON.stringify(args.metadata || {})],
   );
   if (result.rowCount) {
-    await pool.query('UPDATE communication_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1', [args.threadId]);
+    await pool.query('UPDATE communication_threads SET last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2', [args.threadId, args.organizationId]);
     return result.rows[0];
   }
   const existing = await pool.query('SELECT * FROM communication_messages WHERE organization_id=$1 AND provider=$2 AND external_message_id=$3 LIMIT 1', [args.organizationId,args.provider,args.externalMessageId]);
@@ -379,7 +379,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
       referenceId: pending.id,
       metadata: { externalMessageId: sent.externalMessageId, pricingConfigured: emailUnitCostUsd > 0 },
     });
-    await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2',[sent.externalThreadId,t.id]);
+    await pool.query('UPDATE communication_threads SET external_thread_id=COALESCE($1,external_thread_id),last_message_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2 AND organization_id=$3',[sent.externalThreadId,t.id,args.organizationId]);
     return updated.rows[0];
   } catch (error: any) {
     await pool.query("UPDATE communication_messages SET status='failed',error_message=$1 WHERE id=$2", [error.message || 'Email send failed',pending.id]);

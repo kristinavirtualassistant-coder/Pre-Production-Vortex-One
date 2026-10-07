@@ -44,6 +44,7 @@ import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemor
 import { createCheckoutSession, createPortalSession, verifyStripeWebhook, processStripeWebhookEvent, enforceUsageLimit } from './server/services/billingService';
 import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
+import { requirePermission } from './server/security/permissions';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
 export interface CreateAppOptions {
@@ -164,11 +165,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.get('/api/db/status', (req, res) => {
+  app.get('/api/db/status', requirePermission('system:read'), (req, res) => {
     res.json(getDatabaseStatus());
   });
 
-  app.get('/api/operational/metrics', async (req, res) => {
+  app.get('/api/operational/metrics', requirePermission('metrics:read'), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -187,13 +188,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   // --- Task Cache & Saved Answers Management APIs ---
-  app.get('/api/cache/stats', (req, res) => {
+  app.get('/api/cache/stats', requirePermission('system:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
     res.setHeader('Content-Type', 'application/json');
     res.json(taskCacheService.getStats());
   });
 
-  app.get('/api/cache/entries', (req, res) => {
+  app.get('/api/cache/entries', requirePermission('system:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
     const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit || '100'), 10) || 100, 1), 100);
     const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -1028,7 +1029,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   // Audit Logging API
-  app.get('/api/audit/logs', (req, res) => {
+  app.get('/api/audit/logs', requirePermission('audit:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log API was removed; use /api/audit.' });
     try {
       const auditOrgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -1065,7 +1066,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   const propertyDataProvider = new UnifiedPropertyDataProvider();
 
   // External HTTP/HTTPS Webhook Management APIs
-  app.get('/api/webhooks', async (req, res) => {
+  app.get('/api/webhooks', requirePermission('webhooks:read'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       res.json(await externalWebhookService.listEndpoints(organizationId));
@@ -1074,7 +1075,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.post('/api/webhooks', requireRole(['admin', 'executive']), async (req, res) => {
+  app.post('/api/webhooks', requirePermission('webhooks:manage'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
@@ -1084,7 +1085,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.put('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.put('/api/webhooks/:id', requirePermission('webhooks:manage'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
@@ -1095,7 +1096,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
+  app.delete('/api/webhooks/:id', requirePermission('webhooks:manage'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
@@ -1106,7 +1107,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.post('/api/webhooks/:id/test', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/webhooks/:id/test', requirePermission('webhooks:test'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
@@ -1117,7 +1118,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.get('/api/webhooks/:id/deliveries', async (req, res) => {
+  app.get('/api/webhooks/:id/deliveries', requirePermission('webhooks:read'), async (req, res) => {
     try {
       const organizationId = (req as AuthRequest).dbUser!.organization_id;
       const limit = Math.max(1, Number(req.query.limit) || 50);
@@ -2889,7 +2890,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     }
   });
 
-  app.get('/api/import/audit-logs', async (req, res) => {
+  app.get('/api/import/audit-logs', requirePermission('audit:read'), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -3213,7 +3214,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   // Call Records & Telephony FSM APIs
-  app.get('/api/calls', async (req, res) => {
+  app.get('/api/calls', requirePermission('calls:read'), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Production call records require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
@@ -3408,7 +3409,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   // PostgreSQL-authoritative audit log reader.
-  app.get('/api/audit', async (req, res) => {
+  app.get('/api/audit', requirePermission('audit:read'), async (req, res) => {
     try {
       const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
       if(!pool) return res.status(503).json({error:'Audit logs require PostgreSQL'});
@@ -3761,7 +3762,7 @@ ${transcript}`;
   });
 
   // List all files in the Imported Files folder
-  app.get('/api/imported-files', (req, res) => {
+  app.get('/api/imported-files', requirePermission('files:read'), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -3800,7 +3801,7 @@ ${transcript}`;
   });
 
   // Download raw file from Imported Files folder
-  app.get('/api/imported-files/:id/download', (req, res) => {
+  app.get('/api/imported-files/:id/download', requirePermission('files:read'), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -4503,7 +4504,7 @@ ${transcript}`;
   }
 
   // Multi-Dialer Execution Route
-  app.post('/api/dial-batch', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/dial-batch', requirePermission('dial:bulk'), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();

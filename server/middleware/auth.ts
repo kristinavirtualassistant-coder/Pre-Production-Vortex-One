@@ -7,6 +7,7 @@ import { hashPassword, hashSessionToken, verifyPassword } from '../services/post
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
+import { can } from '../security/permissionMatrix';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -455,7 +456,10 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       return res.json({invites});
     }
     if(req.path==='/organization/settings'&&(req.method==='GET'||req.method==='PATCH'))return organizationSettings(req,res,pool);
-    if(req.path==='/organization/billing'&&req.method==='GET')return billingAndUsage(req,res,pool);
+    if(req.path==='/organization/billing'&&req.method==='GET'){
+      if(!can(dbUser.role,'billing:read'))return res.status(403).json({error:'Forbidden: billing access requires a manager or administrator role'});
+      return billingAndUsage(req,res,pool);
+    }
     if(req.path==='/organization/billing/checkout'&&req.method==='POST'){
       if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
       const plan=String(req.body?.plan||'') as 'starter'|'professional'|'enterprise';
