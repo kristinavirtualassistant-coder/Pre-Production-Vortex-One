@@ -392,6 +392,28 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     req.user={uid:dbUser.id,email:dbUser.email,name:dbUser.name,role:dbUser.role};
     await pool.query('UPDATE auth_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
 
+    const organizationId = canonicalizeOrganizationContext(req);
+    const client = await pool.connect();
+    const context = await beginTenantContext(client, organizationId);
+    let settled = false;
+    const finish = (commit: boolean) => {
+      if (settled) return;
+      settled = true;
+      void finishTenantContext(context, commit).catch((error) => {
+        console.error('Tenant database transaction finalization failed:', error);
+      });
+    };
+    res.once('finish', () => finish(res.statusCode < 400));
+    res.once('close', () => {
+      if (!res.writableEnded) finish(false);
+    });
+    try {
+      runTenantContext(context, () => next());
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
+
     if(req.path==='/auth/logout'&&req.method==='POST'){
       await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
       clearSessionCookie(res);
@@ -430,27 +452,6 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
     }
 
-    const organizationId = canonicalizeOrganizationContext(req);
-    const client = await pool.connect();
-    const context = await beginTenantContext(client, organizationId);
-    let settled = false;
-    const finish = (commit: boolean) => {
-      if (settled) return;
-      settled = true;
-      void finishTenantContext(context, commit).catch((error) => {
-        console.error('Tenant database transaction finalization failed:', error);
-      });
-    };
-    res.once('finish', () => finish(res.statusCode < 400));
-    res.once('close', () => {
-      if (!res.writableEnded) finish(false);
-    });
-    try {
-      runTenantContext(context, () => next());
-    } catch (error) {
-      finish(false);
-      throw error;
-    }
     return;
   }catch(error:any){
     if(error instanceof AuthorizationError)return res.status(error.statusCode).json({error:error.message});
