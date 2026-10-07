@@ -9,13 +9,12 @@ import { createServer as createViteServer } from 'vite';
 
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
-import { ensureProductionAgents } from './server/agents/productionAgents';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
 import { generateSpeechTTS } from './server/gemini';
 import { AgentDefinition, Workflow, WorkflowStep, WorkflowRun, Task, Property, CallRecord } from './src/types';
 import { CampaignManager } from './server/dialer/campaignManager';
-import { SuppressionService, normalizePhoneNumber } from './server/dialer/suppressionService';
+import { SuppressionService } from './server/dialer/suppressionService';
 import { WebhookHandler, verifyRingCentralWebhook, handleRingCentralValidation } from './server/dialer/webhookHandler';
 import { getTelephonyAdapter } from './server/dialer/telephonyAdapter';
 import { ManualDialService, ManualDialNotFoundError, ManualDialSuppressedError } from './server/dialer/manualDialService';
@@ -33,51 +32,11 @@ import { searchProperties, type PropertySearchQuery } from './server/services/pr
 import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
-import { analyticsRouter } from './server/routes/analytics';
-import { appointmentsRouter } from './server/routes/appointments';
-import communicationsRouter from './server/services/communicationsRouter';
-import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow } from './server/services/workflowAutomationService';
-import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
-import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
-import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
-import { createCheckoutSession, createPortalSession, verifyStripeWebhook, handleStripeEvent, enforceUsageLimit } from './server/services/billingService';
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
-
-  // Stripe requires the exact raw request bytes for webhook signature verification.
-  app.post('/api/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
-    const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-    const signature = req.header('stripe-signature') || '';
-    if (!secret || !signature || !Buffer.isBuffer(req.body)) {
-      return res.status(400).json({ error: 'Stripe webhook is not configured correctly' });
-    }
-    if (!verifyStripeWebhook(req.body, signature, secret)) {
-      return res.status(400).json({ error: 'Invalid Stripe webhook signature' });
-    }
-    try {
-      const event = JSON.parse(req.body.toString('utf8'));
-      if (!event?.id || typeof event.id !== 'string' || !event.type) {
-        return res.status(400).json({ error: 'Invalid Stripe event' });
-      }
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'Database unavailable' });
-      const inserted = await pool.query(
-        `INSERT INTO stripe_webhook_events(id,event_type,payload)
-         VALUES($1,$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
-        [event.id, event.type, JSON.stringify(event)],
-      );
-      if (inserted.rowCount === 1) {
-        await handleStripeEvent(pool, event);
-      }
-      return res.json({ received: true, processed: inserted.rowCount === 1 });
-    } catch (error: any) {
-      console.error('Stripe webhook processing failed:', error);
-      return res.status(500).json({ error: 'Stripe webhook processing failed' });
-    }
-  });
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -94,8 +53,7 @@ async function startServer() {
     if (isProduction) throw err;
   }
 
-  // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
-  app.use('/api/appointments', requireAuth, appointmentsRouter);
+  // --- API Routes ---
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
@@ -127,19 +85,6 @@ async function startServer() {
   });
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
-  app.use('/api/communications', communicationsRouter);
-
-  app.post('/internal/scheduler/workflows', async (req, res) => {
-    const expected = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
-    const supplied = String(req.header('x-vortex-scheduler-secret') || '').trim();
-    if (!expected || supplied !== expected) return res.status(401).json({ error: 'Unauthorized scheduler request' });
-    try {
-      res.json(await runWorkflowScheduler());
-    } catch (err: any) {
-      console.error('Workflow scheduler failed:', err);
-      res.status(500).json({ error: err.message || 'Workflow scheduler failed' });
-    }
-  });
 
   app.get('/api/db/status', (req, res) => {
     res.json(getDatabaseStatus());
@@ -323,69 +268,29 @@ async function startServer() {
     } catch (err: any) { console.error('Workflow delete error:', err); res.status(503).json({ error: 'Workflow state unavailable' }); }
   });
 
-  app.post('/api/workflows/:id/versions', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
-    if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow versioning'});
-    try { res.status(201).json(await createWorkflowVersion(pool,orgId,req.params.id,userId,Boolean(req.body?.publish))); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to create workflow version'}); }
-  });
+  // --- Workflow Runs Subscription & Polling APIs ---
+  app.get('/api/runs', (req, res) => {
+    if (isProduction) return res.status(410).json({ error: 'Workflow run read API was removed; use PostgreSQL workflow records.' });
+    let runs = [...(inMemoryStore.runs || [])];
+    const { workflow_id, status, limit } = req.query;
 
-  app.get('/api/workflows/:id/versions', async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow versions'});
-    const result=await pool.query('SELECT * FROM workflow_versions WHERE workflow_id=$1 AND organization_id=$2 ORDER BY version DESC',[req.params.id,orgId]);
-    res.json(result.rows);
-  });
+    if (workflow_id && typeof workflow_id === 'string') {
+      runs = runs.filter((r) => r.workflow_id === workflow_id);
+    }
+    if (status && typeof status === 'string') {
+      runs = runs.filter((r) => r.status === status);
+    }
 
-  app.post('/api/workflows/:id/versions/:versionId/publish', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow publishing'});
-    try { res.json(await publishWorkflowVersion(pool,orgId,req.params.id,req.params.versionId)); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to publish workflow version'}); }
-  });
+    runs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  app.post('/api/workflows/:id/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
-    if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
-    try { res.status(201).json(await scheduleWorkflow(pool,orgId,req.params.id,userId,req.body||{})); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to schedule workflow'}); }
-  });
+    if (limit) {
+      const parsedLimit = parseInt(limit as string, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) {
+        runs = runs.slice(0, parsedLimit);
+      }
+    }
 
-  app.patch('/api/workflows/:id/schedules/:scheduleId', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow schedules'});
-    const status=String(req.body?.status||'');
-    if(!['active','paused','cancelled'].includes(status)) return res.status(400).json({error:'status must be active, paused, or cancelled'});
-    try { res.json(await updateWorkflowScheduleStatus(pool,orgId,req.params.scheduleId,status as 'active'|'paused'|'cancelled')); }
-    catch(err:any){ res.status(404).json({error:err.message||'Failed to update workflow schedule'}); }
-  });
-
-  app.post('/api/workflows/:id/schedules/:scheduleId/run-now', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
-    try {
-      const result=await runWorkflowScheduleNow(pool,orgId,req.params.scheduleId);
-      res.status(202).json(result);
-    } catch(err:any){ res.status(400).json({error:err.message||'Failed to queue workflow'}); }
-  });
-
-  app.get('/api/workflows/:id/schedules', async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow schedules'});
-    const result=await pool.query('SELECT * FROM workflow_schedules WHERE workflow_id=$1 AND organization_id=$2 ORDER BY created_at DESC',[req.params.id,orgId]);
-    res.json(result.rows);
-  });
-
-  app.get('/api/workflow-runs', async (req, res) => {
-    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow run history'});
-    const limit=Math.min(100,Math.max(1,Number(req.query.limit)||25));
-    const params:any[]=[orgId]; let where='organization_id=$1';
-    if(req.query.workflow_id){ params.push(String(req.query.workflow_id)); where+=' AND workflow_id=$'+params.length; }
-    if(req.query.status){ params.push(String(req.query.status)); where+=' AND status=$'+params.length; }
-    params.push(limit);
-    const result=await pool.query(`SELECT * FROM workflow_runs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`,params);
-    res.json(result.rows);
+    res.json(runs);
   });
 
   app.get('/api/runs/latest', (req, res) => {
@@ -1349,132 +1254,6 @@ async function startServer() {
       return res.json(result.rows);
     } catch (err: any) {
       return res.status(503).json({ error: 'Production properties are temporarily unavailable', code: 'PROPERTY_DATABASE_ERROR' });
-    }
-  });
-
-  // Native Property Intelligence map search. Spatial filtering is tenant-scoped and database-backed.
-  app.post('/api/map/search', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'Native map search requires PostgreSQL/PostGIS', code: 'MAP_DATABASE_UNAVAILABLE' });
-
-      const polygon = req.body?.polygon;
-      if (!polygon || polygon.type !== 'Polygon' || !Array.isArray(polygon.coordinates) || polygon.coordinates.length === 0) {
-        return res.status(400).json({ error: 'A GeoJSON Polygon is required' });
-      }
-
-      const maxResults = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 2000);
-      const rings = polygon.coordinates as unknown[];
-      const allPoints = rings.flatMap((ring: any) => Array.isArray(ring) ? ring : []);
-      const coordinateCount = allPoints.length;
-      if (rings.length === 0 || coordinateCount < 4 || coordinateCount > 1000) {
-        return res.status(400).json({ error: 'Polygon must contain between 3 and 999 total vertices.' });
-      }
-      for (const ring of rings) {
-        if (!Array.isArray(ring) || ring.length < 4 || ring.length > 1000) {
-          return res.status(400).json({ error: 'Each polygon ring must contain between 3 and 999 vertices.' });
-        }
-        for (const point of ring) {
-          if (!Array.isArray(point) || point.length < 2 || !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) ||
-              Number(point[0]) < -180 || Number(point[0]) > 180 || Number(point[1]) < -90 || Number(point[1]) > 90) {
-            return res.status(400).json({ error: 'Polygon coordinates must be valid longitude/latitude pairs.' });
-          }
-        }
-        const first = ring[0];
-        const last = ring[ring.length - 1];
-        if (Number(first[0]) !== Number(last[0]) || Number(first[1]) !== Number(last[1])) {
-          return res.status(400).json({ error: 'Each polygon ring must be closed.' });
-        }
-      }
-      const distinctPoints = new Set(
-        (rings[0] as any[]).map((point: any) => `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)}`),
-      );
-      if (distinctPoints.size < 3) {
-        return res.status(400).json({ error: 'Polygon must contain at least three distinct points.' });
-      }
-      const params: any[] = [orgId, JSON.stringify(polygon)];
-      const filters: string[] = [
-        'p.organization_id = $1',
-        'p.location IS NOT NULL',
-        'ST_Intersects(p.location, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)::geography)',
-      ];
-
-      const minEquity = Number(req.body?.minEquity);
-      const maxEquity = Number(req.body?.maxEquity);
-      const absenteeOnly = req.body?.absenteeOnly === true;
-      const corporateOnly = req.body?.corporateOnly === true;
-      const taxDelinquentOnly = req.body?.taxDelinquentOnly === true;
-      const propertyType = typeof req.body?.propertyType === 'string' ? req.body.propertyType.trim() : '';
-
-      if (Number.isFinite(minEquity)) {
-        params.push(minEquity);
-        filters.push(`p.estimated_equity >= $${params.length}`);
-      }
-      if (Number.isFinite(maxEquity)) {
-        params.push(maxEquity);
-        filters.push(`p.estimated_equity <= $${params.length}`);
-      }
-      if (absenteeOnly) filters.push('p.is_absentee_owner = TRUE');
-      if (corporateOnly) filters.push('p.is_corporate_owned = TRUE');
-      if (taxDelinquentOnly) filters.push('p.tax_delinquent = TRUE');
-      if (propertyType && propertyType !== 'All') {
-        params.push(propertyType);
-        filters.push(`p.property_type = $${params.length}`);
-      }
-
-      params.push(maxResults);
-      const client = await pool.connect();
-      let result: any;
-      try {
-        await client.query('BEGIN');
-        await client.query('SET LOCAL statement_timeout = 5000');
-        result = await client.query(
-        `SELECT
-           p.id, p.organization_id, p.address, p.city, p.state, p.zip, p.county, p.apn,
-           p.property_type, p.units_count, p.square_feet, p.year_built,
-           p.estimated_value, p.assessed_tax_value, p.estimated_equity, p.mortgage_balance,
-           p.is_absentee_owner, p.is_corporate_owned, p.tax_delinquent,
-           p.last_sale_date, p.last_sale_price, p.latitude, p.longitude,
-           p.parcel_geometry, p.map_signals, p.hazard_flags, p.tags,
-           o.id AS owner_id, o.name AS owner_name, o.entity_type AS owner_entity_type,
-           o.mailing_address AS owner_mailing_address, o.mailing_city AS owner_mailing_city,
-           o.mailing_state AS owner_mailing_state, o.mailing_zip AS owner_mailing_zip,
-           o.phone_numbers AS owner_phone_numbers, o.email_addresses AS owner_email_addresses,
-           EXISTS (
-             SELECT 1 FROM leads l
-             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
-           ) AS has_lead,
-           (
-             SELECT l.id FROM leads l
-             WHERE l.primary_property_id = p.id AND l.organization_id = p.organization_id
-             ORDER BY l.created_at DESC LIMIT 1
-           ) AS lead_id
-         FROM properties p
-         LEFT JOIN property_owners o
-           ON o.id = p.owner_id AND o.organization_id = p.organization_id
-         WHERE ${filters.join(' AND ')}
-         ORDER BY p.estimated_equity DESC NULLS LAST
-         LIMIT $${params.length}`,
-        params,
-        );
-        await client.query('COMMIT');
-      } catch (queryError) {
-        await client.query('ROLLBACK');
-        throw queryError;
-      } finally {
-        client.release();
-      }
-
-      return res.json({
-        success: true,
-        count: result.rows.length,
-        properties: result.rows,
-        spatialFilter: polygon,
-      });
-    } catch (err: any) {
-      console.error('[native-map-search] failed:', err);
-      return res.status(500).json({ error: err?.message || 'Native map search failed', code: 'MAP_SEARCH_FAILED' });
     }
   });
 
@@ -2927,23 +2706,6 @@ async function startServer() {
   app.post('/api/campaigns', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const contacts = req.body.contacts && Array.isArray(req.body.contacts) ? req.body.contacts : [];
-
-      // Validate the complete contact set before creating the campaign so invalid
-      // or duplicate phones cannot leave an orphaned outbound campaign.
-      if (contacts.length > 0) {
-        const normalizedPhones = contacts.map((contact: any) => normalizePhoneNumber(contact?.phoneNumber || ''));
-        if (normalizedPhones.some((phone: string | null) => !phone)) {
-          return res.status(400).json({ error: 'Every campaign contact must include a valid phone number.' });
-        }
-        if (new Set(normalizedPhones).size !== normalizedPhones.length) {
-          return res.status(409).json({
-            error: 'Campaign contacts contain duplicate normalized phone numbers.',
-            code: 'CAMPAIGN_CONTACT_DUPLICATE_PHONE',
-          });
-        }
-      }
-
       const camp = await CampaignManager.createCampaign({
         organizationId: orgId,
         name: req.body.name || 'Targeted Multi-Family Outreach Campaign',
@@ -2956,22 +2718,12 @@ async function startServer() {
         timezone: req.body.timezone,
       });
 
-      let addedContacts = 0;
-      if (contacts.length > 0) {
-        const contactResult = await CampaignManager.addContacts(orgId, camp.id, contacts);
-        addedContacts = contactResult.added;
-        if (addedContacts !== req.body.contacts.length) {
-          return res.status(409).json({
-            error: 'Campaign created but not all requested contacts were attached.',
-            code: 'CAMPAIGN_CONTACT_ATTACHMENT_INCOMPLETE',
-            campaign: camp,
-            requestedContacts: req.body.contacts.length,
-            addedContacts,
-          });
-        }
+      // If contacts are provided in the creation payload, attach them
+      if (req.body.contacts && Array.isArray(req.body.contacts) && req.body.contacts.length > 0) {
+        await CampaignManager.addContacts(orgId, camp.id, req.body.contacts);
       }
 
-      res.status(201).json({ ...camp, addedContacts });
+      res.status(201).json(camp);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -4245,159 +3997,6 @@ ${transcript}`;
   });
 
 
-
-  // Real AI Agent Runtime
-  app.get('/api/ai-agents', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI agents' });
-      await ensureProductionAgents(pool, orgId);
-      const result = await pool.query(
-        'SELECT * FROM agent_configs WHERE organization_id=$1 ORDER BY name ASC',
-        [orgId],
-      );
-      const configured = result.rows.map((row: any) => ({
-        id: row.id, name: row.name, role: row.role, description: row.description,
-        primaryResponsibility: row.primary_responsibility, systemInstructions: row.system_instructions,
-        allowedTools: row.allowed_tools || [], allowedData: row.allowed_data || [],
-        model: row.model, provider: row.provider || null, temperature: Number(row.temperature ?? 0.2),
-        maxTokens: row.max_tokens || 4096, maxRetries: row.max_retries ?? 3,
-        memoryEnabled: row.memory_enabled !== false, permissions: row.permissions || [],
-        parentAgentId: row.parent_agent_id || null, enabled: row.enabled,
-        capabilities: row.capabilities || [],
-      }));
-      res.json({ agents: configured, defaults: getAllAgents() });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to list AI agents' });
-    }
-  });
-
-  app.post('/api/ai-agents', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const body = req.body || {};
-      if (!body.id || !body.name || !body.role || !body.model) {
-        return res.status(400).json({ error: 'id, name, role, and model are required' });
-      }
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI agents' });
-      const result = await pool.query(
-        `INSERT INTO agent_configs
-          (id, organization_id, name, role, description, primary_responsibility, system_instructions,
-           allowed_tools, allowed_data, model, temperature, max_tokens, permissions, parent_agent_id,
-           enabled, capabilities, provider, max_retries, memory_enabled)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19)
-         ON CONFLICT (id) DO UPDATE SET
-           name=EXCLUDED.name, role=EXCLUDED.role, description=EXCLUDED.description,
-           primary_responsibility=EXCLUDED.primary_responsibility, system_instructions=EXCLUDED.system_instructions,
-           allowed_tools=EXCLUDED.allowed_tools, allowed_data=EXCLUDED.allowed_data, model=EXCLUDED.model,
-           temperature=EXCLUDED.temperature, max_tokens=EXCLUDED.max_tokens, permissions=EXCLUDED.permissions,
-           parent_agent_id=EXCLUDED.parent_agent_id, enabled=EXCLUDED.enabled, capabilities=EXCLUDED.capabilities,
-           provider=EXCLUDED.provider, max_retries=EXCLUDED.max_retries, memory_enabled=EXCLUDED.memory_enabled,
-           updated_at=CURRENT_TIMESTAMP
-         WHERE agent_configs.organization_id=$2
-         RETURNING *`,
-        [
-          body.id, orgId, body.name, body.role, body.description || '', body.primaryResponsibility || '',
-          body.systemInstructions || '', JSON.stringify(body.allowedTools || []), JSON.stringify(body.allowedData || []),
-          body.model, Number(body.temperature ?? 0.2), Number(body.maxTokens ?? 4096),
-          JSON.stringify(body.permissions || ['read_only']), body.parentAgentId || null, body.enabled !== false,
-          JSON.stringify(body.capabilities || []), body.provider || null, Number(body.maxRetries ?? 3), body.memoryEnabled !== false,
-        ],
-      );
-      res.status(201).json(result.rows[0]);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to save AI agent' });
-    }
-  });
-
-  app.post('/api/ai-agents/:agentId/runs', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const objective = String(req.body?.objective || '').trim();
-      if (!objective) return res.status(400).json({ error: 'objective is required' });
-      const result = await executeAgentRun({
-        organizationId: orgId,
-        userId: (req as AuthRequest).dbUser?.id,
-        agentId: req.params.agentId,
-        objective,
-        context: req.body?.context || {},
-        maxAttempts: req.body?.maxAttempts,
-      });
-      res.status(result.status === 'failed' ? 502 : 200).json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Agent execution failed' });
-    }
-  });
-
-  app.get('/api/ai-agent-runs', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const runs = await listAgentRuns(orgId, Number(req.query.limit) || 50);
-      res.json(runs);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to list agent runs' });
-    }
-  });
-
-  app.get('/api/ai-agent-runs/:runId', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const run = await getAgentRun(orgId, req.params.runId);
-      if (!run) return res.status(404).json({ error: 'Agent run not found' });
-      res.json(run);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to load agent run' });
-    }
-  });
-
-  app.post('/api/ai-agent-runs/:runId/approve', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const approvalId = String(req.body?.approvalId || '').trim();
-      const decision = String(req.body?.decision || '').trim().toLowerCase();
-      if (!approvalId || !['approve','reject'].includes(decision)) {
-        return res.status(400).json({ error: 'approvalId and decision=approve|reject are required' });
-      }
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI approvals' });
-      const approval = await decideApproval(pool, orgId, approvalId, decision, (req as AuthRequest).dbUser?.id);
-      if (!approval) return res.status(404).json({ error: 'Approval not found' });
-      if (decision === 'reject') {
-        await pool.query('UPDATE agent_runs SET status=\'failed\', error=\'Human approval rejected\', completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2', [req.params.runId, orgId]);
-        return res.json({ approval, status: 'rejected' });
-      }
-      const result = await continueApprovedAgentRun(orgId, req.params.runId, approvalId, (req as AuthRequest).dbUser?.id);
-      res.json({ approval, result });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to process agent approval' });
-    }
-  });
-
-  app.get('/api/ai-agents/:agentId/memory', async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      res.json(await listAgentMemories(orgId, req.params.agentId, Number(req.query.limit) || 100));
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to load agent memory' });
-    }
-  });
-
-  app.post('/api/ai-agents/:agentId/memory', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
-    try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const memoryKey = String(req.body?.memoryKey || '').trim();
-      const content = String(req.body?.content || '').trim();
-      if (!memoryKey || !content) return res.status(400).json({ error: 'memoryKey and content are required' });
-      res.status(201).json(await upsertAgentMemory(orgId, req.params.agentId, {
-        memoryKey, content, importance: req.body?.importance, metadata: req.body?.metadata,
-      }));
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to save agent memory' });
-    }
-  });
-
   // --- Vite Middleware / Static Serving ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -4420,9 +4019,6 @@ ${transcript}`;
   // Multi-Dialer Execution Route
   app.post('/api/dial-batch', async (req, res) => {
     try {
-      const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
-      const pool = getPgPool();
-      if (pool) await enforceUsageLimit(pool, orgId, 'calls_month', Math.max(1, Array.isArray(req.body?.leads) ? req.body.leads.length : 1));
       const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
 
       if (!campaignId || !leads || !Array.isArray(leads)) {
