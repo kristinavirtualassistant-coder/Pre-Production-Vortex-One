@@ -1259,380 +1259,43 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 29,
-    name: '029_enforce_request_scoped_tenant_rls',
+    name: '029_billing_invoice_history',
     sql: `
-      CREATE TABLE IF NOT EXISTS public_ca_parcels (
-        id VARCHAR(128) PRIMARY KEY,
-        county_fips VARCHAR(5) NOT NULL,
-        county_name VARCHAR(120) NOT NULL,
-        apn VARCHAR(128) NOT NULL,
-        address VARCHAR(500),
-        city VARCHAR(160),
-        state VARCHAR(2) NOT NULL DEFAULT 'CA',
-        zip VARCHAR(20),
-        property_type VARCHAR(120),
-        units_count INTEGER,
-        square_feet INTEGER,
-        year_built INTEGER,
-        assessed_value NUMERIC(18,2),
-        parcel_geometry JSONB,
-        source_record_id VARCHAR(255),
-        source_url TEXT,
-        provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
-        source_updated_at TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        CONSTRAINT uq_public_ca_parcels_county_apn UNIQUE (county_fips, apn)
+      CREATE TABLE IF NOT EXISTS billing_invoices (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        stripe_invoice_id VARCHAR(255) NOT NULL UNIQUE,
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
+        status VARCHAR(40),
+        collection_method VARCHAR(40),
+        currency VARCHAR(10),
+        amount_due BIGINT,
+        amount_paid BIGINT,
+        amount_remaining BIGINT,
+        hosted_invoice_url TEXT,
+        invoice_pdf TEXT,
+        period_start TIMESTAMP WITH TIME ZONE,
+        period_end TIMESTAMP WITH TIME ZONE,
+        due_date TIMESTAMP WITH TIME ZONE,
+        paid_at TIMESTAMP WITH TIME ZONE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_apn ON public_ca_parcels(county_fips, apn);
-      CREATE INDEX IF NOT EXISTS idx_public_ca_parcels_address ON public_ca_parcels(state, county_name, city, address);
-
-      CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
-      RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN
-        RAISE EXCEPTION 'audit_logs is append-only; UPDATE/DELETE is prohibited';
-      END;
-      $$;
-      DROP TRIGGER IF EXISTS audit_logs_immutable ON audit_logs;
-      CREATE TRIGGER audit_logs_immutable
-        BEFORE UPDATE OR DELETE ON audit_logs
-        FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
-
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_call_id_global
-        ON call(telephony_call_id) WHERE telephony_call_id IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_call_telephony_session_id_global
-        ON call(telephony_session_id) WHERE telephony_session_id IS NOT NULL;
-
-      ALTER TABLE property_owners ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE property_owners FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON property_owners;
-      CREATE POLICY vortex_tenant_isolation ON property_owners
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE properties ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE properties FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON properties;
-      CREATE POLICY vortex_tenant_isolation ON properties
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE leads FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON leads;
-      CREATE POLICY vortex_tenant_isolation ON leads
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE crm_records ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE crm_records FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON crm_records;
-      CREATE POLICY vortex_tenant_isolation ON crm_records
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE campaign ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE campaign FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON campaign;
-      CREATE POLICY vortex_tenant_isolation ON campaign
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE campaign_contact ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE campaign_contact FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON campaign_contact;
-      CREATE POLICY vortex_tenant_isolation ON campaign_contact
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE dialing_session ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE dialing_session FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON dialing_session;
-      CREATE POLICY vortex_tenant_isolation ON dialing_session
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE call ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON call;
-      CREATE POLICY vortex_tenant_isolation ON call
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE call_event ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call_event FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON call_event;
-      CREATE POLICY vortex_tenant_isolation ON call_event
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE call_note ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE call_note FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON call_note;
-      CREATE POLICY vortex_tenant_isolation ON call_note
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE suppression_record ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE suppression_record FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON suppression_record;
-      CREATE POLICY vortex_tenant_isolation ON suppression_record
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE processed_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE processed_events FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON processed_events;
-      CREATE POLICY vortex_tenant_isolation ON processed_events
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE agent_configs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON agent_configs;
-      CREATE POLICY vortex_tenant_isolation ON agent_configs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON tasks;
-      CREATE POLICY vortex_tenant_isolation ON tasks
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflows ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflows FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflows;
-      CREATE POLICY vortex_tenant_isolation ON workflows
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE approvals ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE approvals FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON approvals;
-      CREATE POLICY vortex_tenant_isolation ON approvals
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON audit_logs;
-      CREATE POLICY vortex_tenant_isolation ON audit_logs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE contacts FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON contacts;
-      CREATE POLICY vortex_tenant_isolation ON contacts
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE activities FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON activities;
-      CREATE POLICY vortex_tenant_isolation ON activities
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE outreach_templates ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE outreach_templates FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON outreach_templates;
-      CREATE POLICY vortex_tenant_isolation ON outreach_templates
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE email_outreach ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE email_outreach FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON email_outreach;
-      CREATE POLICY vortex_tenant_isolation ON email_outreach
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE integration_connections ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE integration_connections FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON integration_connections;
-      CREATE POLICY vortex_tenant_isolation ON integration_connections
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE integration_oauth_states ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE integration_oauth_states FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON integration_oauth_states;
-      CREATE POLICY vortex_tenant_isolation ON integration_oauth_states
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_invites FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON organization_invites;
-      CREATE POLICY vortex_tenant_isolation ON organization_invites
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE webhook_endpoints FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON webhook_endpoints;
-      CREATE POLICY vortex_tenant_isolation ON webhook_endpoints
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON webhook_deliveries;
-      CREATE POLICY vortex_tenant_isolation ON webhook_deliveries
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE voicemail_library ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE voicemail_library FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON voicemail_library;
-      CREATE POLICY vortex_tenant_isolation ON voicemail_library
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE organization_billing ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_billing FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON organization_billing;
-      CREATE POLICY vortex_tenant_isolation ON organization_billing
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE organization_usage ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE organization_usage FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON organization_usage;
-      CREATE POLICY vortex_tenant_isolation ON organization_usage
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE analytics_cost_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_cost_events FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON analytics_cost_events;
-      CREATE POLICY vortex_tenant_isolation ON analytics_cost_events
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE analytics_ai_usage ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_ai_usage FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON analytics_ai_usage;
-      CREATE POLICY vortex_tenant_isolation ON analytics_ai_usage
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE analytics_value_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE analytics_value_events FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON analytics_value_events;
-      CREATE POLICY vortex_tenant_isolation ON analytics_value_events
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE appointments FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON appointments;
-      CREATE POLICY vortex_tenant_isolation ON appointments
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE file_assets ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE file_assets FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON file_assets;
-      CREATE POLICY vortex_tenant_isolation ON file_assets
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_suppression ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_suppression FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_suppression;
-      CREATE POLICY vortex_tenant_isolation ON communication_suppression
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE workflow_communication_deliveries ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE workflow_communication_deliveries FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON workflow_communication_deliveries;
-      CREATE POLICY vortex_tenant_isolation ON workflow_communication_deliveries
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_enrichment_providers ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_enrichment_providers FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_enrichment_providers;
-      CREATE POLICY vortex_tenant_isolation ON owner_enrichment_providers
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_enrichment_jobs ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_enrichment_jobs FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_enrichment_jobs;
-      CREATE POLICY vortex_tenant_isolation ON owner_enrichment_jobs
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_source_records ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_source_records FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_source_records;
-      CREATE POLICY vortex_tenant_isolation ON owner_source_records
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_contact_points ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_contact_points FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_contact_points;
-      CREATE POLICY vortex_tenant_isolation ON owner_contact_points
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_ownerships ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_ownerships FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_ownerships;
-      CREATE POLICY vortex_tenant_isolation ON owner_ownerships
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_relationships ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_relationships FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_relationships;
-      CREATE POLICY vortex_tenant_isolation ON owner_relationships
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_lead_signals ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_lead_signals FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_lead_signals;
-      CREATE POLICY vortex_tenant_isolation ON owner_lead_signals
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE owner_identity_matches ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE owner_identity_matches FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON owner_identity_matches;
-      CREATE POLICY vortex_tenant_isolation ON owner_identity_matches
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_threads ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_threads FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_threads;
-      CREATE POLICY vortex_tenant_isolation ON communication_threads
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_messages ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_messages FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_messages;
-      CREATE POLICY vortex_tenant_isolation ON communication_messages
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_events ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_events FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_events;
-      CREATE POLICY vortex_tenant_isolation ON communication_events
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_suppressions ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_suppressions FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_suppressions;
-      CREATE POLICY vortex_tenant_isolation ON communication_suppressions
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE messaging_numbers ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE messaging_numbers FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON messaging_numbers;
-      CREATE POLICY vortex_tenant_isolation ON messaging_numbers
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_sequences ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_sequences FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_sequences;
-      CREATE POLICY vortex_tenant_isolation ON communication_sequences
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-      ALTER TABLE communication_sequence_enrollments ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_sequence_enrollments FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_sequence_enrollments;
-      CREATE POLICY vortex_tenant_isolation ON communication_sequence_enrollments
-        USING (organization_id = current_setting('vortex.organization_id', true))
-        WITH CHECK (organization_id = current_setting('vortex.organization_id', true));
-
-      ALTER TABLE communication_sequence_steps ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE communication_sequence_steps FORCE ROW LEVEL SECURITY;
-      DROP POLICY IF EXISTS vortex_tenant_isolation ON communication_sequence_steps;
-      CREATE POLICY vortex_tenant_isolation ON communication_sequence_steps
-        USING (EXISTS (
-          SELECT 1 FROM communication_sequences s
-          WHERE s.id = communication_sequence_steps.sequence_id
-            AND s.organization_id = current_setting('vortex.organization_id', true)
-        ))
-        WITH CHECK (EXISTS (
-          SELECT 1 FROM communication_sequences s
-          WHERE s.id = communication_sequence_steps.sequence_id
-            AND s.organization_id = current_setting('vortex.organization_id', true)
-        ));
-
-      -- Cross-tenant worker queue tables (jobs, workflow_schedules, workflow_runs,
-      -- workflow execution state, file processing jobs, and agent runtime state) remain
-      -- outside this RLS migration until workers establish tenant context before claiming
-      -- work. Their application queries must remain explicitly organization-scoped.
-      -- Authentication tables (users, auth_sessions, MFA/reset tokens) remain
-      -- outside tenant RLS because authentication must identify the tenant first.
-      -- The global public_ca_parcels table intentionally has no organization_id.
-    `
-  }
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_created
+        ON billing_invoices(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
+        ON billing_invoices(organization_id, status, created_at DESC);
+      UPDATE organization_billing
+         SET limits = limits || CASE plan
+           WHEN 'starter' THEN '{"enrichment_credits_month":500,"property_searches_month":2000,"storage_mb":5000}'::jsonb
+           WHEN 'professional' THEN '{"enrichment_credits_month":5000,"property_searches_month":10000,"storage_mb":50000}'::jsonb
+           WHEN 'enterprise' THEN '{"enrichment_credits_month":1000000,"property_searches_month":1000000,"storage_mb":1000000}'::jsonb
+           ELSE '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb
+         END,
+             updated_at=CURRENT_TIMESTAMP;
+    `,
+  },
 
 ];

@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
+import { enforceUsageLimit } from './billingService';
 import { decryptSecret, encryptSecret } from './integrationOAuth';
 import { enqueueJob } from './jobService';
 import { recordCostEvent } from './analyticsService';
@@ -358,6 +359,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
     pending = await record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'email',provider:providerName,direction:'outbound',fromAddress:row.account_email,toAddress:to,subject:args.subject,body:args.body,status:'queued',trackingToken,idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId});
   }
   await pool.query("UPDATE communication_messages SET metadata=metadata || '{\"provider_attempted\":true}'::jsonb WHERE id=$1 AND organization_id=$2",[pending.id,args.organizationId]);
+  await enforceUsageLimit(pool, args.organizationId, 'emails_month', 1);
   try {
     const sent = args.provider === 'microsoft-365'
       ? await sendOutlook(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id})
@@ -428,6 +430,7 @@ export async function sendSmsNow(pool: Pool, args: any) {
   const idempotencyKey = args.idempotencyKey || 'sms:' + args.organizationId + ':' + to + ':' + createHash('sha256').update(args.body).digest('hex');
   const existing = await pool.query('SELECT * FROM communication_messages WHERE organization_id=$1 AND idempotency_key=$2 LIMIT 1',[args.organizationId,idempotencyKey]);
   if (existing.rowCount) return existing.rows[0];
+  await enforceUsageLimit(pool, args.organizationId, 'sms_month', 1);
   const cfg = await twilio();
   const from = normalizePhone(args.from || process.env.TWILIO_FROM_NUMBER || '');
   if (!from) throw new Error('TWILIO_FROM_NUMBER is not configured');

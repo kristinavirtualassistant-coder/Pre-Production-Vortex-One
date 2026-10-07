@@ -36,6 +36,7 @@ import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 import { analyticsRouter } from './server/routes/analytics';
 import { appointmentsRouter } from './server/routes/appointments';
 import communicationsRouter from './server/services/communicationsRouter';
+import billingRouter from './server/routes/billing';
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
@@ -96,7 +97,6 @@ async function startServer() {
 
   // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
   app.use('/api/appointments', requireAuth, appointmentsRouter);
-
   // Health & DB Status
   app.get('/api/health', (req, res) => {
     res.json({
@@ -125,6 +125,8 @@ async function startServer() {
     }
     return requireAuth(req, res, next);
   });
+
+  app.use('/api/billing', billingRouter);
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
   app.use('/api/communications', communicationsRouter);
@@ -1123,6 +1125,7 @@ async function startServer() {
         sortDirection: req.query.sortDirection as PropertySearchQuery['sortDirection'],
       };
 
+      await enforceUsageLimit(pool, organizationId, 'property_searches_month', 1);
       const result = await searchProperties(pool, organizationId, query);
       res.json({
         success: true,
@@ -1130,7 +1133,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Database property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
+      res.status(err?.statusCode || 500).json({ error: err.message || 'Property search failed', code: err?.code });
     }
   });
 
@@ -1146,6 +1149,7 @@ async function startServer() {
       }
 
       const query = req.body as PropertySearchQuery;
+      await enforceUsageLimit(pool, organizationId, 'property_searches_month', 1);
       const result = await searchProperties(pool, organizationId, query);
       res.json({ success: true, ...result });
     } catch (err: any) {

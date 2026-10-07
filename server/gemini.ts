@@ -2,6 +2,7 @@ import { GoogleGenAI, ThinkingLevel, Modality } from '@google/genai';
 import { taskCacheService } from './services/cacheService';
 import { getPgPool } from './db/db';
 import { estimateAiCostUsd, recordAiUsage } from './services/analyticsService';
+import { enforceUsageLimit } from './services/billingService';
 
 // Lazy client initialization for resilience
 let geminiClient: GoogleGenAI | null = null;
@@ -82,6 +83,10 @@ export async function generateAgentText(
     category,
     inputPayload,
     async () => {
+      if (options.organizationId) {
+        const pool = getPgPool();
+        if (pool) await enforceUsageLimit(pool, options.organizationId, 'ai_actions_month', 1);
+      }
       const ai = getGeminiClient();
       if (!ai) {
         return {

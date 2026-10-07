@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
-import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
+import { getOrganizationBilling, planLimits } from '../services/billingService';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
@@ -200,6 +200,13 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid invite role' });
   if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
   if (!['admin', 'executive', 'manager'].includes(req.dbUser.role)) return res.status(403).json({ error: 'Only tenant administrators and managers can invite members' });
+
+  const billing = await getOrganizationBilling(pool, req.dbUser.organization_id);
+  const seatLimit = Number(billing?.limits?.users ?? planLimits(billing?.plan || 'free').users);
+  const seatCount = await pool.query('SELECT COUNT(*)::int AS count FROM users WHERE organization_id=$1 AND disabled_at IS NULL', [req.dbUser.organization_id]);
+  if (Number(seatCount.rows[0]?.count || 0) >= seatLimit) {
+    return res.status(402).json({ error: 'Seat limit reached', code: 'SEAT_LIMIT_REACHED', limit: seatLimit });
+  }
 
   const existing = await pool.query('SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1', [req.dbUser.organization_id, email]);
   if (existing.rowCount) return res.status(409).json({ error: 'This person is already a member of your tenant' });

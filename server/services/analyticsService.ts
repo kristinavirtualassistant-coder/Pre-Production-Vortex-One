@@ -22,6 +22,11 @@ function n(value: unknown): number {
   return Number(value || 0);
 }
 
+/**
+ * Persist an organization's cost event using the supplied PostgreSQL pool.
+ * Quantity defaults to one and unit cost to zero; an omitted total is their product.
+ * Resolves after insertion and rejects on an invalid organization or database error.
+ */
 export async function recordCostEvent(pool: Pool, input: {
   organizationId: string;
   id: string;
