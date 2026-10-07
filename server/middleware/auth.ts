@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
+import { beginTenantContext, finishTenantContext, runTenantContext } from '../db/tenantContext';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
@@ -429,8 +430,28 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
     }
 
-    canonicalizeOrganizationContext(req);
-    return next();
+    const organizationId = canonicalizeOrganizationContext(req);
+    const client = await pool.connect();
+    const context = await beginTenantContext(client, organizationId);
+    let settled = false;
+    const finish = (commit: boolean) => {
+      if (settled) return;
+      settled = true;
+      void finishTenantContext(context, commit).catch((error) => {
+        console.error('Tenant database transaction finalization failed:', error);
+      });
+    };
+    res.once('finish', () => finish(res.statusCode < 400));
+    res.once('close', () => {
+      if (!res.writableEnded) finish(false);
+    });
+    try {
+      runTenantContext(context, () => next());
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
+    return;
   }catch(error:any){
     if(error instanceof AuthorizationError)return res.status(error.statusCode).json({error:error.message});
     console.error('PostgreSQL authentication error:',error);
