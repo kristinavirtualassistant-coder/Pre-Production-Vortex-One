@@ -10,6 +10,7 @@ import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { DataImportService } from '../services/dataImportService';
 import { SkipTraceService } from '../services/skipTraceService';
 import { getAgent } from '../agents/registry';
+import { upsertCanonicalLead } from '../services/crmService';
 
 export interface ToolDefinition {
   name: string;
@@ -19,6 +20,35 @@ export interface ToolDefinition {
 }
 
 export const TOOLS: Record<string, ToolDefinition> = {
+  create_lead: {
+    name: 'create_lead',
+    description: 'Create or retrieve the canonical CRM lead for a verified owner/property pair. Tenant-scoped and idempotent.',
+    parameters: {
+      owner_id: 'string',
+      property_id: 'string',
+      owner_name: 'string',
+      property_address: 'string',
+      phone_number: 'string',
+      email: 'string',
+    },
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for lead creation');
+      if (!args.owner_id || !args.property_id) throw new Error('owner_id and property_id are required');
+      const result = await upsertCanonicalLead(pool, {
+        organizationId: context.organizationId,
+        ownerId: args.owner_id,
+        propertyId: args.property_id,
+        ownerName: args.owner_name || '',
+        propertyAddress: args.property_address || '',
+        phoneNumber: args.phone_number || undefined,
+        email: args.email || undefined,
+      });
+      return { success: true, ...result, created_by: context.agentId };
+    },
+  },
+
+
   run_5_step_skip_trace: {
     name: 'run_5_step_skip_trace',
     description: 'Execute the 5-Step Real Estate Skip Tracing Protocol: (1) GIS APN, (2) Assessor Owner, (3) Mailing vs Situs Analysis, (4) CA SOS & Business Registries Veil Unravelling, and (5) Multi-Engine Contact & Records Lookups across 11 resources (TruePeopleSearch, CyberBackgroundChecks, Public Records, Business Registries, FastPeopleSearch, County Recorder, Assessor Websites, LinkedIn, Facebook, Whitepages, Voter Records).',
