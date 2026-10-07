@@ -35,7 +35,7 @@ import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 import { analyticsRouter } from './server/routes/analytics';
 import { appointmentsRouter } from './server/routes/appointments';
 import communicationsRouter from './server/services/communicationsRouter';
-import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow } from './server/services/workflowAutomationService';
+import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, updateWorkflowScheduleStatus, runWorkflowScheduleNow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
@@ -316,6 +316,24 @@ async function startServer() {
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
     try { res.status(201).json(await scheduleWorkflow(pool,orgId,req.params.id,userId,req.body||{})); }
     catch(err:any){ res.status(400).json({error:err.message||'Failed to schedule workflow'}); }
+  });
+
+  app.patch('/api/workflows/:id/schedules/:scheduleId', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow schedules'});
+    const status=String(req.body?.status||'');
+    if(!['active','paused','cancelled'].includes(status)) return res.status(400).json({error:'status must be active, paused, or cancelled'});
+    try { res.json(await updateWorkflowScheduleStatus(pool,orgId,req.params.scheduleId,status as 'active'|'paused'|'cancelled')); }
+    catch(err:any){ res.status(404).json({error:err.message||'Failed to update workflow schedule'}); }
+  });
+
+  app.post('/api/workflows/:id/schedules/:scheduleId/run-now', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
+    try {
+      const result=await runWorkflowScheduleNow(pool,orgId,req.params.scheduleId);
+      res.status(202).json(result);
+    } catch(err:any){ res.status(400).json({error:err.message||'Failed to queue workflow'}); }
   });
 
   app.get('/api/workflows/:id/schedules', async (req, res) => {
