@@ -56,7 +56,9 @@ function getTenantAwarePool(pool: Pool): Pool {
       if (property === 'query') {
         return (...args: any[]) => {
           const context = getTenantContext();
-          return context ? context.client.query(...args) : target.query(...args);
+          return context
+            ? (context.client.query as any)(...args)
+            : (target.query as any)(...args);
         };
       }
       return Reflect.get(target, property, receiver);
