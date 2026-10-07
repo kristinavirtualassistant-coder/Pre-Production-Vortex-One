@@ -237,6 +237,24 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
       .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(e?.email)))
       .map((e) => ({ ...e, email: normalizeEmail(e.email) }));
 
+    // Relationship evidence is accepted only from explicit normalized source fields.
+    // Shared addresses, similar names, or proximity are not sufficient to claim a relationship.
+    const relationships = [
+      ...jsonArray(row.relationships),
+      ...jsonArray(row.related_entities),
+      ...jsonArray(row.related_owners),
+    ].filter((relationship: any) =>
+      relationship &&
+      (relationship.related_name || relationship.name) &&
+      (relationship.relationship_type || relationship.type)
+    ).map((relationship: any) => ({
+      related_entity_type: relationship.related_entity_type || relationship.entity_type || 'entity',
+      related_entity_id: relationship.related_entity_id || relationship.id || null,
+      related_name: String(relationship.related_name || relationship.name),
+      relationship_type: String(relationship.relationship_type || relationship.type),
+      confidence_score: Number(relationship.confidence_score ?? relationship.confidence ?? 0.75),
+    }));
+
     const signals: Array<Record<string, unknown>> = [];
     for (const p of properties.rows) {
       const equityRatio = Number(p.estimated_value) > 0
@@ -293,7 +311,7 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
       entities: row.entity_type && row.entity_type !== 'individual'
         ? [{ name: row.name, entityType: row.entity_type }]
         : [],
-      relationships: [],
+      relationships,
       signals,
       source: {
         sourceType: 'public_records',
