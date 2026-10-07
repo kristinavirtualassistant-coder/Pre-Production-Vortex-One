@@ -49,7 +49,7 @@ assert.equal(
   'target@example.com',
 );
 assert.equal(uniqueBouncePool.calls.length, 2);
-assert.deepEqual(uniqueBouncePool.calls[1].params.slice(1), ['target@example.com', 'hard bounce', 'provider-bounce']);
+assert.deepEqual(uniqueBouncePool.calls[1].params.slice(1), ['org_test', 'email', 'target@example.com', 'hard bounce', 'provider-bounce']);
 
 const ambiguousBouncePool = fakePool([
   { to_address: 'one@example.com' },
@@ -78,6 +78,6 @@ assert.equal(
   ),
   null,
 );
-assert.equal(selfBouncePool.calls.length, 1);
+assert.equal(selfBouncePool.calls.length, 0);
 
 console.log('  ✓ PASS: bounce suppression only suppresses one previously contacted recipient and ignores ambiguous/self addresses');

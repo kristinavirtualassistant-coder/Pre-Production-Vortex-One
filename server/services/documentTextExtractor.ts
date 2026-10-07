@@ -134,10 +134,17 @@ function extractOfficeOpenXml(buffer: Buffer, kind: 'docx' | 'xlsx' | 'pptx'): s
       const cells: string[] = [];
       for (const cell of row[0].matchAll(/<c\b([^>]*)>[\s\S]*?<\/c>/g)) {
         const attrs = cell[1];
+        const type = attrs.match(/\bt="([^"]+)"/)?.[1];
+
+        if (type === 'inlineStr') {
+          const inlineMatch = cell[0].match(/<is[\s\S]*?<\/is>/);
+          cells.push(inlineMatch ? xmlText(inlineMatch[0]) : '');
+          continue;
+        }
+
         const valueMatch = cell[0].match(/<v>([\s\S]*?)<\/v>/);
         if (!valueMatch) continue;
         const raw = decodeXml(valueMatch[1].trim());
-        const type = attrs.match(/\bt="([^"]+)"/)?.[1];
         cells.push(type === 's' ? (sharedStrings[Number(raw)] || '') : raw);
       }
       if (cells.length) rows.push(cells.join('\t'));

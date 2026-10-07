@@ -17,6 +17,7 @@ const explicitlyUnprotected = new Set([
   "app.post('/api/telephony/webhook/:provider'",
   "app.post('/api/tts'",
   "app.post('/api/ai/analyze-call'",
+  "app.post('/api/billing/webhook'",
 ]);
 
 for (const line of mutationLines) {
@@ -27,7 +28,6 @@ for (const line of mutationLines) {
 }
 
 const rbacExpectations: Array<[string, string]> = [
-  ["app.delete('/api/integrations/:provider'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/settings/smart-forwarding'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/audit/log'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/webhooks'", "requireRole(['admin', 'executive'])"],

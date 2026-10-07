@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { getPgPool } from '../db/db';
 import { archiveRingCentralRecording, downloadStoredObject } from '../services/fileStorageService';
 import { extractDocumentText } from '../services/documentTextExtractor';
+import { scanBufferForMalware } from '../services/malwareScanner';
 
 export interface FileProcessingJob {
   id: string;
@@ -17,6 +18,8 @@ export interface FileProcessingJob {
   recording_url?: string | null;
   storage_path?: string | null;
   mime_type?: string | null;
+  original_name?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface FileProcessingWorkerResult {
@@ -58,6 +61,8 @@ export async function claimNextFileProcessingJob(pool: Pool, workerId: string): 
       (SELECT fa.entity_id FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS call_id,
       (SELECT fa.storage_path FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS storage_path,
       (SELECT fa.mime_type FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS mime_type,
+      (SELECT fa.original_name FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS original_name,
+      (SELECT fa.metadata FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS metadata,
       (SELECT fa.metadata->>'source_url' FROM file_assets fa WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id) AS recording_url
   `, [workerId]);
   return result.rows[0] || null;
@@ -89,8 +94,38 @@ export async function failFileProcessingJob(pool: Pool, job: FileProcessingJob, 
   return terminal ? 'failed' : 'retrying';
 }
 
+async function updateMalwareState(pool: Pool, job: FileProcessingJob, state: string, details: Record<string, unknown> = {}): Promise<void> {
+  const fileStatus = state === 'clean' ? 'ready' : state === 'infected' ? 'failed' : 'pending';
+  await pool.query(
+    `UPDATE file_assets
+     SET metadata=COALESCE(metadata,'{}'::jsonb) || $1::jsonb, status=$2, updated_at=CURRENT_TIMESTAMP
+     WHERE id=$3 AND organization_id=$4`,
+    [JSON.stringify({ malware_scan: { status: state, ...details } }), fileStatus, job.file_id, job.organization_id],
+  );
+}
+
 export async function processFileProcessingJob(pool: Pool, job: FileProcessingJob): Promise<'completed' | 'retrying' | 'failed'> {
   try {
+    if (job.job_type === 'malware_scan') {
+      const storagePath = String(job.storage_path || '').trim();
+      if (!storagePath) return failFileProcessingJob(pool, job, 'Malware scan job is missing storage_path');
+      const downloaded = await downloadStoredObject(storagePath);
+      const scan = await scanBufferForMalware(downloaded.body, job.original_name || 'upload.bin');
+      await updateMalwareState(pool, job, scan.status, {
+        engine: scan.engine,
+        signature: scan.signature || null,
+        output: scan.output.slice(0, 4000),
+        scanned_at: new Date().toISOString(),
+      });
+      await completeFileProcessingJob(pool, job, {
+        status: scan.status,
+        engine: scan.engine,
+        signature: scan.signature || null,
+        scanned_at: new Date().toISOString(),
+      });
+      return 'completed';
+    }
+
     if (job.job_type === 'recording_archive') {
       const callId = String(job.call_id || '').trim();
       const recordingUrl = String(job.recording_url || '').trim();
@@ -105,6 +140,15 @@ export async function processFileProcessingJob(pool: Pool, job: FileProcessingJo
     }
 
     if (job.job_type === 'document_extract' || job.job_type === 'transcript_extract') {
+      const scanStatus = String((job.metadata?.malware_scan as { status?: unknown } | undefined)?.status || '').toLowerCase();
+      if (scanStatus === 'infected') {
+        await completeFileProcessingJob(pool, job, { skipped: true, reason: 'malware_detected', completed_at: new Date().toISOString() });
+        return 'completed';
+      }
+      if (scanStatus !== 'clean') {
+        return failFileProcessingJob(pool, job, 'Document extraction is waiting for a clean malware scan');
+      }
+
       const storagePath = String(job.storage_path || '').trim();
       if (!storagePath) return failFileProcessingJob(pool, job, 'Document extraction job is missing storage_path');
       const mime = String(job.mime_type || '').toLowerCase().split(';')[0].trim();
