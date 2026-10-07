@@ -1448,4 +1448,5 @@ export const MIGRATIONS: Migration[] = [
       EXECUTE FUNCTION prevent_audit_log_mutation();
     `,
   },
-];\n
+ ];
+
