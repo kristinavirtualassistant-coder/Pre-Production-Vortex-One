@@ -21,6 +21,9 @@ describe('Public records ingestion', () => {
     const source = await readFile(new URL('../services/publicRecordsIngestionService.ts', repoRoot), 'utf8');
     assert.match(source, /organization_id=\$1/);
     assert.match(source, /owner_identity_matches/);
+    assert.match(source, /candidate_owner_id/);
+    assert.match(source, /identityScore/);
+    assert.match(source, /runnerUpScore/);
     assert.match(source, /owner_ownerships/);
     assert.match(source, /uq_owner_source_records_org_provider_hash/);
   });
@@ -30,6 +33,12 @@ describe('Public records ingestion', () => {
     assert.match(source, /explicitRelationships/);
     assert.match(source, /owner_relationships/);
     assert.match(source, /relationship\.relationshipType/);
+  });
+
+  it('exposes identity matches in the Owner 360 profile', async () => {
+    const source = await readFile(new URL('../services/ownerEnrichmentService.ts', repoRoot), 'utf8');
+    assert.match(source, /identityMatches/);
+    assert.match(source, /identity_matches/);
   });
 
   it('has a migration that deduplicates portfolio-level signals with NULL property IDs', async () => {
