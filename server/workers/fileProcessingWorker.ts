@@ -95,11 +95,12 @@ export async function failFileProcessingJob(pool: Pool, job: FileProcessingJob, 
 }
 
 async function updateMalwareState(pool: Pool, job: FileProcessingJob, state: string, details: Record<string, unknown> = {}): Promise<void> {
+  const fileStatus = state === 'clean' ? 'ready' : state === 'infected' ? 'failed' : 'pending';
   await pool.query(
     `UPDATE file_assets
-     SET metadata=COALESCE(metadata,'{}'::jsonb) || $1::jsonb, status=CASE WHEN $2='infected' THEN 'failed' ELSE status END, updated_at=CURRENT_TIMESTAMP
+     SET metadata=COALESCE(metadata,'{}'::jsonb) || $1::jsonb, status=$2, updated_at=CURRENT_TIMESTAMP
      WHERE id=$3 AND organization_id=$4`,
-    [JSON.stringify({ malware_scan: { status: state, ...details } }), state, job.file_id, job.organization_id],
+    [JSON.stringify({ malware_scan: { status: state, ...details } }), fileStatus, job.file_id, job.organization_id],
   );
 }
 
