@@ -78,6 +78,6 @@ assert.equal(
   ),
   null,
 );
-assert.equal(selfBouncePool.calls.length, 1);
+assert.equal(selfBouncePool.calls.length, 0);
 
 console.log('  ✓ PASS: bounce suppression only suppresses one previously contacted recipient and ignores ambiguous/self addresses');
