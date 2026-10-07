@@ -1363,6 +1363,17 @@ export const MIGRATIONS: Migration[] = [
   },
 
   {
+    version: 33,
+    name: '033_owner_identity_match_candidate_reference',
+    sql: `
+      ALTER TABLE owner_identity_matches
+        ADD COLUMN IF NOT EXISTS candidate_owner_id VARCHAR(64)
+        REFERENCES property_owners(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_owner_identity_matches_candidate
+        ON owner_identity_matches(organization_id, candidate_owner_id, match_score DESC);
+    `,
+  },
+  {
     version: 30,
     name: '030_create_native_property_map_spatial_layer',
     sql: `
