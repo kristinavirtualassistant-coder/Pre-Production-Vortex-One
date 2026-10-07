@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server-bootstrap.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server-bootstrap.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server-runtime.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server-bootstrap.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server-runtime.cjs && esbuild server/workers/run.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/worker.cjs",
     "start": "node dist/server-runtime.cjs",
     "test": "node scripts/run-tests.mjs",
     "test:suite": "tsx server/test/suite.ts",
@@ -21,7 +21,9 @@
     "firebase:deploy": "firebase deploy --only functions,hosting",
     "worker:file-processing": "tsx server/workers/fileProcessingWorker.ts",
     "test:e2e:smoke": "tsx server/test/browserSmoke.test.ts",
-    "test:ai": "tsx server/test/realAgentRuntime.test.ts && tsx server/test/agentProviderMock.test.ts && tsx server/test/productionAgents.test.ts"
+    "test:ai": "tsx server/test/realAgentRuntime.test.ts && tsx server/test/agentProviderMock.test.ts && tsx server/test/productionAgents.test.ts",
+    "worker": "tsx server/workers/run.ts",
+    "start:worker": "node dist/worker.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

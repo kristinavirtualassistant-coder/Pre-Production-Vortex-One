@@ -1495,5 +1495,55 @@ export const MIGRATIONS: Migration[] = [
         CHECK (status IN ('queued','processing','sent','failed','manual_review','suppressed'));
     `,
   },
+  {
+    version: 44,
+    name: '044_create_property_refresh_schedules',
+    // The property refresh worker (schedulerWorker / propertyRefreshScheduler) reads and writes these tables, but no
+    // earlier migration created them, so every worker tick failed on a database built from the migration chain.
+    sql: `
+      CREATE TABLE IF NOT EXISTS property_refresh_schedules (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        target_property_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        target_selection_mode VARCHAR(30) NOT NULL DEFAULT 'selected'
+          CHECK (target_selection_mode IN ('selected','all','high_equity','absentee_only','county_filter')),
+        county_filter VARCHAR(255),
+        interval_hours INTEGER NOT NULL DEFAULT 24 CHECK (interval_hours > 0),
+        cron_expression VARCHAR(100),
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','running')),
+        last_run_at TIMESTAMP WITH TIME ZONE,
+        next_run_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_run_status VARCHAR(20),
+        last_run_summary TEXT,
+        last_run_refreshed_count INTEGER,
+        enrichment_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_due
+        ON property_refresh_schedules(status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_org
+        ON property_refresh_schedules(organization_id, status);
+
+      CREATE TABLE IF NOT EXISTS property_refresh_logs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        schedule_id VARCHAR(64) NOT NULL REFERENCES property_refresh_schedules(id) ON DELETE CASCADE,
+        executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        properties_processed INTEGER NOT NULL DEFAULT 0,
+        properties_updated INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL,
+        details TEXT,
+        valuation_delta NUMERIC(18,2) DEFAULT 0,
+        equity_delta NUMERIC(18,2) DEFAULT 0,
+        errors JSONB NOT NULL DEFAULT '[]'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_logs_org_schedule
+        ON property_refresh_logs(organization_id, schedule_id, executed_at DESC);
+    `,
+  },
 ];
 
