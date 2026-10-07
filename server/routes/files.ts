@@ -73,7 +73,7 @@ export function createFilesRouter(): Router {
     if(!existing.rows[0])return res.status(404).json({error:'File not found'});
     try{
       if(!(await objectExists(existing.rows[0].storage_path)))return res.status(409).json({error:'Upload has not completed'});
-      const result=await pool.query(`UPDATE file_assets SET status='pending',checksum_sha256=COALESCE($3,checksum_sha256),metadata=metadata||jsonb_build_object('malware_scan',jsonb_build_object('status','pending')),updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
+      const result=await pool.query(`UPDATE file_assets SET status='pending',checksum_sha256=COALESCE($3,checksum_sha256),metadata=COALESCE(metadata,'{}'::jsonb)||$2::jsonb||jsonb_build_object('malware_scan',jsonb_build_object('status','pending')),updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
       const finalizedFile = result.rows[0] || existing.rows[0];
 
       await pool.query(
