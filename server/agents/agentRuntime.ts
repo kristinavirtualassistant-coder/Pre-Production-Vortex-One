@@ -4,6 +4,7 @@ import { createApproval } from '../services/agentOperationsService';
 import { AgentDefinition } from '../../src/types';
 import { generateWithAgentProvider, inferAgentProvider, AgentMessage, AgentToolDefinition } from './providers';
 import { getAgent } from './registry';
+import { auditAgentAction, auditAgentLifecycle } from './agentAuditService';
 
 export interface AgentRunRequest {
   organizationId: string;
@@ -53,13 +54,27 @@ function estimateCost(provider: string, inputTokens?: number, outputTokens?: num
     + ((outputTokens || 0) / 1_000_000) * Number(process.env[keys[1]] || 0);
 }
 
-function parseEnvelope(text: string): { final?: string; tool_calls?: Array<{ name: string; args?: Record<string, any> }> } {
+function parseEnvelope(text: string): { final?: string; tool_calls?: Array<{ name: string; args?: Record<string, any> }>; memory_writes?: Array<{ memoryKey: string; content: string; importance?: number; sourceTool: string }> } {
   const cleaned = text.trim().replace(/^\`\`\`json\s*/i, '').replace(/^\`\`\`\s*/i, '').replace(/\s*\`\`\`$/, '');
   try {
     const parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object') return parsed;
   } catch {}
   return { final: text };
+}
+
+async function isRunCancelled(pool: any, organizationId: string, runId: string): Promise<boolean> {
+  const result = await pool.query('SELECT status FROM agent_runs WHERE id=$1 AND organization_id=$2 LIMIT 1', [runId, organizationId]);
+  return result.rows[0]?.status === 'cancelled';
+}
+
+async function persistVerifiedMemories(pool: any, organizationId: string, agentId: string, runId: string, memoryWrites: any[], completedToolNames: Set<string>): Promise<void> {
+  for (const memory of memoryWrites || []) {
+    if (!memory?.memoryKey || !memory?.content || !memory?.sourceTool || !completedToolNames.has(memory.sourceTool)) continue;
+    const importance = Math.min(1, Math.max(0, Number(memory.importance ?? 0.7)));
+    await pool.query("INSERT INTO agent_memories (id,organization_id,agent_id,memory_key,content,importance,metadata,source_run_id,source_tool,verified) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,TRUE) ON CONFLICT (organization_id,agent_id,memory_key) DO UPDATE SET content=EXCLUDED.content,importance=EXCLUDED.importance,metadata=EXCLUDED.metadata,source_run_id=EXCLUDED.source_run_id,source_tool=EXCLUDED.source_tool,verified=TRUE,updated_at=CURRENT_TIMESTAMP", ["amem_"+Date.now()+"_"+Math.random().toString(36).slice(2,8),organizationId,agentId,memory.memoryKey,memory.content,importance,JSON.stringify({provenance:'verified_tool_result'}),runId,memory.sourceTool]);
+    await auditAgentLifecycle(pool, { organizationId, agentId, runId, action:'memory_written', input:{memoryKey:memory.memoryKey,sourceTool:memory.sourceTool}, output:{verified:true} });
+  }
 }
 
 async function getAgentConfig(pool: any, organizationId: string, agentId: string): Promise<AgentDefinition> {
@@ -171,7 +186,8 @@ System instructions: ${agent.systemInstructions}
 Available tools: ${agent.allowedTools.join(', ') || 'none'}.
 Never invent database facts. Use tools for authoritative facts.
 Human approval is required before risky external or mutating actions.
-Return ONLY JSON: {"final":"string","tool_calls":[{"name":"tool_name","args":{}}]}.
+Only write memory when a completed tool result directly establishes the fact. For memory_writes, include memoryKey, content, importance, and sourceTool matching a tool you actually used.
+Return ONLY JSON: {"final":"string","tool_calls":[{"name":"tool_name","args":{}}],"memory_writes":[{"memoryKey":"...","content":"...","importance":0.7,"sourceTool":"..."}]}.
 Memory:
 ${memory || '(none)'}
 Objective:
@@ -241,6 +257,7 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
         maxAttempts, idempotencyKey,
       ],
     );
+    await auditAgentLifecycle(pool, { organizationId: request.organizationId, agentId: agent.id, runId, action:'run_started', input:{objective:request.objective} });
   } catch (error:any) {
     if (error?.code !== '23505') throw error;
     const raced = await pool.query(
@@ -269,13 +286,15 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   let totalCost = 0;
 
   try {
+    const completedToolNames = new Set<string>();
     for (let attempt=1; attempt<=maxAttempts; attempt++) {
       try {
+        if (await isRunCancelled(pool, request.organizationId, runId)) throw new Error('Agent run cancelled');
         if (Date.now()-started > timeoutMs) throw new Error(`Agent run exceeded timeout of ${timeoutMs}ms`);
         const result = await Promise.race([
           generateWithAgentProvider({
             provider, model: agent.model, systemInstruction: agent.systemInstructions,
-            messages, temperature: agent.temperature, maxTokens: agent.maxTokens,
+            messages, tools, temperature: agent.temperature, maxTokens: agent.maxTokens,
           }),
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Agent provider timeout after ${timeoutMs}ms`)), timeoutMs)),
         ]);
@@ -292,10 +311,12 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
 
         if (!calls.length) {
           const finalText=envelope.final || result.text;
+          await persistVerifiedMemories(pool, request.organizationId, agent.id, runId, envelope.memory_writes || [], completedToolNames);
           await pool.query(
             `UPDATE agent_runs SET status='completed',output=$2::jsonb,attempts=$3,input_tokens=$4,output_tokens=$5,estimated_cost_usd=$6,execution_time_ms=$7,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8`,
             [runId,JSON.stringify({final:finalText}),attempt,totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
           );
+          await auditAgentLifecycle(pool, { organizationId: request.organizationId, agentId: agent.id, runId, action:'run_completed', output:{attempts:attempt,estimatedCostUsd:totalCost} });
           return {runId,status:'completed',finalText,provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost,attempts:attempt};
         }
 
@@ -330,9 +351,14 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
             continue;
           }
 
+          if (await isRunCancelled(pool, request.organizationId, runId)) throw new Error('Agent run cancelled');
           const toolStart=Date.now();
+          await auditAgentAction(pool, { organizationId: request.organizationId, agentId: agent.id, runId, toolName:call.name, action:'requested', input:call.args || {} });
           const output=await executeTool(call.name,{...(call.args || {}),_idempotency_key:actionKey},{organizationId:request.organizationId,agentId:agent.id});
-          await writeRunStep(pool,request.organizationId,runId,attempt,'completed',{...(call.args || {}),_idempotency_key:actionKey},output,undefined,call.name,Date.now()-toolStart);
+          const toolLatency=Date.now()-toolStart;
+          await writeRunStep(pool,request.organizationId,runId,attempt,'completed',{...(call.args || {}),_idempotency_key:actionKey},output,undefined,call.name,toolLatency);
+          completedToolNames.add(call.name);
+          await auditAgentAction(pool, { organizationId: request.organizationId, agentId: agent.id, runId, toolName:call.name, action:'completed', input:call.args || {}, output, latencyMs:toolLatency });
           messages.push({role:'assistant',content:JSON.stringify({tool_call:call})});
           messages.push({role:'tool',name:call.name,content:JSON.stringify(output)});
         }
@@ -344,12 +370,27 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
     }
     throw new Error('Agent execution exhausted retries');
   } catch(error:any) {
+    const cancelled=error?.message === 'Agent run cancelled' || await isRunCancelled(pool, request.organizationId, runId);
     await pool.query(
-      `UPDATE agent_runs SET status='failed',error=$2,attempts=GREATEST(attempts,1),input_tokens=$3,output_tokens=$4,estimated_cost_usd=$5,execution_time_ms=$6,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$7`,
-      [runId,error?.message || String(error),totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
+      `UPDATE agent_runs SET status=$2,error=$3,attempts=GREATEST(attempts,1),input_tokens=$4,output_tokens=$5,estimated_cost_usd=$6,execution_time_ms=$7,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8`,
+      [runId,cancelled ? 'cancelled' : 'failed',error?.message || String(error),totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
     );
+    await auditAgentLifecycle(pool, { organizationId:request.organizationId, agentId:agent.id, runId, action:cancelled ? 'run_cancelled' : 'run_failed', error:error?.message || String(error) });
     return {runId,status:'failed',error:error?.message || String(error),provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost};
   }
+}
+
+export async function cancelAgentRun(organizationId:string, runId:string, cancelledBy?:string):Promise<any> {
+  const pool=getPgPool(); if(!pool) throw new Error('PostgreSQL is required');
+  const current=await pool.query('SELECT id,agent_id,status FROM agent_runs WHERE id=$1 AND organization_id=$2',[runId,organizationId]);
+  if(!current.rows.length) return null;
+  if(['completed','failed','cancelled'].includes(current.rows[0].status)) return current.rows[0];
+  const result=await pool.query(
+    `UPDATE agent_runs SET status='cancelled',error='Cancelled by user',cancelled_by=$3,cancelled_at=CURRENT_TIMESTAMP,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 AND status IN ('running','awaiting_approval') RETURNING *`,
+    [runId,organizationId,cancelledBy || null],
+  );
+  if(result.rows.length) await auditAgentLifecycle(pool,{organizationId,agentId:result.rows[0].agent_id,runId,action:'run_cancelled',input:{cancelledBy}});
+  return result.rows[0] || current.rows[0];
 }
 
 export async function listAgentRuns(organizationId:string,limit=50):Promise<any[]> {
@@ -371,12 +412,13 @@ export async function getAgentRun(organizationId:string,runId:string):Promise<an
 }
 
 export async function continueApprovedAgentRun(organizationId:string,runId:string,approvalId:string,decidedBy?:string):Promise<AgentRunResult> {
-  void decidedBy;
   const pool=getPgPool(); if(!pool) throw new Error('PostgreSQL is required');
   const approval=await pool.query('SELECT * FROM approvals WHERE id=$1 AND organization_id=$2',[approvalId,organizationId]);
   if(!approval.rows.length) throw new Error('Approval not found');
   if(!['approved','modified'].includes(approval.rows[0].status)) throw new Error('Approval is not approved');
-  const payload=approval.rows[0].payload || {};
+  const approvalRow=approval.rows[0];
+  const payload=approvalRow.payload || {};
+  await auditAgentLifecycle(pool, { organizationId, agentId:payload.agent_id, runId, action:'approval_decided', input:{approvalId,decision:approvalRow.status,decidedBy} });
   const actionKey=`agent-action:${runId}:${payload.tool_name}:${JSON.stringify(payload.args || {})}`;
   const prior=await pool.query(
     `SELECT output FROM agent_run_steps WHERE organization_id=$1 AND run_id=$2 AND tool_name=$3 AND status='completed' AND input->>'_idempotency_key'=$4 LIMIT 1`,
@@ -394,7 +436,7 @@ export async function continueApprovedAgentRun(organizationId:string,runId:strin
   const result=await generateWithAgentProvider({
     provider,model:agent.model,systemInstruction:agent.systemInstructions,
     messages:[{role:'user',content:`The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId,runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]}.`}],
-    temperature:agent.temperature,maxTokens:agent.maxTokens,
+    temperature:agent.temperature,maxTokens:agent.maxTokens,tools:agentToolDefinitions(agent),
   });
   await pool.query(
     `UPDATE agent_runs SET status='completed',output=$2::jsonb,output_tokens=COALESCE(output_tokens,0)+$3,input_tokens=COALESCE(input_tokens,0)+$4,estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
