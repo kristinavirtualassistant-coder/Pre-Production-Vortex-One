@@ -551,6 +551,26 @@ function gmailBody(part:any):string {
 }
 
 /**
+ * Suppress a bounce recipient only when exactly one address in the bounce
+ * matches a recipient previously contacted by this organization.
+ */
+async function suppressBounceRecipient(pool: Pool, organizationId: string, body: string, subject: string, sender: string) {
+  const candidates = Array.from(new Set(
+    (String(body || '') + '\n' + String(subject || ''))
+      .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []
+  )).map(normalizeEmail).filter((email) => EMAIL_RE.test(email) && email !== normalizeEmail(sender));
+  if (!candidates.length) return null;
+  const result = await pool.query(
+    "SELECT DISTINCT to_address FROM communication_messages WHERE organization_id=$1 AND channel='email' AND direction='outbound' AND lower(to_address)=ANY($2::text[]) LIMIT 2",
+    [organizationId, candidates],
+  );
+  const matched = Array.from(new Set(result.rows.map((row:any)=>normalizeEmail(row.to_address)).filter(Boolean)));
+  if (matched.length !== 1) return null;
+  await suppress(pool, organizationId, 'email', matched[0], 'hard bounce', 'provider-bounce');
+  return matched[0];
+}
+
+/**
  * Fetch up to 25 Gmail messages from the last seven days and record them as inbound.
  * Link CRM records, classify likely bounces, and count messages returned by persistence.
  */
@@ -572,6 +592,7 @@ async function syncGmail(pool: Pool, organizationId: string, userId: string) {
     const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
     const t = await thread(pool,{organizationId,userId,channel:'email',provider:'gmail',contactKey:from,externalThreadId:message.threadId,subject,...links});
     const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'gmail',direction:'inbound',externalMessageId:item.id,fromAddress:from,toAddress:header(headers,'To'),subject,body:body.replace(/<[^>]+>/g,' '),htmlBody:body,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{gmail_thread_id:message.threadId,message_id:header(headers,'Message-ID'),in_reply_to:header(headers,'In-Reply-To'),labels:message.labelIds || []}});
+    if (bounce) await suppressBounceRecipient(pool, organizationId, body, subject, from);
     if (recorded) imported += 1;
   }
   return imported;
@@ -597,6 +618,7 @@ async function syncOutlook(pool: Pool, organizationId: string, userId: string) {
     const links = await resolveLink(pool,organizationId,{channel:'email',contactKey:from});
     const t = await thread(pool,{organizationId,userId,channel:'email',provider:'outlook',contactKey:from,externalThreadId:message.conversationId,subject,...links});
     const recorded = await record(pool,{organizationId,threadId:t.id,channel:'email',provider:'outlook',direction:'inbound',externalMessageId:message.id,fromAddress:from,toAddress:String(message.toRecipients?.[0]?.emailAddress?.address || ''),subject,body:html.replace(/<[^>]+>/g,' '),htmlBody:html,status:bounce?'bounced':'received',leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,metadata:{conversation_id:message.conversationId,internet_message_id:message.internetMessageId,in_reply_to:message.inReplyTo,received_at:message.receivedDateTime}});
+    if (bounce) await suppressBounceRecipient(pool, organizationId, html.replace(/<[^>]+>/g,' '), subject, from);
     if (recorded) imported += 1;
   }
   return imported;
