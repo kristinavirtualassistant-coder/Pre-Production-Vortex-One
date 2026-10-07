@@ -15,6 +15,7 @@ const explicitlyUnprotected = new Set([
   "app.post('/api/runs/:id/abort'",
   "app.post('/api/property-search'",
   "app.post('/api/telephony/webhook/:provider'",
+  "app.post('/api/billing/webhook'",
   "app.post('/api/tts'",
   "app.post('/api/ai/analyze-call'",
 ]);
