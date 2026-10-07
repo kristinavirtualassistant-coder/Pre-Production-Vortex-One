@@ -230,16 +230,39 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   const tools = agentToolDefinitions(agent);
   void tools;
 
-  await pool.query(
-    `INSERT INTO agent_runs
-      (id,organization_id,agent_id,user_id,objective,provider,model,status,input_context,max_attempts,idempotency_key,started_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,$10,CURRENT_TIMESTAMP)`,
-    [
-      runId, request.organizationId, agent.id, request.userId || null, request.objective,
-      provider, agent.model, JSON.stringify({ ...(request.context || {}), idempotency_key: idempotencyKey }),
-      maxAttempts, idempotencyKey,
-    ],
-  );
+  try {
+    await pool.query(
+      `INSERT INTO agent_runs
+        (id,organization_id,agent_id,user_id,objective,provider,model,status,input_context,max_attempts,idempotency_key,started_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,$10,CURRENT_TIMESTAMP)`,
+      [
+        runId, request.organizationId, agent.id, request.userId || null, request.objective,
+        provider, agent.model, JSON.stringify({ ...(request.context || {}), idempotency_key: idempotencyKey }),
+        maxAttempts, idempotencyKey,
+      ],
+    );
+  } catch (error:any) {
+    if (error?.code !== '23505') throw error;
+    const raced = await pool.query(
+      `SELECT id,status,output,pending_approval_id,provider,model,input_tokens,output_tokens,estimated_cost_usd
+       FROM agent_runs WHERE organization_id=$1 AND idempotency_key=$2
+       ORDER BY started_at DESC LIMIT 1`,
+      [request.organizationId, idempotencyKey],
+    );
+    if (!raced.rows.length) throw error;
+    const row = raced.rows[0];
+    return {
+      runId: row.id,
+      status: row.status,
+      finalText: row.output?.final,
+      pendingApprovalId: row.pending_approval_id,
+      provider: row.provider,
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      estimatedCostUsd: Number(row.estimated_cost_usd || 0),
+    } as AgentRunResult;
+  }
 
   let totalInput = 0;
   let totalOutput = 0;
