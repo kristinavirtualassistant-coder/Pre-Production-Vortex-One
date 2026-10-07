@@ -170,7 +170,7 @@ export async function handleStripeEvent(pool: Pool, event: any) {
     await pool.query(
       `UPDATE organization_billing
        SET plan=$1,subscription_status=$2,billing_customer_id=$3,billing_subscription_id=$4,
-           current_period_start=to_timestamp($5),current_period_end=to_timestamp($6),
+           trial_ends_at=CASE WHEN $5 > 0 THEN to_timestamp($5) ELSE NULL END,current_period_start=to_timestamp($6),current_period_end=to_timestamp($7),
            cancel_at_period_end=$7,limits=$8::jsonb,updated_at=CURRENT_TIMESTAMP
        WHERE organization_id=$9`,
       [plan,status,subscription.customer || null,subscription.id || null,
