@@ -451,7 +451,7 @@ async function startServer() {
   });
 
   // Execute Custom Workflow Chain Step-by-Step
-  app.post('/api/workflows/execute', async (req, res) => {
+  app.post('/api/workflows/execute', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { workflow_id, steps, custom_input, organizationId } = req.body;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
