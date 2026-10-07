@@ -89,6 +89,7 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
       outFields: '*',
       returnGeometry: 'true',
       resultRecordCount: limit.toString(),
+      outSR: '4326',
       f: 'json',
     });
 
@@ -257,6 +258,7 @@ export class RiversideCountyGISProvider implements IPropertyDataProvider {
       outFields: '*',
       returnGeometry: 'true',
       resultRecordCount: limit.toString(),
+      outSR: '4326',
       f: 'json',
     });
 

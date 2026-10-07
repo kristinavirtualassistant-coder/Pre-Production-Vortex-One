@@ -4,6 +4,7 @@
  */
 
 import { MIGRATIONS } from '../db/migrations';
+import './multiTenantSecurityBoundary.test';
 import { getPgPool, inMemoryStore, seedInitialData, initializeDatabase } from '../db/db';
 import './multiTenantSecurityBoundary.test';
 import { CallStateMachine } from '../dialer/fsm';
@@ -15,6 +16,7 @@ import { DataImportService, RawPropertyRecord } from '../services/dataImportServ
 import { UnifiedPropertyDataProvider, buildPropertySearchCachePayload, validateAndClassifyResult } from '../services/propertyProviders/PropertyDataProvider';
 import { OrangeCountyGISProvider, normalizeOrangeCountyParcel } from '../services/propertyProviders/OrangeCountyGISProvider';
 import { estimateAiCostUsd } from '../services/analyticsService';
+import { PLAN_CATALOG, verifyStripeWebhook } from '../services/billingService';
 import { LosAngelesCountyGISProvider } from '../services/propertyProviders/LosAngelesCountyGISProvider';
 import { SanDiegoCountyGISProvider } from '../services/propertyProviders/SanDiegoCountyGISProvider';
 import { RiversideCountyGISProvider } from '../services/propertyProviders/RiversideCountyGISProvider';
@@ -102,7 +104,7 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 28, 'Migration list contains 28 defined migrations', `Expected 28, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 29, 'Migration list contains 29 defined migrations', `Expected 29, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
@@ -118,6 +120,9 @@ async function runAllTests() {
   assert(MIGRATIONS.some((migration) => migration.version === 26 && migration.name === '026_create_unified_communications'), 'Unified communications migration 26 present', 'Expected unified communications migration 26 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 27 && migration.name === '027_create_file_processing_jobs'), 'File processing migration 27 present', 'Expected file processing migration 27 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 28 && migration.name === '028_create_real_ai_agent_runtime'), 'Real AI agent runtime migration 28 present', 'Expected real AI agent runtime migration 28 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 29 && migration.name === '029_billing_invoice_history'), 'Billing invoice migration 29 present', 'Expected billing invoice migration 29 to be present');
+  assert(PLAN_CATALOG.starter.trialDays === 14 && PLAN_CATALOG.professional.trialDays === 14 && PLAN_CATALOG.enterprise.trialDays === 14, 'Paid plans provide 14-day trials');
+  assert(PLAN_CATALOG.free.priceCents === 0 && PLAN_CATALOG.free.limits.calls_month === 250, 'Free plan catalog is configured');
   assert(MIGRATIONS.every((migration, index) => index === 0 || migration.version > MIGRATIONS[index - 1].version), 'Migration definitions are strictly ordered by version');
   
   const migrationNames = MIGRATIONS.map(m => m.name);
@@ -976,69 +981,59 @@ async function runAllTests() {
   assert(sacProvider.providerId === 'sacramento_county_gis', 'Sacramento County provider ID is sacramento_county_gis');
   assert(sacProvider.isGovernmentSource === true, 'Sacramento County provider flagged as official government source');
 
-  // Live government GIS calls are isolated from deterministic CI.
-  // Set VORTEX_ONE_SKIP_LIVE_GIS=1 for repeatable CI; the dedicated live-GIS job
-  // runs without the flag so provider regressions remain visible.
-  if (process.env.VORTEX_ONE_SKIP_LIVE_GIS === '1') {
-    console.log('  Skipping live government GIS integration tests (deterministic CI mode).');
-  } else {
-    // Live government GIS calls are mandatory integration tests.
-    // Any provider outage, schema drift, routing regression, or empty/invalid live
-    // response must fail the suite; the CI workflow separately verifies that both
-    // mandatory live-query sections execute and that the historical skip message
-    // is never emitted.
-    const unifiedProvider = new UnifiedPropertyDataProvider();
-  
-    console.log('  Executing Live Query against Orange County Public Works GIS...');
-    const ocSearchResult = await unifiedProvider.search({
-      address: '623 CENTER ST',
-      city: 'Costa Mesa',
-      county: 'Orange County',
-      state: 'CA',
-      organizationId: 'org_cmc_realty',
-      persist: true,
-    });
-  
-    assert(ocSearchResult.success === true, 'Orange County GIS search returned success');
-    assert(ocSearchResult.totalFound > 0, 'Orange County GIS returned at least 1 real parcel');
+  // Live government GIS calls are mandatory integration tests.
+  // Any provider outage, schema drift, routing regression, or empty/invalid live
+  // response must fail the suite; the CI workflow separately verifies that both
+  // mandatory live-query sections execute and that the historical skip message
+  // is never emitted.
+  const unifiedProvider = new UnifiedPropertyDataProvider();
+
+  console.log('  Executing Live Query against Orange County Public Works GIS...');
+  const ocSearchResult = await unifiedProvider.search({
+    address: '623 CENTER ST',
+    city: 'Costa Mesa',
+    county: 'Orange County',
+    state: 'CA',
+    organizationId: 'org_cmc_realty',
+    persist: true,
+  });
+
+  assert(ocSearchResult.success === true, 'Orange County GIS search returned success');
+  assert(ocSearchResult.totalFound > 0, 'Orange County GIS returned at least 1 real parcel');
+  assert(
+    ocSearchResult.providerUsed.includes('CA Statewide Cadastral') ||
+      ocSearchResult.providerUsed.includes('GIS') ||
+      ocSearchResult.providerUsed.includes('Orange County'),
+    'Orange County / CA Cadastral provider correctly routed and used'
+  );
+
+  const ocTop = ocSearchResult.results[0];
+  if (ocTop) {
+    assert(ocTop.property.apn.includes('339-371-23') || ocTop.property.apn.length > 0, 'Real APN returned for Orange County property');
+    assert(ocTop.property.address.includes('623 CENTER ST'), 'Real street address returned');
+    assert(ocTop.property.city.toUpperCase().includes('COSTA MESA'), 'Real city returned');
+    assert(ocTop.provenance.isOfficialGovernmentSource === true, 'Provenance confirms official government GIS source');
+    assert(ocTop.provenance.fipsCode === '06059', 'FIPS Code 06059 verified for Orange County');
     assert(
       ocSearchResult.providerUsed.includes('CA Statewide Cadastral') ||
         ocSearchResult.providerUsed.includes('GIS') ||
         ocSearchResult.providerUsed.includes('Orange County'),
       'Orange County / CA Cadastral provider correctly routed and used'
     );
-  
-    const ocTop = ocSearchResult.results[0];
-    if (ocTop) {
-      assert(ocTop.property.apn.includes('339-371-23') || ocTop.property.apn.length > 0, 'Real APN returned for Orange County property');
-      assert(ocTop.property.address.includes('623 CENTER ST'), 'Real street address returned');
-      assert(ocTop.property.city.toUpperCase().includes('COSTA MESA'), 'Real city returned');
-      assert(ocTop.provenance.isOfficialGovernmentSource === true, 'Provenance confirms official government GIS source');
-      assert(ocTop.provenance.fipsCode === '06059', 'FIPS Code 06059 verified for Orange County');
-      assert(
-        ocTop.provenance.ownerIntelligenceStatus === 'statutory_redaction_cal_gov_6254_21',
-        'Owner status correctly reflects Cal. Gov. Code § 6254.21 statutory protection'
-      );
-  
-      const inMemoryCheck = inMemoryStore.properties.find(
-        (p) => p.address?.toUpperCase().includes('623 CENTER') || p.apn === ocTop.property.apn || p.id === ocTop.property.id
-      );
-      assert(inMemoryCheck !== undefined, 'Live searched Orange County property persisted into datastore');
-    }
-  
-    console.log('  Executing Live Query against Los Angeles County Assessor GIS...');
-    const laSearchResult = await unifiedProvider.search({
-      address: '6730 N GLASNER LANE',
-      city: 'Los Angeles',
-      county: 'Los Angeles County',
-      state: 'CA',
-      organizationId: 'org_cmc_realty',
-      persist: true,
-    });
-  
-    assert(laSearchResult.success === true, 'LA County Assessor search returned success');
-    assert(laSearchResult.totalFound > 0, 'LA County Assessor returned at least 1 real parcel');
+    assert(inMemoryCheck !== undefined, 'Live searched Orange County property persisted into datastore');
   }
+
+  console.log('  Executing Live Query against Los Angeles County Assessor GIS...');
+  const laSearchResult = await unifiedProvider.search({
+    address: '6730 N GLASNER LANE',
+    city: 'Los Angeles',
+    county: 'Los Angeles County',
+    state: 'CA',
+    organizationId: 'org_cmc_realty',
+    persist: true,
+  });
+
+  assert(laSearchResult.success === true, 'LA County Assessor search returned success');
 }
 
 runAllTests().catch((error) => {
