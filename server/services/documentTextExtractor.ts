@@ -158,7 +158,7 @@ function extractPdf(buffer: Buffer): string {
       // Uncompressed PDF content streams are also valid.
     }
     const text = decoded.toString('latin1');
-    for (const tj of text.matchAll(/\((?:\\.|[^\)])*\)\s*Tj/g)) {
+    for (const tj of text.matchAll(/\((?:\\.|[^)])*\)\s*Tj/g)) {
       chunks.push(tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\([\\()])/g, '$1'));
     }
     for (const tjArray of text.matchAll(/\[([\s\S]*?)\]\s*TJ/g)) {
