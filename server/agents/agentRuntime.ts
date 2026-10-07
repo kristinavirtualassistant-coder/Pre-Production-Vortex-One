@@ -182,7 +182,6 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
   const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, memory, request.objective, request.context || {}) }];
   const tools = agentToolDefinitions(agent);
-  let previousResponseId: string | undefined;
 
   await pool.query(
     `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
@@ -205,7 +204,6 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
         const calls = result.toolCalls?.length
           ? result.toolCalls.map((call) => ({ name: call.name, args: call.args || {}, id: call.id }))
           : (Array.isArray(envelope.tool_calls) ? envelope.tool_calls : []);
-        previousResponseId = result.responseId;
         if (!calls.length) {
           const finalText = envelope.final || result.text;
           await pool.query(
