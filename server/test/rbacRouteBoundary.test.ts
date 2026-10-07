@@ -17,6 +17,7 @@ const explicitlyUnprotected = new Set([
   "app.post('/api/telephony/webhook/:provider'",
   "app.post('/api/tts'",
   "app.post('/api/ai/analyze-call'",
+  "app.post('/api/billing/webhook'",
 ]);
 
 for (const line of mutationLines) {
