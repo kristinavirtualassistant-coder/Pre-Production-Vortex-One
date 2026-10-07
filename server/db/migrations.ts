@@ -1074,8 +1074,6 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
-,
-
   {
     version: 26,
     name: '026_create_unified_communications',
