@@ -263,7 +263,7 @@ async function startServer() {
     catch (err: any) { console.error('Task list error:', err); res.status(503).json({ error: 'Task state unavailable' }); }
   });
 
-  app.post('/api/tasks', async (req, res) => {
+  app.post('/api/tasks', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const { objective, priority, due_date, assigned_agent, parent_task_id, task_id, input, dependencies } = req.body;
     if (!objective || !priority) return res.status(400).json({ error: 'Objective and priority are required' });
