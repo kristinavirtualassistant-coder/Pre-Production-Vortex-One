@@ -35,6 +35,13 @@ describe('Public records ingestion', () => {
     assert.match(source, /relationship\.relationshipType/);
   });
 
+  it('requires migration-managed Owner 360 schema readiness', async () => {
+    const source = await readFile(new URL('../services/ownerEnrichmentService.ts', repoRoot), 'utf8');
+    assert.match(source, /assertSchemaReady/);
+    assert.doesNotMatch(source, /CREATE TABLE IF NOT EXISTS owner_enrichment_providers/);
+    assert.doesNotMatch(source, /async function ensureSchema/);
+  });
+
   it('exposes identity matches in the Owner 360 profile', async () => {
     const source = await readFile(new URL('../services/ownerEnrichmentService.ts', repoRoot), 'utf8');
     assert.match(source, /identityMatches/);

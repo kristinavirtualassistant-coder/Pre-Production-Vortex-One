@@ -32,10 +32,9 @@ mustContain(tools, "if (toolName === 'make_call')", 'outbound call approval gate
 mustContain(tools, "status = 'approved'", 'outbound call requires approved status');
 mustContain(tools, 'organization_id = $2', 'approval lookup is tenant-scoped');
 
-mustContain(migrations, 'CREATE TABLE IF NOT EXISTS public_ca_parcels', 'global parcel table exists');
-const parcelStart = migrations.indexOf('CREATE TABLE IF NOT EXISTS public_ca_parcels');
-const parcelEnd = migrations.indexOf('      );', parcelStart);
-mustNotContain(migrations.slice(parcelStart, parcelEnd), 'organization_id', 'global parcel table has no tenant organization_id');
+mustContain(migrations, "CREATE EXTENSION IF NOT EXISTS postgis", 'native spatial layer enables PostGIS');
+mustContain(migrations, 'ALTER TABLE properties ADD COLUMN IF NOT EXISTS location geography(Point, 4326)', 'native property spatial layer exists');
+mustContain(migrations, 'ALTER TABLE properties ADD COLUMN IF NOT EXISTS parcel_geometry JSONB', 'native parcel geometry storage exists');
 mustContain(migrations, 'BEFORE UPDATE OR DELETE ON audit_logs', 'audit logs are append-only');
 
 console.log('Multi-tenant security boundary tests passed.');

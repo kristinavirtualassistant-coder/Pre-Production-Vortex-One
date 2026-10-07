@@ -1349,20 +1349,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 30,
-    name: '030_extend_workflow_delivery_idempotency',
-    sql: `
-      ALTER TABLE workflow_communication_deliveries
-        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
-      ALTER TABLE workflow_communication_deliveries
-        ADD CONSTRAINT workflow_communication_deliveries_channel_check
-        CHECK (channel IN ('email','sms','phone','webhook'));
-      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
-        ON workflow_communication_deliveries(organization_id, status, updated_at);
-    `,
-  },
-
-  {
     version: 33,
     name: '033_owner_identity_match_candidate_reference',
     sql: `
@@ -1375,7 +1361,20 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 34,
-    name: '034_create_native_property_map_spatial_layer',
+    name: '034_extend_workflow_delivery_idempotency',
+    sql: `
+      ALTER TABLE workflow_communication_deliveries
+        DROP CONSTRAINT IF EXISTS workflow_communication_deliveries_channel_check;
+      ALTER TABLE workflow_communication_deliveries
+        ADD CONSTRAINT workflow_communication_deliveries_channel_check
+        CHECK (channel IN ('email','sms','phone','webhook'));
+      CREATE INDEX IF NOT EXISTS idx_workflow_communication_deliveries_reconcile
+        ON workflow_communication_deliveries(organization_id, status, updated_at);
+    `,
+  },
+  {
+    version: 35,
+    name: '035_create_native_property_map_spatial_layer',
     sql: `
       CREATE EXTENSION IF NOT EXISTS postgis;
       ALTER TABLE properties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
@@ -1388,6 +1387,18 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_properties_org_lat_lon ON properties(organization_id, latitude, longitude);
       UPDATE properties SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography
       WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL;
+    `,
+  },
+  {
+    version: 36,
+    name: '036_add_agent_run_controls',
+    sql: `
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
+        ON agent_runs(organization_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
+        ON agent_runs(organization_id, started_at, estimated_cost_usd);
     `,
   },
 ];

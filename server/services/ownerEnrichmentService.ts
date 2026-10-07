@@ -66,146 +66,20 @@ function jsonArray(value: unknown): any[] {
   return Array.isArray(value) ? value : [];
 }
 
-async function ensureSchema(pool: Pool): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS owner_enrichment_providers (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      provider_key VARCHAR(100) NOT NULL,
-      display_name VARCHAR(255) NOT NULL,
-      enabled BOOLEAN NOT NULL DEFAULT true,
-      priority INTEGER NOT NULL DEFAULT 100,
-      capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(organization_id, provider_key)
+async function assertSchemaReady(pool: Pool): Promise<void> {
+  try {
+    await pool.query(`
+      SELECT 1
+      FROM owner_enrichment_providers
+      WHERE false
+    `);
+  } catch (error: any) {
+    throw new Error(
+      `Owner 360 schema is not migrated. Run the production database migrations before using Owner 360. ${error?.message || error}`,
     );
-    CREATE TABLE IF NOT EXISTS owner_enrichment_jobs (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
-      provider_key VARCHAR(100),
-      job_type VARCHAR(50) NOT NULL DEFAULT 'FULL_ENRICHMENT',
-      status VARCHAR(30) NOT NULL DEFAULT 'queued',
-      requested_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
-      records_found INTEGER NOT NULL DEFAULT 0,
-      records_added INTEGER NOT NULL DEFAULT 0,
-      records_updated INTEGER NOT NULL DEFAULT 0,
-      error_message TEXT,
-      started_at TIMESTAMPTZ,
-      completed_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_owner_enrichment_jobs_org_owner
-      ON owner_enrichment_jobs(organization_id, owner_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS owner_source_records (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE CASCADE,
-      property_id VARCHAR(64) REFERENCES properties(id) ON DELETE SET NULL,
-      enrichment_job_id VARCHAR(64) REFERENCES owner_enrichment_jobs(id) ON DELETE SET NULL,
-      source_type VARCHAR(100) NOT NULL,
-      provider_key VARCHAR(100),
-      external_record_id VARCHAR(255),
-      source_url TEXT,
-      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      raw_hash VARCHAR(64) NOT NULL,
-      retrieved_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_owner_source_records_org_owner
-      ON owner_source_records(organization_id, owner_id, retrieved_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
-      ON owner_source_records(organization_id, provider_key, raw_hash);
-
-    CREATE TABLE IF NOT EXISTS owner_contact_points (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      type VARCHAR(20) NOT NULL,
-      value TEXT NOT NULL,
-      normalized_value TEXT NOT NULL,
-      contact_subtype VARCHAR(30),
-      is_primary BOOLEAN NOT NULL DEFAULT false,
-      is_verified BOOLEAN NOT NULL DEFAULT false,
-      confidence_score NUMERIC(5,4),
-      source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(organization_id, owner_id, type, normalized_value)
-    );
-    CREATE INDEX IF NOT EXISTS idx_owner_contact_points_org_owner
-      ON owner_contact_points(organization_id, owner_id, type);
-
-    CREATE TABLE IF NOT EXISTS owner_ownerships (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      property_id VARCHAR(64) NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-      ownership_type VARCHAR(50) NOT NULL DEFAULT 'record_owner',
-      ownership_percentage NUMERIC(7,4),
-      start_date DATE,
-      end_date DATE,
-      recorded_date DATE,
-      source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-      confidence_score NUMERIC(5,4) NOT NULL DEFAULT 1,
-      UNIQUE(organization_id, owner_id, property_id, ownership_type)
-    );
-    CREATE INDEX IF NOT EXISTS idx_owner_ownerships_org_owner
-      ON owner_ownerships(organization_id, owner_id);
-
-    CREATE TABLE IF NOT EXISTS owner_relationships (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      related_entity_type VARCHAR(50) NOT NULL,
-      related_entity_id VARCHAR(64),
-      related_name VARCHAR(255) NOT NULL,
-      relationship_type VARCHAR(50) NOT NULL,
-      confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
-      source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(organization_id, owner_id, related_entity_type, related_name, relationship_type)
-    );
-
-    CREATE TABLE IF NOT EXISTS owner_lead_signals (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      property_id VARCHAR(64) REFERENCES properties(id) ON DELETE CASCADE,
-      signal_type VARCHAR(80) NOT NULL,
-      signal_value JSONB NOT NULL DEFAULT '{}'::jsonb,
-      score NUMERIC(6,2) NOT NULL DEFAULT 0,
-      confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
-      source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-      observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      expires_at TIMESTAMPTZ
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
-      ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
-      WHERE property_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
-      ON owner_lead_signals(organization_id, owner_id, signal_type)
-      WHERE property_id IS NULL;
-    CREATE INDEX IF NOT EXISTS idx_owner_lead_signals_org_owner
-      ON owner_lead_signals(organization_id, owner_id, score DESC);
-
-    CREATE TABLE IF NOT EXISTS owner_identity_matches (
-      id VARCHAR(64) PRIMARY KEY,
-      organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
-      candidate_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
-      candidate_name VARCHAR(255) NOT NULL,
-      match_score NUMERIC(5,4) NOT NULL,
-      match_status VARCHAR(30) NOT NULL DEFAULT 'candidate',
-      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
-      source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  }
 }
+
 
 const publicRecordsProvider: OwnerEnrichmentProvider = {
   name: 'public_records',
@@ -365,7 +239,7 @@ export class OwnerEnrichmentService {
     const pool = getPgPool();
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(organizationId);
-    await ensureSchema(pool);
+    await assertSchemaReady(pool);
     const result = await pool.query(
       'SELECT provider_key, display_name, enabled, priority, capabilities FROM owner_enrichment_providers WHERE organization_id = $1 ORDER BY priority, provider_key',
       [orgId],
@@ -392,7 +266,7 @@ export class OwnerEnrichmentService {
     const pool = getPgPool();
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(request.organizationId);
-    await ensureSchema(pool);
+    await assertSchemaReady(pool);
 
     const provider = PROVIDERS.find((p) => p.name === (request.provider || 'public_records')) || publicRecordsProvider;
     const jobId = id('enrich');
@@ -552,7 +426,7 @@ export class OwnerEnrichmentService {
     const pool = getPgPool();
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(organizationId);
-    await ensureSchema(pool);
+    await assertSchemaReady(pool);
     const [owner, contacts, ownerships, signals, relationships, identityMatches, jobs] = await Promise.all([
       pool.query('SELECT * FROM property_owners WHERE id=$1 AND organization_id=$2 LIMIT 1', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_contact_points WHERE owner_id=$1 AND organization_id=$2 ORDER BY is_primary DESC, last_seen_at DESC', [ownerId, orgId]),
@@ -580,7 +454,7 @@ export class OwnerEnrichmentService {
     const pool = getPgPool();
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(organizationId);
-    await ensureSchema(pool);
+    await assertSchemaReady(pool);
     const result = await pool.query('SELECT * FROM owner_enrichment_jobs WHERE id=$1 AND organization_id=$2 LIMIT 1', [jobId, orgId]);
     return result.rows[0] || null;
   }

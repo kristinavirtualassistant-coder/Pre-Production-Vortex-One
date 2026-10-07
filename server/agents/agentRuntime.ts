@@ -12,6 +12,9 @@ export interface AgentRunRequest {
   objective: string;
   context?: Record<string, any>;
   maxAttempts?: number;
+  timeoutMs?: number;
+  maxCostUsd?: number;
+  idempotencyKey?: string;
 }
 
 export interface AgentRunResult {
@@ -25,6 +28,7 @@ export interface AgentRunResult {
   inputTokens?: number;
   outputTokens?: number;
   estimatedCostUsd?: number;
+  attempts?: number;
 }
 
 const DANGEROUS_TOOLS = new Set([
@@ -45,9 +49,8 @@ const COST_ENV: Record<string, [string, string]> = {
 function estimateCost(provider: string, inputTokens?: number, outputTokens?: number): number {
   const keys = COST_ENV[provider];
   if (!keys) return 0;
-  const inputRate = Number(process.env[keys[0]] || 0);
-  const outputRate = Number(process.env[keys[1]] || 0);
-  return ((inputTokens || 0) / 1_000_000) * inputRate + ((outputTokens || 0) / 1_000_000) * outputRate;
+  return ((inputTokens || 0) / 1_000_000) * Number(process.env[keys[0]] || 0)
+    + ((outputTokens || 0) / 1_000_000) * Number(process.env[keys[1]] || 0);
 }
 
 function parseEnvelope(text: string): { final?: string; tool_calls?: Array<{ name: string; args?: Record<string, any> }> } {
@@ -60,7 +63,10 @@ function parseEnvelope(text: string): { final?: string; tool_calls?: Array<{ nam
 }
 
 async function getAgentConfig(pool: any, organizationId: string, agentId: string): Promise<AgentDefinition> {
-  const result = await pool.query('SELECT * FROM agent_configs WHERE id = $1 AND organization_id = $2 AND enabled = TRUE LIMIT 1', [agentId, organizationId]);
+  const result = await pool.query(
+    'SELECT * FROM agent_configs WHERE id=$1 AND organization_id=$2 AND enabled=TRUE LIMIT 1',
+    [agentId, organizationId],
+  );
   if (result.rows.length) {
     const row = result.rows[0];
     return {
@@ -92,7 +98,7 @@ async function getAgentConfig(pool: any, organizationId: string, agentId: string
 async function loadMemory(pool: any, organizationId: string, agentId: string, limit = 20): Promise<string> {
   const result = await pool.query(
     `SELECT memory_key, content FROM agent_memories
-     WHERE organization_id = $1 AND agent_id = $2
+     WHERE organization_id=$1 AND agent_id=$2
      ORDER BY importance DESC, updated_at DESC LIMIT $3`,
     [organizationId, agentId, limit],
   );
@@ -104,7 +110,7 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
   if (!agent.allowedTools.includes(toolName) && !agent.permissions.includes('all_tools')) {
     throw new Error(`Agent ${agent.id} is not permitted to use ${toolName}`);
   }
-  const requiredPermission: Record<string, string> = {
+  const required: Record<string, string> = {
     run_5_step_skip_trace: 'research_tools',
     search_property: 'read_only',
     search_owner: 'read_only',
@@ -115,20 +121,46 @@ function assertToolAllowed(agent: AgentDefinition, toolName: string) {
     reconcile_crm_import: 'crm_read_write',
     make_call: 'telephony_trigger',
   };
-  const permission = requiredPermission[toolName];
-  const hasPermission = permission === 'read_only'
-    ? agent.permissions.includes('read_only') || agent.permissions.includes('crm_read_write') || agent.permissions.includes('research_tools') || agent.permissions.includes('all_tools')
-    : !permission || agent.permissions.includes(permission) || agent.permissions.includes('all_tools');
-  if (permission && !hasPermission) {
-    throw new Error(`Agent ${agent.id} lacks required permission ${permission} for ${toolName}`);
-  }
+  const permission = required[toolName];
+  if (!permission) return;
+  const allowed = permission === 'read_only'
+    ? ['read_only', 'crm_read_write', 'research_tools', 'all_tools'].some((p) => agent.permissions.includes(p))
+    : agent.permissions.includes(permission) || agent.permissions.includes('all_tools');
+  if (!allowed) throw new Error(`Agent ${agent.id} lacks required permission ${permission} for ${toolName}`);
 }
 
-async function writeRunStep(pool: any, organizationId: string, runId: string, stepNo: number, status: string, input: any, output: any, error?: string, toolName?: string, latencyMs = 0) {
+function agentToolDefinitions(agent: AgentDefinition): AgentToolDefinition[] {
+  return agent.allowedTools.map((name) => TOOLS[name]).filter(Boolean).map((tool: any) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: {
+      type: 'object',
+      properties: Object.fromEntries(Object.entries(tool.parameters || {}).map(([key, value]: [string, any]) => {
+        if (typeof value === 'string') {
+          if (value === 'object') return [key, { type: 'object', additionalProperties: true }];
+          if (value === 'array') return [key, { type: 'array', items: {} }];
+          return [key, { type: ['number', 'boolean'].includes(value) ? value : 'string' }];
+        }
+        return [key, value];
+      })),
+      additionalProperties: false,
+    },
+  }));
+}
+
+async function writeRunStep(
+  pool: any, organizationId: string, runId: string, stepNo: number, status: string,
+  input: any, output: any, error?: string, toolName?: string, latencyMs = 0,
+) {
   await pool.query(
-    `INSERT INTO agent_run_steps (id, organization_id, run_id, step_no, step_type, tool_name, status, input, output, error, latency_ms)
+    `INSERT INTO agent_run_steps
+      (id,organization_id,run_id,step_no,step_type,tool_name,status,input,output,error,latency_ms)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11)`,
-    [`ars_${Date.now()}_${Math.random().toString(36).slice(2,8)}`, organizationId, runId, stepNo, toolName ? 'tool' : 'model', toolName || null, status, JSON.stringify(input || {}), JSON.stringify(output || {}), error || null, latencyMs],
+    [
+      `ars_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+      organizationId, runId, stepNo, toolName ? 'tool' : 'model', toolName || null,
+      status, JSON.stringify(input || {}), JSON.stringify(output || {}), error || null, latencyMs,
+    ],
   );
 }
 
@@ -136,9 +168,10 @@ function protocol(agent: AgentDefinition, memory: string, objective: string, con
   return `You are Vortex One agent "${agent.name}" (${agent.id}). You are a real AI operator, not a rules engine.
 Your job: ${agent.primaryResponsibility}
 System instructions: ${agent.systemInstructions}
-Available tools are exposed through the model provider. Use them whenever authoritative database or operational data is required.
-Never invent database facts. Prefer verified tool results and clearly distinguish inference from retrieved facts.
-Human approval is required before any risky external or mutating action.
+Available tools: ${agent.allowedTools.join(', ') || 'none'}.
+Never invent database facts. Use tools for authoritative facts.
+Human approval is required before risky external or mutating actions.
+Return ONLY JSON: {"final":"string","tool_calls":[{"name":"tool_name","args":{}}]}.
 Memory:
 ${memory || '(none)'}
 Objective:
@@ -147,156 +180,202 @@ Context:
 ${JSON.stringify(context)}`;
 }
 
-function agentToolDefinitions(agent: AgentDefinition): AgentToolDefinition[] {
-  return agent.allowedTools
-    .map((name) => TOOLS[name])
-    .filter(Boolean)
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: {
-        type: 'object',
-        properties: Object.fromEntries(Object.entries(tool.parameters || {}).map(([key, value]) => {
-          if (typeof value === 'string') {
-            const type = value === 'number' || value === 'boolean' || value === 'object' || value === 'array' ? value : 'string';
-            return [key, type === 'object' ? { type: 'object', additionalProperties: true } : type === 'array' ? { type: 'array', items: {} } : { type }];
-          }
-          return [key, value];
-        })),
-        additionalProperties: false,
-      },
-    }));
-}
-
 export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRunResult> {
   const pool = getPgPool();
   if (!pool) throw new Error('PostgreSQL is required for real AI agent execution');
   const agent = await getAgentConfig(pool, request.organizationId, request.agentId);
   const provider = agent.provider || inferAgentProvider(agent.model);
-  const runId = `arun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const maxAttempts = Math.min(5, Math.max(1, request.maxAttempts || agent.maxRetries || 3));
+  const timeoutMs = Math.min(300000, Math.max(10000, request.timeoutMs || Number(process.env.AI_AGENT_TIMEOUT_MS || 120000)));
+  const maxCostUsd = request.maxCostUsd ?? Number(process.env.AI_AGENT_MAX_COST_USD || 0);
+  const idempotencyKey = request.idempotencyKey || `agent:${request.organizationId}:${agent.id}:${request.objective.trim().slice(0,120)}`;
+
+  if (maxCostUsd > 0) {
+    const spend = await pool.query(
+      `SELECT COALESCE(SUM(estimated_cost_usd),0) AS spend FROM agent_runs
+       WHERE organization_id=$1 AND started_at >= date_trunc('month',CURRENT_TIMESTAMP)`,
+      [request.organizationId],
+    );
+    if (Number(spend.rows[0]?.spend || 0) >= maxCostUsd) {
+      throw new Error(`AI agent budget exceeded for organization (limit ${maxCostUsd.toFixed(4)}).`);
+    }
+  }
+
+  const existing = await pool.query(
+    `SELECT id,status,output,pending_approval_id,provider,model,input_tokens,output_tokens,estimated_cost_usd
+     FROM agent_runs
+     WHERE organization_id=$1 AND idempotency_key=$2
+     ORDER BY started_at DESC LIMIT 1`,
+    [request.organizationId, idempotencyKey],
+  );
+  if (existing.rows.length) {
+    const row = existing.rows[0];
+    return {
+      runId: row.id,
+      status: row.status,
+      finalText: row.output?.final,
+      pendingApprovalId: row.pending_approval_id,
+      provider: row.provider,
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      estimatedCostUsd: Number(row.estimated_cost_usd || 0),
+    } as AgentRunResult;
+  }
+
+  const runId = `arun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const started = Date.now();
+  const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
+  const messages: AgentMessage[] = [{ role:'user', content:protocol(agent,memory,request.objective,request.context || {}) }];
+  const tools = agentToolDefinitions(agent);
+  void tools;
+
+  await pool.query(
+    `INSERT INTO agent_runs
+      (id,organization_id,agent_id,user_id,objective,provider,model,status,input_context,max_attempts,idempotency_key,started_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,$10,CURRENT_TIMESTAMP)`,
+    [
+      runId, request.organizationId, agent.id, request.userId || null, request.objective,
+      provider, agent.model, JSON.stringify({ ...(request.context || {}), idempotency_key: idempotencyKey }),
+      maxAttempts, idempotencyKey,
+    ],
+  );
+
   let totalInput = 0;
   let totalOutput = 0;
   let totalCost = 0;
-  const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
-  const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, memory, request.objective, request.context || {}) }];
-  const tools = agentToolDefinitions(agent);
-
-  await pool.query(
-    `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8::jsonb,$9,CURRENT_TIMESTAMP)`,
-    [runId, request.organizationId, agent.id, request.userId || null, request.objective, provider, agent.model, JSON.stringify(request.context || {}), maxAttempts],
-  );
 
   try {
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt=1; attempt<=maxAttempts; attempt++) {
       try {
-        const result = await generateWithAgentProvider({
-          provider, model: agent.model, systemInstruction: agent.systemInstructions,
-          messages, temperature: agent.temperature, maxTokens: agent.maxTokens,
-        });
+        if (Date.now()-started > timeoutMs) throw new Error(`Agent run exceeded timeout of ${timeoutMs}ms`);
+        const result = await Promise.race([
+          generateWithAgentProvider({
+            provider, model: agent.model, systemInstruction: agent.systemInstructions,
+            messages, temperature: agent.temperature, maxTokens: agent.maxTokens,
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Agent provider timeout after ${timeoutMs}ms`)), timeoutMs)),
+        ]);
         totalInput += result.inputTokens || 0;
         totalOutput += result.outputTokens || 0;
-        totalCost += estimateCost(provider, result.inputTokens, result.outputTokens);
-        await writeRunStep(pool, request.organizationId, runId, attempt, 'completed', { objective: request.objective }, { text: result.text, provider }, undefined, undefined, Date.now() - started);
-        const envelope = parseEnvelope(result.text);
-        const calls = result.toolCalls?.length
-          ? result.toolCalls.map((call) => ({ name: call.name, args: call.args || {}, id: call.id }))
-          : (Array.isArray(envelope.tool_calls) ? envelope.tool_calls : []);
+        totalCost += estimateCost(provider,result.inputTokens,result.outputTokens);
+        if (maxCostUsd > 0 && totalCost > maxCostUsd) throw new Error(`AI agent run exceeded cost limit of ${maxCostUsd.toFixed(4)}.`);
+
+        const envelope=parseEnvelope(result.text);
+        await writeRunStep(pool,request.organizationId,runId,attempt,'completed',{objective:request.objective},{text:result.text,provider},undefined,undefined,Date.now()-started);
+        const calls=result.toolCalls?.length
+          ? result.toolCalls.map((call:any)=>({name:call.name,args:call.args || {},id:call.id}))
+          : (Array.isArray(envelope.tool_calls)?envelope.tool_calls:[]);
+
         if (!calls.length) {
-          const finalText = envelope.final || result.text;
+          const finalText=envelope.final || result.text;
           await pool.query(
-            `UPDATE agent_runs SET status='completed', output=$2::jsonb, attempts=$3, input_tokens=$4, output_tokens=$5, estimated_cost_usd=$6, execution_time_ms=$7, completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8`,
-            [runId, JSON.stringify({ final: finalText }), attempt, totalInput, totalOutput, totalCost, Date.now() - started, request.organizationId],
+            `UPDATE agent_runs SET status='completed',output=$2::jsonb,attempts=$3,input_tokens=$4,output_tokens=$5,estimated_cost_usd=$6,execution_time_ms=$7,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8`,
+            [runId,JSON.stringify({final:finalText}),attempt,totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
           );
-          return { runId, status:'completed', finalText, provider, model:agent.model, inputTokens:totalInput, outputTokens:totalOutput, estimatedCostUsd:totalCost };
+          return {runId,status:'completed',finalText,provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost,attempts:attempt};
         }
 
         for (const call of calls) {
-          assertToolAllowed(agent, call.name);
+          assertToolAllowed(agent,call.name);
           if (DANGEROUS_TOOLS.has(call.name) && !agent.permissions.includes('auto_execute_external')) {
-            const approvalId = `approval_agent_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-            await createApproval(pool, request.organizationId, {
-              approval_id: approvalId,
-              action_type: `agent_tool:${call.name}`,
-              description: `Agent ${agent.name} requested tool ${call.name}`,
-              reason: 'Agent permission policy requires human approval before external or mutating action.',
-              risk_level: 'high',
-              requires_human_approval: true,
-              proposed_by: agent.id,
-              payload: { run_id: runId, agent_id: agent.id, tool_name: call.name, args: call.args || {} },
-              status: 'pending',
-              issues: [],
+            const approvalId=`approval_agent_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+            await createApproval(pool,request.organizationId,{
+              approval_id:approvalId,action_type:`agent_tool:${call.name}`,
+              description:`Agent ${agent.name} requested tool ${call.name}`,
+              reason:'Agent permission policy requires human approval before external or mutating action.',
+              risk_level:'high',requires_human_approval:true,proposed_by:agent.id,
+              payload:{run_id:runId,agent_id:agent.id,tool_name:call.name,args:call.args || {}},
+              status:'pending',issues:[],
             });
-            await pool.query(`UPDATE agent_runs SET status='awaiting_approval', pending_approval_id=$2, attempts=$3 WHERE id=$1 AND organization_id=$4`, [runId, approvalId, attempt, request.organizationId]);
-            return { runId, status:'awaiting_approval', pendingApprovalId:approvalId, provider, model:agent.model, inputTokens:totalInput, outputTokens:totalOutput, estimatedCostUsd:totalCost };
+            await pool.query(
+              `UPDATE agent_runs SET status='awaiting_approval',pending_approval_id=$2,attempts=$3 WHERE id=$1 AND organization_id=$4`,
+              [runId,approvalId,attempt,request.organizationId],
+            );
+            return {runId,status:'awaiting_approval',pendingApprovalId:approvalId,provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost,attempts:attempt};
           }
 
-          const toolStart = Date.now();
-          const output = await executeTool(call.name, call.args || {}, { organizationId: request.organizationId, agentId: agent.id });
-          await writeRunStep(pool, request.organizationId, runId, attempt, 'completed', call.args || {}, output, undefined, call.name, Date.now() - toolStart);
-          messages.push({ role:'assistant', content: result.text || JSON.stringify({ tool_call: call }) });
-          messages.push({ role:'tool', name:call.name, toolCallId:(call as any).id, content:JSON.stringify(output) });
+          const actionKey=`agent-action:${runId}:${call.name}:${JSON.stringify(call.args || {})}`;
+          const prior=await pool.query(
+            `SELECT output FROM agent_run_steps
+             WHERE organization_id=$1 AND run_id=$2 AND tool_name=$3 AND status='completed'
+               AND input->>'_idempotency_key'=$4 LIMIT 1`,
+            [request.organizationId,runId,call.name,actionKey],
+          );
+          if (prior.rows.length) {
+            messages.push({role:'tool',name:call.name,content:JSON.stringify(prior.rows[0].output)});
+            continue;
+          }
+
+          const toolStart=Date.now();
+          const output=await executeTool(call.name,{...(call.args || {}),_idempotency_key:actionKey},{organizationId:request.organizationId,agentId:agent.id});
+          await writeRunStep(pool,request.organizationId,runId,attempt,'completed',{...(call.args || {}),_idempotency_key:actionKey},output,undefined,call.name,Date.now()-toolStart);
+          messages.push({role:'assistant',content:JSON.stringify({tool_call:call})});
+          messages.push({role:'tool',name:call.name,content:JSON.stringify(output)});
         }
-      } catch (error: any) {
-        await writeRunStep(pool, request.organizationId, runId, attempt, 'failed', {}, {}, error?.message || String(error), undefined, Date.now() - started);
-        if (attempt >= maxAttempts) throw error;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(2000, attempt * 400)));
+      } catch(error:any) {
+        await writeRunStep(pool,request.organizationId,runId,attempt,'failed',{}, {},error?.message || String(error),undefined,Date.now()-started);
+        if(attempt>=maxAttempts) throw error;
+        await new Promise(resolve=>setTimeout(resolve,Math.min(2000,attempt*400)));
       }
     }
     throw new Error('Agent execution exhausted retries');
-  } catch (error: any) {
+  } catch(error:any) {
     await pool.query(
-      `UPDATE agent_runs SET status='failed', error=$2, attempts=GREATEST(attempts,1), input_tokens=$3, output_tokens=$4, estimated_cost_usd=$5, execution_time_ms=$6, completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$7`,
-      [runId, error?.message || String(error), totalInput, totalOutput, totalCost, Date.now() - started, request.organizationId],
+      `UPDATE agent_runs SET status='failed',error=$2,attempts=GREATEST(attempts,1),input_tokens=$3,output_tokens=$4,estimated_cost_usd=$5,execution_time_ms=$6,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$7`,
+      [runId,error?.message || String(error),totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
     );
-    return { runId, status:'failed', error:error?.message || String(error), provider, model:agent.model, inputTokens:totalInput, outputTokens:totalOutput, estimatedCostUsd:totalCost };
+    return {runId,status:'failed',error:error?.message || String(error),provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost};
   }
 }
 
-export async function listAgentRuns(organizationId: string, limit = 50): Promise<any[]> {
-  const pool = getPgPool();
-  if (!pool) throw new Error('PostgreSQL is required');
-  const result = await pool.query(
-    `SELECT id, agent_id, objective, provider, model, status, attempts, max_attempts, input_tokens, output_tokens, estimated_cost_usd, execution_time_ms, pending_approval_id, error, started_at, completed_at
+export async function listAgentRuns(organizationId:string,limit=50):Promise<any[]> {
+  const pool=getPgPool(); if(!pool) throw new Error('PostgreSQL is required');
+  const result=await pool.query(
+    `SELECT id,agent_id,objective,provider,model,status,attempts,max_attempts,input_tokens,output_tokens,estimated_cost_usd,execution_time_ms,pending_approval_id,error,started_at,completed_at
      FROM agent_runs WHERE organization_id=$1 ORDER BY started_at DESC LIMIT $2`,
-    [organizationId, Math.min(200, Math.max(1, limit))],
+    [organizationId,Math.min(200,Math.max(1,limit))],
   );
   return result.rows;
 }
 
-export async function getAgentRun(organizationId: string, runId: string): Promise<any | null> {
-  const pool = getPgPool();
-  if (!pool) throw new Error('PostgreSQL is required');
-  const run = await pool.query('SELECT * FROM agent_runs WHERE id=$1 AND organization_id=$2', [runId, organizationId]);
-  if (!run.rows.length) return null;
-  const steps = await pool.query('SELECT * FROM agent_run_steps WHERE run_id=$1 AND organization_id=$2 ORDER BY step_no ASC, created_at ASC', [runId, organizationId]);
-  return { ...run.rows[0], steps: steps.rows };
+export async function getAgentRun(organizationId:string,runId:string):Promise<any|null> {
+  const pool=getPgPool(); if(!pool) throw new Error('PostgreSQL is required');
+  const run=await pool.query('SELECT * FROM agent_runs WHERE id=$1 AND organization_id=$2',[runId,organizationId]);
+  if(!run.rows.length) return null;
+  const steps=await pool.query('SELECT * FROM agent_run_steps WHERE run_id=$1 AND organization_id=$2 ORDER BY step_no ASC,created_at ASC',[runId,organizationId]);
+  return {...run.rows[0],steps:steps.rows};
 }
 
-export async function continueApprovedAgentRun(organizationId: string, runId: string, approvalId: string, decidedBy?: string): Promise<AgentRunResult> {
-  const pool = getPgPool();
-  if (!pool) throw new Error('PostgreSQL is required');
-  const approval = await pool.query('SELECT * FROM approvals WHERE id=$1 AND organization_id=$2', [approvalId, organizationId]);
-  if (!approval.rows.length) throw new Error('Approval not found');
-  if (approval.rows[0].status !== 'approved' && approval.rows[0].status !== 'modified') throw new Error('Approval is not approved');
-  const payload = approval.rows[0].payload || {};
-  const output = await executeTool(payload.tool_name, payload.args || {}, { organizationId, agentId: payload.agent_id });
-  await writeRunStep(pool, organizationId, runId, Date.now(), 'completed', payload.args || {}, output, undefined, payload.tool_name, 0);
-  await pool.query(`UPDATE agent_runs SET status='running', pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`, [runId, organizationId]);
-  const agent = await getAgentConfig(pool, organizationId, payload.agent_id);
-  const result = await generateWithAgentProvider({
-    provider: agent.provider || inferAgentProvider(agent.model),
-    model: agent.model,
-    systemInstruction: agent.systemInstructions,
-    messages: [{ role:'user', content: `The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId, runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]} with the final answer.` }],
-    temperature: agent.temperature,
-    maxTokens: agent.maxTokens,
+export async function continueApprovedAgentRun(organizationId:string,runId:string,approvalId:string,decidedBy?:string):Promise<AgentRunResult> {
+  void decidedBy;
+  const pool=getPgPool(); if(!pool) throw new Error('PostgreSQL is required');
+  const approval=await pool.query('SELECT * FROM approvals WHERE id=$1 AND organization_id=$2',[approvalId,organizationId]);
+  if(!approval.rows.length) throw new Error('Approval not found');
+  if(!['approved','modified'].includes(approval.rows[0].status)) throw new Error('Approval is not approved');
+  const payload=approval.rows[0].payload || {};
+  const actionKey=`agent-action:${runId}:${payload.tool_name}:${JSON.stringify(payload.args || {})}`;
+  const prior=await pool.query(
+    `SELECT output FROM agent_run_steps WHERE organization_id=$1 AND run_id=$2 AND tool_name=$3 AND status='completed' AND input->>'_idempotency_key'=$4 LIMIT 1`,
+    [organizationId,runId,payload.tool_name,actionKey],
+  );
+  let output:any;
+  if(prior.rows.length) output=prior.rows[0].output;
+  else {
+    output=await executeTool(payload.tool_name,{...(payload.args || {}),_idempotency_key:actionKey},{organizationId,agentId:payload.agent_id});
+    await writeRunStep(pool,organizationId,runId,Date.now(),'completed',{...(payload.args || {}),_idempotency_key:actionKey},output,undefined,payload.tool_name,0);
+  }
+  await pool.query(`UPDATE agent_runs SET status='running',pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`,[runId,organizationId]);
+  const agent=await getAgentConfig(pool,organizationId,payload.agent_id);
+  const provider=agent.provider || inferAgentProvider(agent.model);
+  const result=await generateWithAgentProvider({
+    provider,model:agent.model,systemInstruction:agent.systemInstructions,
+    messages:[{role:'user',content:`The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId,runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]}.`}],
+    temperature:agent.temperature,maxTokens:agent.maxTokens,
   });
   await pool.query(
-    `UPDATE agent_runs SET status='completed', output=$2::jsonb, output_tokens=COALESCE(output_tokens,0)+$3, input_tokens=COALESCE(input_tokens,0)+$4, estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5, completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
-    [runId, JSON.stringify({ final: parseEnvelope(result.text).final || result.text }), result.outputTokens || 0, result.inputTokens || 0, estimateCost(inferAgentProvider(agent.model), result.inputTokens, result.outputTokens), organizationId],
+    `UPDATE agent_runs SET status='completed',output=$2::jsonb,output_tokens=COALESCE(output_tokens,0)+$3,input_tokens=COALESCE(input_tokens,0)+$4,estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
+    [runId,JSON.stringify({final:parseEnvelope(result.text).final || result.text}),result.outputTokens || 0,result.inputTokens || 0,estimateCost(provider,result.inputTokens,result.outputTokens),organizationId],
   );
-  return { runId, status:'completed', finalText:parseEnvelope(result.text).final || result.text, provider:agent.provider || inferAgentProvider(agent.model), model:agent.model };
+  return {runId,status:'completed',finalText:parseEnvelope(result.text).final || result.text,provider,model:agent.model};
 }
