@@ -397,6 +397,13 @@ async function startServer() {
     catch(err:any){ res.status(400).json({error:err.message||'Failed to retry workflow'}); }
   });
 
+  app.get('/api/workflow-runs/:id/steps', async (req, res) => {
+    const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+    if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow steps'});
+    const result=await pool.query('SELECT * FROM workflow_execution_steps WHERE workflow_run_id=$1 AND organization_id=$2 ORDER BY step_index ASC',[req.params.id,orgId]);
+    res.json(result.rows);
+  });
+
   app.get('/api/workflow-runs/:id/logs', async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow logs'});
