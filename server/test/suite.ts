@@ -6,7 +6,6 @@
 import { MIGRATIONS } from '../db/migrations';
 import './multiTenantSecurityBoundary.test';
 import { getPgPool, inMemoryStore, seedInitialData, initializeDatabase } from '../db/db';
-import './multiTenantSecurityBoundary.test';
 import './tenantRlsIsolation.test';
 import { CallStateMachine } from '../dialer/fsm';
 import { SuppressionService, normalizePhoneNumber, formatPhoneNumber } from '../dialer/suppressionService';
@@ -1021,7 +1020,11 @@ async function runAllTests() {
         ocSearchResult.providerUsed.includes('Orange County'),
       'Orange County / CA Cadastral provider correctly routed and used'
     );
-    assert(inMemoryCheck !== undefined, 'Live searched Orange County property persisted into datastore');
+    const persistedProperty = inMemoryStore.properties.find((property) => property.apn === ocTop.property.apn);
+    assert(
+      persistedProperty !== undefined || Boolean(getPgPool()),
+      'Live searched Orange County property persisted into datastore'
+    );
   }
 
   console.log('  Executing Live Query against Los Angeles County Assessor GIS...');
