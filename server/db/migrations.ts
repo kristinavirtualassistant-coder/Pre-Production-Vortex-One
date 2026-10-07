@@ -1258,23 +1258,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 30,
-    name: '030_harden_owner_signal_dedupe',
-    sql: `
-      ALTER TABLE owner_lead_signals
-        DROP CONSTRAINT IF EXISTS owner_lead_signals_organization_id_owner_id_property_id_signal_type_key;
-
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
-        ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
-        WHERE property_id IS NOT NULL;
-
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
-        ON owner_lead_signals(organization_id, owner_id, signal_type)
-        WHERE property_id IS NULL;
-    `,
-  },
-
-  {
     version: 29,
     name: '029_billing_invoice_history',
     sql: `
@@ -1312,6 +1295,49 @@ export const MIGRATIONS: Migration[] = [
            ELSE '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb
          END,
              updated_at=CURRENT_TIMESTAMP;
+    `,
+  },
+  {
+    version: 30,
+    name: '030_harden_owner_signal_dedupe',
+    sql: `
+      ALTER TABLE owner_lead_signals
+        DROP CONSTRAINT IF EXISTS owner_lead_signals_organization_id_owner_id_property_id_signal_type_key;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
+        ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
+        WHERE property_id IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
+        ON owner_lead_signals(organization_id, owner_id, signal_type)
+        WHERE property_id IS NULL;
+    `,
+  },
+  {
+    version: 31,
+    name: '031_scope_agent_config_keys_to_organization',
+    sql: `
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'agent_configs'::regclass
+            AND contype = 'p'
+            AND conname = 'agent_configs_pkey'
+        ) THEN
+          ALTER TABLE agent_configs DROP CONSTRAINT agent_configs_pkey;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'agent_configs'::regclass
+            AND contype = 'p'
+            AND conname = 'agent_configs_org_id_pkey'
+        ) THEN
+          ALTER TABLE agent_configs
+            ADD CONSTRAINT agent_configs_org_id_pkey PRIMARY KEY (organization_id, id);
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_agent_configs_org_id ON agent_configs(organization_id, id);
     `,
   },
 
