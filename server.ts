@@ -196,7 +196,7 @@ async function startServer() {
   });
 
   // Master Orchestration Dispatch
-  app.post('/api/orchestrate', async (req, res) => {
+  app.post('/api/orchestrate', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const { prompt, organizationId } = req.body;
       if (!prompt || typeof prompt !== 'string') {
