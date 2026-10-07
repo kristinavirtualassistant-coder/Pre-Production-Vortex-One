@@ -73,10 +73,22 @@ export function createFilesRouter(): Router {
     if(!existing.rows[0])return res.status(404).json({error:'File not found'});
     try{
       if(!(await objectExists(existing.rows[0].storage_path)))return res.status(409).json({error:'Upload has not completed'});
-      const result=await pool.query(`UPDATE file_assets SET status='ready',checksum_sha256=COALESCE($3,checksum_sha256),metadata=metadata||$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
+      const result=await pool.query(`UPDATE file_assets SET status='pending',checksum_sha256=COALESCE($3,checksum_sha256),metadata=metadata||jsonb_build_object('malware_scan',jsonb_build_object('status','pending')),updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
       const finalizedFile = result.rows[0] || existing.rows[0];
+
+      await pool.query(
+        `INSERT INTO file_processing_jobs(id,organization_id,file_id,job_type,status,available_at,result)
+         VALUES($1,$2,$3,'malware_scan','pending',CURRENT_TIMESTAMP,'{}'::jsonb)
+         ON CONFLICT (file_id,job_type) DO UPDATE
+           SET status=CASE WHEN file_processing_jobs.status IN ('failed','completed') THEN 'pending' ELSE file_processing_jobs.status END,
+               available_at=CASE WHEN file_processing_jobs.status IN ('failed','completed') THEN CURRENT_TIMESTAMP ELSE file_processing_jobs.available_at END,
+               last_error=CASE WHEN file_processing_jobs.status IN ('failed','completed') THEN NULL ELSE file_processing_jobs.last_error END,
+               updated_at=CURRENT_TIMESTAMP`,
+        [`filejob_${randomUUID()}`, org, finalizedFile.id],
+      );
+
       const jobType = extractionJobType(String(finalizedFile.category || ''), String(finalizedFile.mime_type || '').toLowerCase());
-      if (finalizedFile.status === 'ready' && jobType) {
+      if (jobType) {
         await pool.query(
           `INSERT INTO file_processing_jobs(id,organization_id,file_id,job_type,status,available_at,result)
            VALUES($1,$2,$3,$4,'pending',CURRENT_TIMESTAMP,'{}'::jsonb)
@@ -88,7 +100,7 @@ export function createFilesRouter(): Router {
           [`filejob_${randomUUID()}`, org, finalizedFile.id, jobType],
         );
       }
-      return res.json({file:finalizedFile,processingJob:jobType?{type:jobType,status:'pending'}:null});
+      return res.json({file:finalizedFile,processingJob:{malwareScan:{type:'malware_scan',status:'pending'},extraction:jobType?{type:jobType,status:'pending'}:null}});
     }catch(error:any){return res.status(502).json({error:error.message||'Unable to finalize upload'});}
   });
 
