@@ -186,6 +186,21 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
   const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+  const [aiRuns, setAiRuns] = useState<any[]>([]);
+
+  const refreshAiRuns = async () => {
+    if (!organizationId) return;
+    try {
+      const response = await fetch('/api/ai-agent-runs?limit=20', {
+        headers: { ...getAuthHeaders(), 'x-organization-id': organizationId },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setAiRuns(Array.isArray(data) ? data : data.runs || []);
+    } catch {
+      // Best-effort polling; authoritative state remains server-side.
+    }
+  };
 
   const refreshAgentApprovals = async () => {
     if (!organizationId) return;
@@ -206,8 +221,12 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
 
   useEffect(() => {
     refreshAgentApprovals();
+    refreshAiRuns();
     if (!isAutoPolling) return;
-    const timer = window.setInterval(refreshAgentApprovals, 2500);
+    const timer = window.setInterval(() => {
+      refreshAgentApprovals();
+      refreshAiRuns();
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [organizationId, isAutoPolling]);
 
@@ -378,6 +397,7 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   const handleManualRefresh = () => {
     refreshRuns();
     refreshTasks();
+    refreshAiRuns();
   };
 
   // Derive active workflow run (if any is currently executing or paused)
@@ -604,6 +624,48 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
           <BrainCircuit className="w-4 h-4" />
           <span>Peer-to-Peer Agent Logs (P2P Sequence)</span>
         </button>
+      </div>
+
+      {/* Real AI execution history */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Real AI Agent Runs</h3>
+            <p className="text-xs text-slate-500">Durable provider, retry, token, cost, approval, and failure telemetry from PostgreSQL.</p>
+          </div>
+          <span className="text-[11px] font-mono text-slate-500">{aiRuns.length} recent runs</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="py-2 pr-3">Agent</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Provider / Model</th>
+                <th className="py-2 pr-3">Attempts</th>
+                <th className="py-2 pr-3">Tokens</th>
+                <th className="py-2">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aiRuns.map((run) => (
+                <tr key={run.id} className="border-b border-slate-100 last:border-0">
+                  <td className="py-2 pr-3 font-semibold text-slate-800">{run.agent_id}</td>
+                  <td className="py-2 pr-3">
+                    <span className="rounded-full border px-2 py-0.5 font-semibold">{run.status}</span>
+                  </td>
+                  <td className="py-2 pr-3 font-mono text-[10px] text-slate-600">{run.provider} / {run.model}</td>
+                  <td className="py-2 pr-3">{run.attempts || 0}/{run.max_attempts || 0}</td>
+                  <td className="py-2 pr-3">{Number(run.input_tokens || 0) + Number(run.output_tokens || 0)}</td>
+                  <td className="py-2 font-mono">$ {Number(run.estimated_cost_usd || 0).toFixed(6)}</td>
+                </tr>
+              ))}
+              {!aiRuns.length && (
+                <tr><td colSpan={6} className="py-6 text-center text-slate-400">No AI agent runs recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {monitorTab === 'peer_logs' ? (
