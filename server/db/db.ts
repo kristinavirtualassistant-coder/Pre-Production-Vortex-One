@@ -1405,6 +1405,14 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
         connectionTimeoutMillis: 5000,
         ssl: process.env.SQL_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
       });
+
+      const runtimeRole = await pgPool.query(
+        'SELECT current_user AS role, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user',
+      );
+      const role = runtimeRole.rows[0];
+      if (process.env.NODE_ENV === 'production' && (role?.rolsuper || role?.rolbypassrls)) {
+        throw new Error('Production runtime database role must not be SUPERUSER or BYPASSRLS.');
+      }
     } catch (err: any) {
       if (pgPool) {
         pgPool.end().catch(() => {});
