@@ -6,6 +6,7 @@ import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
+import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 
 export interface AuthRequest extends Request {
   user?: {
