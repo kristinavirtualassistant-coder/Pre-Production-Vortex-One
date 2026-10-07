@@ -1258,6 +1258,15 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 31,
+    name: '031_owner_source_record_idempotency',
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
+        ON owner_source_records(organization_id, provider_key, raw_hash);
+    `,
+  },
+
+  {
     version: 29,
     name: '029_billing_invoice_history',
     sql: `
