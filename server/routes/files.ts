@@ -1,8 +1,22 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { getPgPool } from '../db/db';
 import { type AuthRequest, requireRole } from '../middleware/auth';
 import { requireOrganizationId } from '../services/organizationContext';
 import { ALLOWED_CATEGORIES, buildStoragePath, createFileId, createSignedDownloadUrl, createSignedUploadUrl, ensureFileBucket, objectExists, removeStoredObject, validateFileRequest } from '../services/fileStorageService';
+
+const TEXT_EXTRACTION_MIMES = new Set([
+  'text/plain',
+  'text/csv',
+  'application/json',
+  'application/xml',
+  'text/xml',
+]);
+
+function extractionJobType(category: string, mimeType: string): 'document_extract' | 'transcript_extract' | null {
+  if (!TEXT_EXTRACTION_MIMES.has(mimeType)) return null;
+  return category === 'call_transcript' ? 'transcript_extract' : 'document_extract';
+}
 
 export function createFilesRouter(): Router {
   const router=Router();
@@ -56,7 +70,21 @@ export function createFilesRouter(): Router {
     try{
       if(!(await objectExists(existing.rows[0].storage_path)))return res.status(409).json({error:'Upload has not completed'});
       const result=await pool.query(`UPDATE file_assets SET status='ready',checksum_sha256=COALESCE($3,checksum_sha256),metadata=metadata||$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
-      return res.json({file:result.rows[0]||existing.rows[0]});
+      const finalizedFile = result.rows[0] || existing.rows[0];
+      const jobType = extractionJobType(String(finalizedFile.category || ''), String(finalizedFile.mime_type || '').toLowerCase());
+      if (finalizedFile.status === 'ready' && jobType) {
+        await pool.query(
+          `INSERT INTO file_processing_jobs(id,organization_id,file_id,job_type,status,available_at,result)
+           VALUES($1,$2,$3,$4,'pending',CURRENT_TIMESTAMP,'{}'::jsonb)
+           ON CONFLICT (file_id,job_type) DO UPDATE
+             SET status=CASE WHEN file_processing_jobs.status='failed' THEN 'pending' ELSE file_processing_jobs.status END,
+                 available_at=CASE WHEN file_processing_jobs.status='failed' THEN CURRENT_TIMESTAMP ELSE file_processing_jobs.available_at END,
+                 last_error=CASE WHEN file_processing_jobs.status='failed' THEN NULL ELSE file_processing_jobs.last_error END,
+                 updated_at=CURRENT_TIMESTAMP`,
+          [`filejob_${randomUUID()}`, org, finalizedFile.id, jobType],
+        );
+      }
+      return res.json({file:finalizedFile,processingJob:jobType?{type:jobType,status:'pending'}:null});
     }catch(error:any){return res.status(502).json({error:error.message||'Unable to finalize upload'});}
   });
 
