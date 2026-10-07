@@ -1,6 +1,6 @@
 # Vortex One Production Infrastructure
 
-<!-- Production architecture source of truth. -->
+<!-- Production architecture source of truth. Migration bootstrap is CI-gated. -->
 
 ## Authoritative architecture
 
