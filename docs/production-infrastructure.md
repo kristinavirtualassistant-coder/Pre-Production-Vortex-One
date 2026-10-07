@@ -75,3 +75,5 @@ CI uses Application Default Credentials/service-account credentials rather than 
 - No Vercel, Cloudflare, or self-hosted deployment workflow remains active.
 - Production secrets exist only in Firebase Secret Manager.
 - GitHub Actions is the source-controlled deployment trigger.
+
+<!-- CI validation marker: authoritative Firebase + Supabase production architecture. -->
