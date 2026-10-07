@@ -172,11 +172,11 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
   const version=(await pool.query('SELECT * FROM workflow_versions WHERE id=$1 AND organization_id=$2',[schedule.workflow_version_id,org])).rows[0]; if(!version){await failJob(pool,org,job.id,workerId,'Workflow version not found',60);return;}
   const def=parseJson(version.definition,{}); const steps=Array.isArray(def.steps)?def.steps:[]; const runId=String(job.payload?.runId||'wfr_'+randomUUID()); const start=Number(job.payload?.resumeStepIndex||0);
   let savedStepOutputs:any={};
-  if(!job.payload?.runId) {
+  const existingRun=(await pool.query('SELECT step_outputs FROM workflow_runs WHERE id=$1 AND organization_id=$2',[runId,org])).rows[0];
+  if(!existingRun) {
     await pool.query("INSERT INTO workflow_runs (id,organization_id,workflow_id,name,status,total_steps,initiated_by) VALUES ($1,$2,$3,$4,'running',$5,'scheduler')",[runId,org,schedule.workflow_id,def.name||schedule.name,steps.length]);
   } else {
-    const run=(await pool.query('SELECT step_outputs FROM workflow_runs WHERE id=$1 AND organization_id=$2',[runId,org])).rows[0];
-    savedStepOutputs=parseJson(run?.step_outputs,{});
+    savedStepOutputs=parseJson(existingRun.step_outputs,{});
     await pool.query("UPDATE workflow_runs SET status='running',updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2",[runId,org]);
   }
   const context:any={trigger:parseJson(job.payload?.triggerPayload,{}),workflow:def,now:new Date().toISOString(),steps:{...savedStepOutputs}};
