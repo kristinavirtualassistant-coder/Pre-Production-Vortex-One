@@ -160,9 +160,10 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
 
     const passwordHash=await hashPassword(password);
     const created=await client.query(
-      `INSERT INTO users (id,organization_id,email,name,role,password_hash,password_changed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP) RETURNING id,organization_id,email,name,role`,
-      [`user_${randomUUID()}`,organizationId,email,name,assignedRole,passwordHash]);
+      `INSERT INTO users (id, organization_id, email, name, role, password_hash)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, organization_id, email, name, role`,
+      [`user_${randomUUID()}`, organizationId, email, name, assignedRole, passwordHash]);
+    await client.query('UPDATE users SET password_changed_at=CURRENT_TIMESTAMP WHERE id=$1', [created.rows[0].id]);
     await client.query('COMMIT');
 
     const user=created.rows[0];
