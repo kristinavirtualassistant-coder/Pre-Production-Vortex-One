@@ -117,6 +117,8 @@ async function ensureSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_owner_source_records_org_owner
       ON owner_source_records(organization_id, owner_id, retrieved_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
+      ON owner_source_records(organization_id, provider_key, raw_hash);
 
     CREATE TABLE IF NOT EXISTS owner_contact_points (
       id VARCHAR(64) PRIMARY KEY,
