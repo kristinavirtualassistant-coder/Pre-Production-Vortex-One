@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { getPgPool } from '../db/db';
 import { requireOrganizationId } from './organizationContext';
+import { recordCostEvent } from './analyticsService';
 
 export type EnrichmentCapability =
   | 'OWNER_IDENTITY'
@@ -116,6 +117,8 @@ async function ensureSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_owner_source_records_org_owner
       ON owner_source_records(organization_id, owner_id, retrieved_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_source_records_org_provider_hash
+      ON owner_source_records(organization_id, provider_key, raw_hash);
 
     CREATE TABLE IF NOT EXISTS owner_contact_points (
       id VARCHAR(64) PRIMARY KEY,
@@ -178,9 +181,14 @@ async function ensureSchema(pool: Pool): Promise<void> {
       confidence_score NUMERIC(5,4) NOT NULL DEFAULT 0.5,
       source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
       observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      expires_at TIMESTAMPTZ,
-      UNIQUE(organization_id, owner_id, property_id, signal_type)
+      expires_at TIMESTAMPTZ
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
+      ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
+      WHERE property_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
+      ON owner_lead_signals(organization_id, owner_id, signal_type)
+      WHERE property_id IS NULL;
     CREATE INDEX IF NOT EXISTS idx_owner_lead_signals_org_owner
       ON owner_lead_signals(organization_id, owner_id, score DESC);
 
@@ -229,6 +237,12 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
       .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(e?.email)))
       .map((e) => ({ ...e, email: normalizeEmail(e.email) }));
 
+    // Relationship evidence is accepted only from explicit normalized source fields.
+    // Shared addresses, similar names, or proximity are not sufficient to claim a relationship.
+    // Public-record providers only expose relationships when an upstream adapter explicitly
+    // supplies them. Canonical property_owners rows do not contain relationship JSON.
+    const relationships: Array<Record<string, unknown>> = [];
+
     const signals: Array<Record<string, unknown>> = [];
     for (const p of properties.rows) {
       const equityRatio = Number(p.estimated_value) > 0
@@ -243,8 +257,29 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
       }
       if (p.is_corporate_owned) signals.push({ type: 'ENTITY_OWNERSHIP', propertyId: p.id, score: 15, value: { entityType: row.entity_type } });
     }
-    if (properties.rows.length >= 5) {
+    if (properties.rows.length >= 3) {
       signals.push({ type: 'MULTIPLE_PROPERTIES', propertyId: null, score: Math.min(50, properties.rows.length * 5), value: { propertyCount: properties.rows.length } });
+    }
+    const totalValue = properties.rows.reduce((sum: number, p: any) => sum + Number(p.estimated_value || 0), 0);
+    const totalEquity = properties.rows.reduce((sum: number, p: any) => sum + Number(p.estimated_equity || 0), 0);
+    const delinquentCount = properties.rows.filter((p: any) => p.tax_delinquent).length;
+    const absenteeCount = properties.rows.filter((p: any) => p.is_absentee_owner).length;
+    const entityCount = properties.rows.filter((p: any) => p.is_corporate_owned).length;
+    const stateCount = new Set(properties.rows.map((p: any) => p.state).filter(Boolean)).size;
+    if (stateCount >= 2) {
+      signals.push({ type: 'MULTI_STATE_PORTFOLIO', propertyId: null, score: 25, value: { stateCount } });
+    }
+    if (delinquentCount > 0) {
+      signals.push({ type: 'PORTFOLIO_TAX_DELINQUENCY', propertyId: null, score: Math.min(60, delinquentCount * 20), value: { delinquentProperties: delinquentCount } });
+    }
+    if (absenteeCount > 0) {
+      signals.push({ type: 'ABSENTEE_PORTFOLIO', propertyId: null, score: Math.min(50, absenteeCount * 10), value: { absenteeProperties: absenteeCount } });
+    }
+    if (entityCount > 0) {
+      signals.push({ type: 'ENTITY_PORTFOLIO', propertyId: null, score: Math.min(40, entityCount * 10), value: { entityOwnedProperties: entityCount } });
+    }
+    if (totalValue > 0) {
+      signals.push({ type: 'PORTFOLIO_VALUE', propertyId: null, score: 10, value: { estimatedValue: totalValue, estimatedEquity: totalEquity } });
     }
 
     return {
@@ -264,7 +299,7 @@ const publicRecordsProvider: OwnerEnrichmentProvider = {
       entities: row.entity_type && row.entity_type !== 'individual'
         ? [{ name: row.name, entityType: row.entity_type }]
         : [],
-      relationships: [],
+      relationships,
       signals,
       source: {
         sourceType: 'public_records',
@@ -368,7 +403,19 @@ export class OwnerEnrichmentService {
     );
 
     try {
+      const enrichmentStartedAt = Date.now();
       const result = await provider.enrich(pool, { ...request, organizationId: orgId });
+      await recordCostEvent(pool, {
+        organizationId: orgId,
+        id: `cost_enrich_${jobId}`,
+        category: 'owner_enrichment',
+        provider: provider.name,
+        quantity: 1,
+        totalCostUsd: 0,
+        referenceType: 'owner_enrichment_job',
+        referenceId: jobId,
+        metadata: { status: result.status, durationMs: Date.now() - enrichmentStartedAt, records: result.records.length },
+      });
       const sourceId = id('src');
       await pool.query(
         `INSERT INTO owner_source_records
@@ -378,6 +425,7 @@ export class OwnerEnrichmentService {
       );
 
       let added = 0;
+      let updated = 0;
       for (const phone of result.contacts.phones) {
         const value = normalizePhone(phone.number ?? phone.phone_number);
         if (value.length < 10) continue;
@@ -389,7 +437,7 @@ export class OwnerEnrichmentService {
            DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id`,
           [id('cp'), orgId, request.ownerId, value, phone.type || phone.phone_type || 'UNKNOWN', Boolean(phone.is_primary), Boolean(phone.is_verified), Number(phone.confidence_score ?? 0.8), sourceId],
         );
-        added += r.rowCount || 0;
+        if (r.rowCount) added += r.rowCount;
       }
       for (const email of result.contacts.emails) {
         const value = normalizeEmail(email.email);
@@ -402,7 +450,7 @@ export class OwnerEnrichmentService {
            DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id`,
           [id('cp'), orgId, request.ownerId, value, email.type || 'EMAIL', Boolean(email.is_primary), Boolean(email.is_verified), Number(email.confidence_score ?? 0.8), sourceId],
         );
-        added += r.rowCount || 0;
+        if (r.rowCount) added += r.rowCount;
       }
 
       for (const property of result.records) {
@@ -460,9 +508,9 @@ export class OwnerEnrichmentService {
 
       await pool.query(
         `UPDATE owner_enrichment_jobs
-            SET status=$1, records_found=$2, records_added=$3, completed_at=CURRENT_TIMESTAMP
-          WHERE id=$4 AND organization_id=$5`,
-        [result.status, result.records.length + result.contacts.phones.length + result.contacts.emails.length, added, jobId, orgId],
+            SET status=$1, records_found=$2, records_added=$3, records_updated=$4, completed_at=CURRENT_TIMESTAMP
+          WHERE id=$5 AND organization_id=$6`,
+        [result.status, result.records.length + result.contacts.phones.length + result.contacts.emails.length, added, updated, jobId, orgId],
       );
 
       return {

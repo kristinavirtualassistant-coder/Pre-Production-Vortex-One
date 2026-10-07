@@ -1,8 +1,22 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { getPgPool } from '../db/db';
 import { type AuthRequest, requireRole } from '../middleware/auth';
 import { requireOrganizationId } from '../services/organizationContext';
 import { ALLOWED_CATEGORIES, buildStoragePath, createFileId, createSignedDownloadUrl, createSignedUploadUrl, ensureFileBucket, objectExists, removeStoredObject, validateFileRequest } from '../services/fileStorageService';
+
+const TEXT_EXTRACTION_MIMES = new Set([
+  'text/plain',
+  'text/csv',
+  'application/json',
+  'application/xml',
+  'text/xml',
+]);
+
+function extractionJobType(category: string, mimeType: string): 'document_extract' | 'transcript_extract' | null {
+  if (!TEXT_EXTRACTION_MIMES.has(mimeType)) return null;
+  return category === 'call_transcript' ? 'transcript_extract' : 'document_extract';
+}
 
 export function createFilesRouter(): Router {
   const router=Router();
@@ -33,7 +47,15 @@ export function createFilesRouter(): Router {
     const entityType=b.entityType==null?null:String(b.entityType).trim().slice(0,50), entityId=b.entityId==null?null:String(b.entityId).trim().slice(0,64);
     const description=b.description==null?null:String(b.description).slice(0,2000);
     try{
-      validateFileRequest({originalName,mimeType,sizeBytes,category}); await ensureFileBucket();
+      validateFileRequest({originalName,mimeType,sizeBytes,category});
+      const billing = (await pool.query('SELECT plan,limits FROM organization_billing WHERE organization_id=$1',[org])).rows[0];
+      const storageLimitMb = Number(billing?.limits?.storage_mb ?? 500);
+      const storageUsage = (await pool.query("SELECT COALESCE(SUM(size_bytes),0)::bigint AS bytes FROM file_assets WHERE organization_id=$1 AND deleted_at IS NULL AND status IN ('pending','ready')",[org])).rows[0];
+      const usedMb = Number(storageUsage?.bytes || 0) / (1024 * 1024);
+      if (usedMb + sizeBytes / (1024 * 1024) > storageLimitMb) {
+        return res.status(402).json({error:'Storage limit reached',code:'STORAGE_LIMIT_REACHED',limitMb:storageLimitMb,usedMb:Number(usedMb.toFixed(2))});
+      }
+      await ensureFileBucket();
       const fileId=createFileId(), bucket=process.env.VORTEX_FILES_BUCKET||'vortex-files', path=buildStoragePath(org,entityType,entityId,fileId,originalName);
       const {signedUrl,token}=await createSignedUploadUrl(path);
       await pool.query(`INSERT INTO file_assets(id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,description,metadata,status,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13)`,[fileId,org,entityType,entityId,category,originalName,bucket,path,mimeType,sizeBytes,description,JSON.stringify(b.metadata||{}),userId]);
@@ -48,7 +70,21 @@ export function createFilesRouter(): Router {
     try{
       if(!(await objectExists(existing.rows[0].storage_path)))return res.status(409).json({error:'Upload has not completed'});
       const result=await pool.query(`UPDATE file_assets SET status='ready',checksum_sha256=COALESCE($3,checksum_sha256),metadata=metadata||$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$4 AND status='pending' RETURNING id,organization_id,entity_type,entity_id,category,original_name,mime_type,size_bytes,checksum_sha256,description,metadata,status,uploaded_by,created_at,updated_at`,[id,JSON.stringify(req.body?.metadata||{}),req.body?.checksumSha256||null,org]);
-      return res.json({file:result.rows[0]||existing.rows[0]});
+      const finalizedFile = result.rows[0] || existing.rows[0];
+      const jobType = extractionJobType(String(finalizedFile.category || ''), String(finalizedFile.mime_type || '').toLowerCase());
+      if (finalizedFile.status === 'ready' && jobType) {
+        await pool.query(
+          `INSERT INTO file_processing_jobs(id,organization_id,file_id,job_type,status,available_at,result)
+           VALUES($1,$2,$3,$4,'pending',CURRENT_TIMESTAMP,'{}'::jsonb)
+           ON CONFLICT (file_id,job_type) DO UPDATE
+             SET status=CASE WHEN file_processing_jobs.status='failed' THEN 'pending' ELSE file_processing_jobs.status END,
+                 available_at=CASE WHEN file_processing_jobs.status='failed' THEN CURRENT_TIMESTAMP ELSE file_processing_jobs.available_at END,
+                 last_error=CASE WHEN file_processing_jobs.status='failed' THEN NULL ELSE file_processing_jobs.last_error END,
+                 updated_at=CURRENT_TIMESTAMP`,
+          [`filejob_${randomUUID()}`, org, finalizedFile.id, jobType],
+        );
+      }
+      return res.json({file:finalizedFile,processingJob:jobType?{type:jobType,status:'pending'}:null});
     }catch(error:any){return res.status(502).json({error:error.message||'Unable to finalize upload'});}
   });
 

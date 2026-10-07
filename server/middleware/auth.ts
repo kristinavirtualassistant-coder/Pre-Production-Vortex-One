@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
+import { getOrganizationBilling, planLimits } from '../services/billingService';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
+import { createCheckoutSession, createPortalSession } from '../services/billingService';
+import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -31,8 +34,11 @@ export class AuthorizationError extends Error {
   }
 }
 
+/**
+ * Identify API-relative health, callback, webhook, and tracking paths that bypass session auth.
+ */
 export function shouldBypassApiAuth(path: string): boolean {
-  return path === '/health' || path === '/ready' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/');
+  return path === '/health' || path === '/ready' || path === '/billing/webhook' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/') || path.startsWith('/communications/webhooks/') || path.startsWith('/communications/tracking/');
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {
@@ -196,6 +202,13 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
   if (!['admin', 'executive', 'manager'].includes(req.dbUser.role)) return res.status(403).json({ error: 'Only tenant administrators and managers can invite members' });
 
+  const billing = await getOrganizationBilling(pool, req.dbUser.organization_id);
+  const seatLimit = Number(billing?.limits?.users ?? planLimits(billing?.plan || 'free').users);
+  const seatCount = await pool.query('SELECT COUNT(*)::int AS count FROM users WHERE organization_id=$1 AND disabled_at IS NULL', [req.dbUser.organization_id]);
+  if (Number(seatCount.rows[0]?.count || 0) >= seatLimit) {
+    return res.status(402).json({ error: 'Seat limit reached', code: 'SEAT_LIMIT_REACHED', limit: seatLimit });
+  }
+
   const existing = await pool.query('SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) LIMIT 1', [req.dbUser.organization_id, email]);
   if (existing.rowCount) return res.status(409).json({ error: 'This person is already a member of your tenant' });
 
@@ -332,7 +345,7 @@ async function listSessions(req: AuthRequest, res: Response, pool: NonNullable<R
 
 async function revokeOtherSessions(req: AuthRequest,res: Response,pool: NonNullable<ReturnType<typeof getPgPool>>){
   if(!req.dbUser)return res.status(401).json({error:'Unauthorized'});
-  const token=getSessionToken(req); const currentHash=token?hashOneTimeToken(token):'';
+  const token=getSessionToken(req); const currentHash=token?hashSessionToken(token):'';
   await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND token_hash<>$2 AND revoked_at IS NULL',[req.dbUser.id,currentHash]);
   return res.json({revoked:true});
 }
@@ -387,6 +400,23 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     req.user={uid:dbUser.id,email:dbUser.email,name:dbUser.name,role:dbUser.role};
     await pool.query('UPDATE auth_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
 
+    const organizationId = canonicalizeOrganizationContext(req);
+    const client = await pool.connect();
+    const context = await beginTenantContext(client, organizationId);
+    let settled = false;
+    const finish = (commit: boolean) => {
+      if (settled) return;
+      settled = true;
+      void finishTenantContext(context, commit).catch((error) => {
+        console.error('Tenant database transaction finalization failed:', error);
+      });
+    };
+    res.once('finish', () => finish(res.statusCode < 400));
+    res.once('close', () => {
+      if (!res.writableEnded) finish(false);
+    });
+    enterTenantContext(context);
+
     if(req.path==='/auth/logout'&&req.method==='POST'){
       await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=$1',[tokenHash]);
       clearSessionCookie(res);
@@ -412,9 +442,26 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     }
     if(req.path==='/organization/settings'&&(req.method==='GET'||req.method==='PATCH'))return organizationSettings(req,res,pool);
     if(req.path==='/organization/billing'&&req.method==='GET')return billingAndUsage(req,res,pool);
+    if(req.path==='/organization/billing/checkout'&&req.method==='POST'){
+      if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+      const plan=String(req.body?.plan||'') as 'starter'|'professional'|'enterprise';
+      if(!['starter','professional','enterprise'].includes(plan))return res.status(400).json({error:'Invalid billing plan'});
+      try{return res.json(await createCheckoutSession(pool,dbUser.organization_id,plan,dbUser.email));}
+      catch(error:any){return res.status(502).json({error:error.message||'Unable to create checkout session'});}
+    }
+    if(req.path==='/organization/billing/portal'&&req.method==='POST'){
+      if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
+      try{return res.json(await createPortalSession(pool,dbUser.organization_id));}
+      catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
+    }
 
-    canonicalizeOrganizationContext(req);
-    return next();
+    try {
+      next();
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
+    return;
   }catch(error:any){
     if(error instanceof AuthorizationError)return res.status(error.statusCode).json({error:error.message});
     console.error('PostgreSQL authentication error:',error);

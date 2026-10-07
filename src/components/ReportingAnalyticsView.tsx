@@ -95,6 +95,8 @@ export const ReportingAnalyticsView: React.FC<Props> = ({ getAuthHeaders, organi
     ['Appointments', o.appointments, CalendarCheck],
     ['Won Leads', o.wonLeads, Target],
     ['Properties Added', o.propertiesAdded, Building2],
+    ['Property Value', money(o.propertyValueUsd), Building2],
+    ['Property Equity', money(o.propertyEquityUsd), DollarSign],
     ['AI Requests', data.ai.reduce((s, x) => s + Number(x.requests || 0), 0), Sparkles],
     ['Recorded Cost', money(data.roi.costUsd), DollarSign],
   ] as const;

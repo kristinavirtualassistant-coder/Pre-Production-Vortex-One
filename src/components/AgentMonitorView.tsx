@@ -32,19 +32,23 @@ import {
   Radio,
 } from 'lucide-react';
 import { AgentDefinition, WorkflowRun, Task, AgentId } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 import { useWorkflowRuns, useAgentTelemetry } from '../hooks/useWorkflowRuns';
 
 interface AgentMonitorViewProps {
   agents: AgentDefinition[];
   onSelectAgent?: (agent: AgentDefinition) => void;
   initialSelectedAgentId?: string;
+  organizationId?: string;
 }
 
 export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   agents,
   onSelectAgent,
   initialSelectedAgentId,
+  organizationId,
 }) => {
+  const { getAuthHeaders } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentDefinition>(() => {
     if (initialSelectedAgentId) {
       const match = agents.find((a) => a.id === initialSelectedAgentId);
@@ -180,10 +184,107 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   });
   const [inputMessage, setInputMessage] = useState('');
   const [isAgentTyping, setIsAgentTyping] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+  const [aiRuns, setAiRuns] = useState<any[]>([]);
 
-  const handleSendMessage = (e?: React.FormEvent) => {
+  const refreshAiRuns = async () => {
+    if (!organizationId) return;
+    try {
+      const response = await fetch('/api/ai-agent-runs?limit=20', {
+        headers: { ...getAuthHeaders(), 'x-organization-id': organizationId },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setAiRuns(Array.isArray(data) ? data : data.runs || []);
+    } catch {
+      // Best-effort polling; authoritative state remains server-side.
+    }
+  };
+
+  const refreshAgentApprovals = async () => {
+    if (!organizationId) return;
+    try {
+      const response = await fetch('/api/approvals', {
+        headers: { ...getAuthHeaders(), 'x-organization-id': organizationId },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const approvals = Array.isArray(data) ? data : data.approvals || [];
+      setPendingApprovals(approvals.filter((a: any) =>
+        a.status === 'pending' && String(a.action_type || '').startsWith('agent_tool:')
+      ));
+    } catch {
+      // Approval polling is best-effort; authoritative state remains server-side.
+    }
+  };
+
+  useEffect(() => {
+    refreshAgentApprovals();
+    refreshAiRuns();
+    if (!isAutoPolling) return;
+    const timer = window.setInterval(() => {
+      refreshAgentApprovals();
+      refreshAiRuns();
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [organizationId, isAutoPolling]);
+
+  const decideAgentApproval = async (approval: any, decision: 'approve' | 'reject') => {
+    const runId = approval?.payload?.run_id;
+    if (!runId || !organizationId) return;
+    setApprovalBusyId(approval.id);
+    try {
+      const response = await fetch(`/api/ai-agent-runs/${encodeURIComponent(runId)}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+          'x-organization-id': organizationId,
+        },
+        body: JSON.stringify({
+          approvalId: approval.id,
+          decision,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Approval action failed');
+
+      setPendingApprovals((prev) => prev.filter((item) => item.id !== approval.id));
+      const result = data.result;
+      if (result?.finalText) {
+        const agentId = approval?.payload?.agent_id || selectedAgent.id;
+        setMessagesMap((prev) => ({
+          ...prev,
+          [agentId]: [...(prev[agentId] || []), {
+            id: `approval-result-${Date.now()}`,
+            sender: 'agent' as const,
+            text: result.finalText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          }],
+        }));
+      }
+      await refreshRuns();
+      await refreshTasks();
+    } catch (err: any) {
+      setMessagesMap((prev) => ({
+        ...prev,
+        [selectedAgent.id]: [...(prev[selectedAgent.id] || []), {
+          id: `approval-error-${Date.now()}`,
+          sender: 'agent' as const,
+          text: `Approval failed: ${err?.message || 'Unknown error'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
+      }));
+    } finally {
+      setApprovalBusyId(null);
+      refreshAgentApprovals();
+    }
+  };
+
+  const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || !selectedAgent.id || !organizationId) return;
 
     const userText = inputMessage.trim();
     const agentId = selectedAgent.id;
@@ -204,20 +305,55 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
     setInputMessage('');
     setIsAgentTyping(true);
 
-    setTimeout(() => {
-      const responseText = `[Instruction Acknowledged] Directive received by ${selectedAgent.name}. Adjusting tool execution parameters, re-indexing records, and updating telemetry.`;
-      const agentMsg = {
-        id: `msg-res-${Date.now()}`,
-        sender: 'agent' as const,
-        text: responseText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
+    try {
+      const response = await fetch(`/api/ai-agents/${encodeURIComponent(agentId)}/runs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+          'x-organization-id': organizationId,
+        },
+        body: JSON.stringify({
+          objective: userText,
+          context: {
+            source: 'agent_monitor',
+            agentName: selectedAgent.name,
+            role: selectedAgent.role,
+          },
+          maxAttempts: selectedAgent.maxRetries || 3,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.errorMessage || 'Agent execution failed');
+
+      const responseText = data.finalText
+        || (data.status === 'awaiting_approval'
+          ? `Approval required before the requested action can continue. Approval ID: ${data.pendingApprovalId}`
+          : `Agent run ${data.runId} returned status ${data.status}.`);
       setMessagesMap((prev) => ({
         ...prev,
-        [agentId]: [...(prev[agentId] || []), agentMsg],
+        [agentId]: [...(prev[agentId] || []), {
+          id: `msg-res-${Date.now()}`,
+          sender: 'agent' as const,
+          text: responseText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
       }));
+      await refreshRuns();
+      await refreshTasks();
+    } catch (err: any) {
+      setMessagesMap((prev) => ({
+        ...prev,
+        [agentId]: [...(prev[agentId] || []), {
+          id: `msg-err-${Date.now()}`,
+          sender: 'agent' as const,
+          text: `Execution failed: ${err?.message || 'Unknown error'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }],
+      }));
+    } finally {
       setIsAgentTyping(false);
-    }, 1200);
+    }
   };
 
   // SWR-based polling synchronization with /api/runs and /api/tasks
@@ -261,6 +397,7 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
   const handleManualRefresh = () => {
     refreshRuns();
     refreshTasks();
+    refreshAiRuns();
   };
 
   // Derive active workflow run (if any is currently executing or paused)
@@ -487,6 +624,48 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
           <BrainCircuit className="w-4 h-4" />
           <span>Peer-to-Peer Agent Logs (P2P Sequence)</span>
         </button>
+      </div>
+
+      {/* Real AI execution history */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Real AI Agent Runs</h3>
+            <p className="text-xs text-slate-500">Durable provider, retry, token, cost, approval, and failure telemetry from PostgreSQL.</p>
+          </div>
+          <span className="text-[11px] font-mono text-slate-500">{aiRuns.length} recent runs</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="py-2 pr-3">Agent</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Provider / Model</th>
+                <th className="py-2 pr-3">Attempts</th>
+                <th className="py-2 pr-3">Tokens</th>
+                <th className="py-2">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aiRuns.map((run) => (
+                <tr key={run.id} className="border-b border-slate-100 last:border-0">
+                  <td className="py-2 pr-3 font-semibold text-slate-800">{run.agent_id}</td>
+                  <td className="py-2 pr-3">
+                    <span className="rounded-full border px-2 py-0.5 font-semibold">{run.status}</span>
+                  </td>
+                  <td className="py-2 pr-3 font-mono text-[10px] text-slate-600">{run.provider} / {run.model}</td>
+                  <td className="py-2 pr-3">{run.attempts || 0}/{run.max_attempts || 0}</td>
+                  <td className="py-2 pr-3">{Number(run.input_tokens || 0) + Number(run.output_tokens || 0)}</td>
+                  <td className="py-2 font-mono">$ {Number(run.estimated_cost_usd || 0).toFixed(6)}</td>
+                </tr>
+              ))}
+              {!aiRuns.length && (
+                <tr><td colSpan={6} className="py-6 text-center text-slate-400">No AI agent runs recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {monitorTab === 'peer_logs' ? (
@@ -1129,6 +1308,49 @@ export const AgentMonitorView: React.FC<AgentMonitorViewProps> = ({
               </div>
             )}
           </div>
+
+          {pendingApprovals.length > 0 && (
+            <div className="space-y-3 pt-4 border-t border-amber-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center space-x-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Agent Actions Awaiting Human Approval ({pendingApprovals.length})</span>
+                </h3>
+                <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">HUMAN GATE</span>
+              </div>
+              <div className="space-y-2">
+                {pendingApprovals.map((approval) => (
+                  <div key={approval.id} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900">{approval.action_type}</div>
+                        <div className="text-[11px] text-slate-600 mt-1">{approval.description || approval.reason || 'Agent requested an external action.'}</div>
+                        <div className="text-[10px] text-slate-500 mt-1 font-mono truncate">
+                          Run: {approval.payload?.run_id || 'unknown'} · Agent: {approval.payload?.agent_id || 'unknown'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => decideAgentApproval(approval, 'reject')}
+                          disabled={approvalBusyId === approval.id}
+                          className="px-3 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 text-[11px] font-bold hover:bg-rose-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => decideAgentApproval(approval, 'approve')}
+                          disabled={approvalBusyId === approval.id}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve & Execute
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Real-Time Agent Feedback & Live Instruction Thread */}
           <div className="space-y-3 pt-4 border-t border-slate-200">

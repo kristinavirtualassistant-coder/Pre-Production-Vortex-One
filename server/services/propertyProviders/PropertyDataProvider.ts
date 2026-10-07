@@ -31,6 +31,7 @@ import { inMemoryStore, getPgPool } from '../../db/db';
 import { AuditLogEntry } from '../../../src/types';
 import { taskCacheService } from '../cacheService';
 import { externalWebhookService, buildPropertyDiscoveredPayload } from '../externalWebhookService';
+import { PublicRecordsIngestionService } from '../publicRecordsIngestionService';
 
 export function buildPropertySearchCachePayload(query: PropertySearchQuery): Record<string, any> {
   return {
@@ -475,7 +476,7 @@ export class UnifiedPropertyDataProvider {
       // 2. Persist to PostgreSQL if connected
       if (pool) {
         try {
-          if (owner) {
+          if (owner?.name?.trim()) {
             await pool.query(
               `INSERT INTO property_owners (
                 id, organization_id, name, entity_type, mailing_address, mailing_city,
@@ -510,15 +511,26 @@ export class UnifiedPropertyDataProvider {
               id, organization_id, owner_id, address, city, state, zip, county,
               apn, property_type, units_count, square_feet, year_built,
               estimated_value, assessed_tax_value, estimated_equity, mortgage_balance,
-              is_absentee_owner, is_corporate_owned, tax_delinquent, provenance, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
+              is_absentee_owner, is_corporate_owned, tax_delinquent, provenance,
+              latitude, longitude, parcel_geometry, map_signals, hazard_flags, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW())
             ON CONFLICT (organization_id, apn) DO UPDATE SET
               address = EXCLUDED.address,
               city = EXCLUDED.city,
               zip = EXCLUDED.zip,
               estimated_value = EXCLUDED.estimated_value,
               assessed_tax_value = EXCLUDED.assessed_tax_value,
-              provenance = EXCLUDED.provenance`,
+              provenance = EXCLUDED.provenance,
+              latitude = EXCLUDED.latitude,
+              longitude = EXCLUDED.longitude,
+              parcel_geometry = EXCLUDED.parcel_geometry,
+              map_signals = EXCLUDED.map_signals,
+              hazard_flags = EXCLUDED.hazard_flags,
+              location = CASE
+                WHEN EXCLUDED.latitude IS NOT NULL AND EXCLUDED.longitude IS NOT NULL
+                THEN ST_SetSRID(ST_MakePoint(EXCLUDED.longitude, EXCLUDED.latitude), 4326)::geography
+                ELSE properties.location
+              END`,
             [
               property.id,
               orgId,
@@ -541,8 +553,26 @@ export class UnifiedPropertyDataProvider {
               property.is_corporate_owned,
               property.tax_delinquent,
               JSON.stringify(property.provenance),
+              property.latitude ?? null,
+              property.longitude ?? null,
+              geometry ? JSON.stringify(geometry) : null,
+              JSON.stringify([]),
+              JSON.stringify([]),
             ]
           );
+
+          if (property.latitude != null && property.longitude != null) {
+            await pool.query(
+              `UPDATE properties
+               SET location = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+               WHERE id = $3 AND organization_id = $4`,
+              [property.longitude, property.latitude, property.id, orgId],
+            );
+          }
+
+          // Capture authoritative county/GIS provenance only after the parcel row exists so ownership
+          // provenance can safely reference the persisted property.
+          await PublicRecordsIngestionService.recordResults(pool, orgId, [item]);
         } catch (dbErr: any) {
           if (process.env.NODE_ENV === 'production') throw dbErr;
           console.error('[PropertyDataProvider] PostgreSQL persistence error:', dbErr.message);

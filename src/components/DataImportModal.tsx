@@ -410,6 +410,48 @@ export const DataImportModal: React.FC<DataImportModalProps> = ({
 
       setResult(data);
       addToast(`Successfully imported ${data.total_records_processed || parsedData.length} records into SQL database!`, 'success');
+
+      // Archive the original CSV in the tenant-private Files & Documents store.
+      // The database import remains successful even if archival is temporarily unavailable.
+      if (file) {
+        try {
+          const uploadRes = await fetch('/api/files/upload-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-organization-id': organizationId, ...getAuthHeaders() },
+            body: JSON.stringify({
+              originalName: file.name,
+              mimeType: file.type || 'text/csv',
+              sizeBytes: file.size,
+              category: 'import',
+              entityType: 'import',
+              entityId: data.audit_id || null,
+              description: 'Original CSV source file for Vortex One data reconciliation',
+              metadata: { source: 'csv_import', audit_id: data.audit_id || null },
+            }),
+          });
+          const uploadData = await uploadRes.json().catch(() => ({}));
+          if (!uploadRes.ok) throw new Error(uploadData.error || 'Import file archival preparation failed');
+
+          const storageRes = await fetch(uploadData.signedUploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type || 'text/csv' },
+            body: file,
+          });
+          if (!storageRes.ok) throw new Error(`Import file archival upload failed (HTTP ${storageRes.status})`);
+
+          const finalizeRes = await fetch(`/api/files/${encodeURIComponent(uploadData.fileId)}/finalize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({ metadata: { audit_id: data.audit_id || null, archived_from_import: true } }),
+          });
+          if (!finalizeRes.ok) {
+            const finalizeData = await finalizeRes.json().catch(() => ({}));
+            throw new Error(finalizeData.error || 'Import file archival finalization failed');
+          }
+        } catch (archiveError: any) {
+          addToast(`Import completed, but the source CSV was not archived: ${archiveError.message || 'storage unavailable'}`, 'error');
+        }
+      }
       fetchImportedFiles();
       if (onSuccess) {
         onSuccess();

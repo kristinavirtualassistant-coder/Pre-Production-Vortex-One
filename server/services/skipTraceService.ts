@@ -1,12 +1,15 @@
 import { getPgPool } from '../db/db';
 import { requireOrganizationId } from './organizationContext';
 import { OwnerEnrichmentService } from './ownerEnrichmentService';
+import { enforceUsageLimit } from './billingService';
 
 /** Compatibility facade for the existing skip-trace UI. */
 export class SkipTraceService {
   public static async execute5StepSkipTrace(params?: any): Promise<any> {
     const organizationId = requireOrganizationId(params?.organizationId);
     if (!params?.ownerId) return { status: 'partial', reason: 'ownerId is required', contacts: { phones: [], emails: [] } };
+    const pool = getPgPool();
+    if (pool) await enforceUsageLimit(pool, organizationId, 'enrichment_credits_month', 1);
     const result = await OwnerEnrichmentService.enrichOwner({
       organizationId, ownerId: params.ownerId, propertyId: params.propertyId,
       provider: params.provider || 'public_records', capabilities: params.capabilities, supplied: params.supplied,
@@ -41,6 +44,7 @@ export class SkipTraceService {
        WHERE organization_id = $1 AND id = ANY($2::varchar[]) AND owner_id IS NOT NULL`,
       [orgId, propertyIds],
     );
+    if (properties.rowCount) await enforceUsageLimit(pool, orgId, 'enrichment_credits_month', properties.rowCount);
     const results = [];
     for (const row of properties.rows) {
       results.push(await OwnerEnrichmentService.enrichOwner({

@@ -9,15 +9,82 @@ import { SuppressionService } from '../dialer/suppressionService';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { DataImportService } from '../services/dataImportService';
 import { SkipTraceService } from '../services/skipTraceService';
+import { getAgent } from '../agents/registry';
+import { getProductionAgent } from '../agents/productionAgents';
+import { upsertCanonicalLead } from '../services/crmService';
 
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, any>;
-  execute: (args: any, context: { organizationId: string; agentId: string }) => Promise<any>;
+  execute: (args: any, context: { organizationId: string; agentId: string; approvalId?: string }) => Promise<any>;
 }
 
 export const TOOLS: Record<string, ToolDefinition> = {
+  enqueue_workflow: {
+    name: 'enqueue_workflow',
+    description: 'Queue an existing tenant workflow for durable execution. The workflow engine remains responsible for executing its steps.',
+    parameters: {
+      workflow_id: 'string',
+      name: 'string',
+      objective: 'string',
+      payload: 'object',
+    },
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for workflow dispatch');
+      if (!args.workflow_id) throw new Error('workflow_id is required');
+      const workflow = await pool.query(
+        'SELECT id, name FROM workflows WHERE id=$1 AND organization_id=$2 LIMIT 1',
+        [args.workflow_id, context.organizationId],
+      );
+      if (!workflow.rows.length) throw new Error('Workflow not found for organization');
+      const runId = `agent_wfrun_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+      await pool.query(
+        `INSERT INTO workflow_runs
+          (id, organization_id, workflow_id, name, status, initiated_by, tasks, node_states, step_outputs, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,'queued',$5,'[]'::jsonb,'{}'::jsonb,$6::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+        [
+          runId, context.organizationId, args.workflow_id,
+          args.name || workflow.rows[0].name,
+          context.agentId,
+          JSON.stringify({ objective: args.objective || '', payload: args.payload || {}, source: 'ai_agent' }),
+        ],
+      );
+      return { success: true, workflow_run_id: runId, workflow_id: args.workflow_id, status: 'queued', dispatched_by: context.agentId };
+    },
+  },
+
+
+  create_lead: {
+    name: 'create_lead',
+    description: 'Create or retrieve the canonical CRM lead for a verified owner/property pair. Tenant-scoped and idempotent.',
+    parameters: {
+      owner_id: 'string',
+      property_id: 'string',
+      owner_name: 'string',
+      property_address: 'string',
+      phone_number: 'string',
+      email: 'string',
+    },
+    execute: async (args, context) => {
+      const pool = getPgPool();
+      if (!pool) throw new Error('PostgreSQL is required for lead creation');
+      if (!args.owner_id || !args.property_id) throw new Error('owner_id and property_id are required');
+      const result = await upsertCanonicalLead(pool, {
+        organizationId: context.organizationId,
+        ownerId: args.owner_id,
+        propertyId: args.property_id,
+        ownerName: args.owner_name || '',
+        propertyAddress: args.property_address || '',
+        phoneNumber: args.phone_number || undefined,
+        email: args.email || undefined,
+      });
+      return { success: true, ...result, created_by: context.agentId };
+    },
+  },
+
+
   run_5_step_skip_trace: {
     name: 'run_5_step_skip_trace',
     description: 'Execute the 5-Step Real Estate Skip Tracing Protocol: (1) GIS APN, (2) Assessor Owner, (3) Mailing vs Situs Analysis, (4) CA SOS & Business Registries Veil Unravelling, and (5) Multi-Engine Contact & Records Lookups across 11 resources (TruePeopleSearch, CyberBackgroundChecks, Public Records, Business Registries, FastPeopleSearch, County Recorder, Assessor Websites, LinkedIn, Facebook, Whitepages, Voter Records).',
@@ -295,11 +362,32 @@ export const TOOLS: Record<string, ToolDefinition> = {
 export async function executeTool(
   toolName: string,
   args: any,
-  context: { organizationId: string; agentId: string }
+  context: { organizationId: string; agentId: string; approvalId?: string }
 ): Promise<any> {
   const tool = TOOLS[toolName];
-  if (!tool) {
-    throw new Error(`Tool ${toolName} is not registered in the system.`);
+  if (!tool) throw new Error(`Tool ${toolName} is not registered in the system.`);
+
+  const agent = getAgent(context.agentId) || getProductionAgent(context.agentId);
+  if (!agent || !agent.enabled) throw new Error('Agent is disabled or not registered.');
+  if (!agent.allowedTools.includes(toolName)) {
+    throw new Error(`Agent ${context.agentId} is not authorized to execute tool ${toolName}.`);
   }
+
+  if (toolName === 'make_call') {
+    if (!context.approvalId) throw new Error('Human approval is required before an outbound call can execute.');
+    const pool = getPgPool();
+    if (!pool) throw new Error('PostgreSQL is required for outbound-call approval verification');
+    const approval = await pool.query(
+      `SELECT id FROM approvals
+       WHERE id = $1
+         AND organization_id = $2
+         AND status = 'approved'
+         AND action_type IN ('make_call', 'agent_tool:make_call', 'outbound_call', 'outbound_campaign_dispatch')
+       LIMIT 1`,
+      [context.approvalId, requireOrganizationId(context.organizationId)],
+    );
+    if (!approval.rowCount) throw new Error('The supplied human approval is missing, not approved, or belongs to another organization.');
+  }
+
   return await tool.execute(args, context);
 }

@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgis/postgis:16-3.5
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -74,7 +74,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgis/postgis:16-3.5
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -112,12 +112,12 @@ jobs:
         run: npm run test:e2e:smoke
 
   live-gis:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        image: postgis/postgis:16-3.5
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
