@@ -1,5 +1,7 @@
 # Vortex One Production Infrastructure
 
+<!-- Production architecture source of truth. -->
+
 ## Authoritative architecture
 
 GitHub main → Firebase Hosting → React/Vite frontend
