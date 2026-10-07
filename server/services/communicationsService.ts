@@ -364,7 +364,7 @@ export async function sendEmailNow(pool: Pool, args: any) {
       : await sendGmail(pool,args.organizationId,args.userId,{...args,to,trackingToken,externalThreadId:t.external_thread_id});
     const updated = await pool.query("UPDATE communication_messages SET external_message_id=$1,status='sent',sent_at=CURRENT_TIMESTAMP,metadata=metadata || $2::jsonb WHERE id=$3 RETURNING *", [sent.externalMessageId,JSON.stringify({provider:sent.provider,external_thread_id:sent.externalThreadId}),pending.id]);
     const emailUnitCostUsd = Math.max(0, Number(process.env.ANALYTICS_EMAIL_UNIT_COST_USD || 0));
-    await recordCostEvent(pool, {
+    try { await recordCostEvent(pool, {
       organizationId: args.organizationId,
       id: 'cost_email_' + pending.id,
       userId: args.userId,
@@ -439,7 +439,7 @@ export async function sendSmsNow(pool: Pool, args: any) {
   });
   const message = await record(pool,{organizationId:args.organizationId,threadId:t.id,channel:'sms',provider:'twilio',direction:'outbound',externalMessageId:data.sid,fromAddress:from,toAddress:to,subject:'SMS conversation',body:args.body,status:data.status === 'delivered' ? 'delivered' : 'sent',idempotencyKey,leadId:links.leadId,ownerId:links.ownerId,propertyId:links.propertyId,userId:args.userId,metadata:{twilio_status:data.status}});
   const smsUnitCostUsd = Math.max(0, Number(process.env.ANALYTICS_SMS_UNIT_COST_USD || 0));
-  await recordCostEvent(pool, {
+  try { await recordCostEvent(pool, {
     organizationId: args.organizationId,
     id: 'cost_sms_' + message.id,
     userId: args.userId,
@@ -451,7 +451,7 @@ export async function sendSmsNow(pool: Pool, args: any) {
     referenceType: 'communication_message',
     referenceId: message.id,
     metadata: { externalMessageId: data.sid, pricingConfigured: smsUnitCostUsd > 0 },
-  });
+  }); } catch (analyticsError) { console.warn('[Analytics] SMS cost recording failed:', analyticsError); }
   return message;
 }
 
