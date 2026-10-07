@@ -113,7 +113,7 @@ Analyze the domain, formulate initial hypotheses, identify missing information, 
         const scoreRes = await executeTool('score_lead', {
           owner_id: prop.owner_id,
           property_id: prop.id,
-        }, { organizationId: context.organizationId, agentId, approvalId: task.input.approval_id });
+        }, { organizationId: context.organizationId, agentId });
 
         qualifiedLeads.push({
           property_id: prop.id,
