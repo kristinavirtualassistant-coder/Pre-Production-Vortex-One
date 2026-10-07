@@ -1288,9 +1288,13 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
         ON billing_invoices(organization_id, status, created_at DESC);
       UPDATE organization_billing
-         SET limits = limits || '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb,
-             updated_at=CURRENT_TIMESTAMP
-       WHERE plan='free';
+         SET limits = limits || CASE plan
+           WHEN 'starter' THEN '{"enrichment_credits_month":500,"property_searches_month":2000,"storage_mb":5000}'::jsonb
+           WHEN 'professional' THEN '{"enrichment_credits_month":5000,"property_searches_month":10000,"storage_mb":50000}'::jsonb
+           WHEN 'enterprise' THEN '{"enrichment_credits_month":1000000,"property_searches_month":1000000,"storage_mb":1000000}'::jsonb
+           ELSE '{"enrichment_credits_month":25,"property_searches_month":100,"storage_mb":500}'::jsonb
+         END,
+             updated_at=CURRENT_TIMESTAMP;
     `,
   },
 
