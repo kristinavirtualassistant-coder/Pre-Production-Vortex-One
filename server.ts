@@ -9,6 +9,7 @@ import { createServer as createViteServer } from 'vite';
 
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
+import { ensureProductionAgents } from './server/agents/productionAgents';
 import { MasterOrchestrator } from './server/agents/orchestrator';
 import { executeSubAgent } from './server/agents/subAgents';
 import { generateSpeechTTS } from './server/gemini';
@@ -4219,6 +4220,7 @@ ${transcript}`;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
       if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for AI agents' });
+      await ensureProductionAgents(pool, orgId);
       const result = await pool.query(
         'SELECT * FROM agent_configs WHERE organization_id=$1 ORDER BY name ASC',
         [orgId],
