@@ -8,6 +8,7 @@ import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, creat
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 import { can } from '../security/permissionMatrix';
+import { sessionIdleHours } from '../security/sessionPolicy';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -97,6 +98,11 @@ export function canonicalizeOrganizationContext(req: AuthRequest): string {
   return organizationId;
 }
 
+/** The session token lives in the HttpOnly cookie. API clients that cannot use cookies opt in to receive it. */
+function wantsBearerToken(req: Request): boolean {
+  return String(req.headers['x-session-transport'] || '').toLowerCase() === 'bearer';
+}
+
 async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -121,7 +127,7 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
   }
   const token = await issueSession(pool,user.id,req,res);
   await pool.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[user.id]);
-  return res.json({ token, user: {
+  return res.json({ ...(wantsBearerToken(req) ? { token } : {}), user: {
     id:user.id,organization_id:user.organization_id,organization_name:user.organization_name,
     organization_slug:user.organization_slug,organization_settings:user.organization_settings,
     email:user.email,name:user.name,role:user.role
@@ -304,7 +310,29 @@ async function handleMfaEnable(req: AuthRequest, res: Response, pool: NonNullabl
   if(!verifyTotp(decryptMfaSecret(row.mfa_secret),code)) return res.status(400).json({error:'Invalid authenticator code'});
   const backupCodes=generateBackupCodes();
   await pool.query('UPDATE users SET mfa_enabled=true,mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(await hashBackupCodes(backupCodes)),req.dbUser.id]);
+  await revokeOtherSessionsFor(pool,req);
   return res.json({enabled:true,backupCodes});
+}
+
+/** Security-sensitive change (MFA enable/disable): every session except the current one is revoked. */
+async function revokeOtherSessionsFor(pool: NonNullable<ReturnType<typeof getPgPool>>, req: AuthRequest) {
+  const token=getSessionToken(req);
+  if(!req.dbUser||!token)return;
+  await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND token_hash<>$2 AND revoked_at IS NULL',[req.dbUser.id,hashSessionToken(token)]);
+}
+
+async function revokeAllSessions(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const result=await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND revoked_at IS NULL',[req.dbUser.id]);
+  clearSessionCookie(res);
+  return res.json({revoked:result.rowCount??0});
+}
+
+async function revokeSessionById(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>, id: string) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const result=await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',[id,req.dbUser.id]);
+  if(!result.rowCount) return res.status(404).json({error:'Session not found'});
+  return res.json({revoked:true});
 }
 
 async function handleMfaDisable(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
@@ -313,6 +341,7 @@ async function handleMfaDisable(req: AuthRequest, res: Response, pool: NonNullab
   const row=(await pool.query('SELECT password_hash FROM users WHERE id=$1',[req.dbUser.id])).rows[0];
   if(!row?.password_hash||!(await verifyPassword(password,row.password_hash))) return res.status(401).json({error:'Current password is required'});
   await pool.query("UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_backup_codes='[]'::jsonb WHERE id=$1",[req.dbUser.id]);
+  await revokeOtherSessionsFor(pool,req);
   return res.json({enabled:false});
 }
 
@@ -343,7 +372,7 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
     await client.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[row.user_id]);
     await client.query('COMMIT');
     const token=await issueSession(pool,row.user_id,req,res,{mfaVerified:true});
-    return res.json({token,user:{id:row.user_id,organization_id:row.organization_id,organization_name:row.organization_name,organization_slug:row.organization_slug,organization_settings:row.organization_settings,email:row.email,name:row.name,role:row.role}});
+    return res.json({...(wantsBearerToken(req)?{token}:{}),user:{id:row.user_id,organization_id:row.organization_id,organization_name:row.organization_name,organization_slug:row.organization_slug,organization_settings:row.organization_settings,email:row.email,name:row.name,role:row.role}});
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
@@ -408,7 +437,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
       FROM auth_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
-        AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash]);
+        AND s.last_seen_at>CURRENT_TIMESTAMP-make_interval(secs=>$2::float8)
+        AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash,sessionIdleHours()*3600]);
     const dbUser=rows[0];
     if(!dbUser)return res.status(401).json({error:'Unauthorized: Invalid or expired session'});
     req.dbUser=dbUser;
@@ -445,6 +475,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     }
     if(req.path==='/auth/sessions'&&req.method==='GET')return listSessions(req,res,pool);
     if(req.path==='/auth/sessions/revoke-others'&&req.method==='POST')return revokeOtherSessions(req,res,pool);
+    if(req.path==='/auth/sessions/revoke-all'&&req.method==='POST')return revokeAllSessions(req,res,pool);
+    {const m=req.path.match(/^\/auth\/sessions\/([A-Za-z0-9_-]{1,100})\/revoke$/);if(m&&req.method==='POST')return revokeSessionById(req,res,pool,m[1]);}
     if(req.path==='/auth/mfa/setup'&&req.method==='POST')return handleMfaSetup(req,res,pool);
     if(req.path==='/auth/mfa/enable'&&req.method==='POST')return handleMfaEnable(req,res,pool);
     if(req.path==='/auth/mfa/disable'&&req.method==='POST')return handleMfaDisable(req,res,pool);

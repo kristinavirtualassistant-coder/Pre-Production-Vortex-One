@@ -76,7 +76,7 @@ export async function addTestUser(app: TestApp, tenant: TestTenant, label: strin
 export async function login(app: TestApp, email: string, password = TEST_PASSWORD): Promise<string> {
   const response = await fetch(`${app.baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-session-transport': 'bearer' },
     body: JSON.stringify({ email, password }),
   });
   const body: any = await response.json().catch(() => ({}));
