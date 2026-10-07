@@ -1258,6 +1258,23 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 30,
+    name: '030_harden_owner_signal_dedupe',
+    sql: `
+      ALTER TABLE owner_lead_signals
+        DROP CONSTRAINT IF EXISTS owner_lead_signals_organization_id_owner_id_property_id_signal_type_key;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_property
+        ON owner_lead_signals(organization_id, owner_id, property_id, signal_type)
+        WHERE property_id IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_lead_signals_portfolio
+        ON owner_lead_signals(organization_id, owner_id, signal_type)
+        WHERE property_id IS NULL;
+    `,
+  },
+
+  {
     version: 29,
     name: '029_billing_invoice_history',
     sql: `
