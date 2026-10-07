@@ -21,7 +21,7 @@ Commercial skip-trace providers are not hard-wired into the application. Unconfi
 
 ## Persistence
 
-The service creates these tables when first used:
+The production migration chain owns these tables; the service retains a defensive runtime guard for compatibility:
 
 - `owner_enrichment_providers`
 - `owner_enrichment_jobs`
@@ -44,16 +44,17 @@ The existing skip-trace endpoints now route through the enrichment engine:
 - `POST /api/skip-trace/auto-enrich`
 - `POST /api/skip-trace/save-contacts`
 
-The first four use the canonical owner/property records as the public-records adapter. A commercial adapter can later be added without changing the owner model.
+The skip-trace compatibility endpoints use the canonical owner/property records as an enrichment source. County/GIS property adapters now also persist authoritative public-record provenance into Owner 360 during property ingestion. When a source legally redacts owner identity, Vortex One stores the parcel evidence without creating a blank or synthetic owner.
 
 ## Source policy
 
 Do not treat a provider response as canonical merely because it exists. Store the source record, retrieval time, provider key, raw hash, and confidence. Conflicting evidence should create separate evidence rather than silently overwriting the canonical owner.
 
-## Next implementation
+## Current ingestion boundary
 
-1. Add a dedicated Owner 360 API/router.
-2. Wire Owner 360 to `owner_contact_points`, `owner_ownerships`, `owner_relationships`, and `owner_lead_signals`.
-3. Add the first real public-record adapter for supported counties.
-4. Add commercial adapters only when credentials and lawful data sources are configured.
-5. Move the service-created schema into the numbered production migration chain once the database migration cleanup is complete.
+1. County/GIS adapters are the authoritative public-record ingestion layer for supported parcel/assessor datasets.
+2. `PublicRecordsIngestionService` stores source URL, dataset, record identifier, query filter, raw attributes, retrieval time, and a raw hash in `owner_source_records`.
+3. Owner identity is linked only when the upstream normalized result contains a real owner identity. Statutorily redacted county records do not create placeholder owners.
+4. Ownership rows are reconciled into `owner_ownerships` and candidate identity conflicts are stored in `owner_identity_matches`.
+5. Portfolio-level lead signals use dedicated partial unique indexes so `NULL` property IDs cannot create duplicate global signals.
+6. Commercial adapters remain separate and return `unavailable` until lawful credentials/data access are configured.
