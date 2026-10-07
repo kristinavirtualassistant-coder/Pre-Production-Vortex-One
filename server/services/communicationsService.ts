@@ -764,3 +764,4 @@ export async function runSequenceStep(pool: Pool, organizationId: string, enroll
   await queueCommunicationJob(pool,organizationId,COMMUNICATION_JOB_TYPES.SEQUENCE_STEP,{enrollmentId},nextAt);
   return {done:false,nextRunAt:nextAt.toISOString()};
 }
+
