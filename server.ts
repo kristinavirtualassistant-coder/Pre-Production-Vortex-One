@@ -33,6 +33,7 @@ import { upsertCanonicalLead } from './server/services/crmService';
 import { listTasks, createTask, updateTaskResult, createApproval, listWorkflows, getWorkflow, upsertWorkflow, updateWorkflow, deleteWorkflow, listApprovals, decideApproval } from './server/services/agentOperationsService';
 import { createOwnerEnrichmentRouter } from './server/routes/ownerEnrichment';
 import { analyticsRouter } from './server/routes/analytics';
+import { appointmentsRouter } from './server/routes/appointments';
 import communicationsRouter from './server/services/communicationsRouter';
 import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow } from './server/services/workflowAutomationService';
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
@@ -61,6 +62,7 @@ async function startServer() {
   }
 
   // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
+  app.use('/api/appointments', requireAuth, appointmentsRouter);
 
   // Health & DB Status
   app.get('/api/health', (req, res) => {
