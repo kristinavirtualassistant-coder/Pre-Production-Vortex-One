@@ -2,7 +2,7 @@ import { getPgPool } from '../db/db';
 import { executeTool, TOOLS } from '../tools';
 import { createApproval } from '../services/agentOperationsService';
 import { AgentDefinition } from '../../src/types';
-import { generateWithAgentProvider, inferAgentProvider, AgentMessage } from './providers';
+import { generateWithAgentProvider, inferAgentProvider, AgentMessage, AgentToolDefinition } from './providers';
 import { getAgent } from './registry';
 
 export interface AgentRunRequest {
@@ -136,18 +136,36 @@ function protocol(agent: AgentDefinition, memory: string, objective: string, con
   return `You are Vortex One agent "${agent.name}" (${agent.id}). You are a real AI operator, not a rules engine.
 Your job: ${agent.primaryResponsibility}
 System instructions: ${agent.systemInstructions}
-Available tools: ${agent.allowedTools.join(', ') || 'none'}.
-Never invent database facts. Use tools for facts and cite tool results in your reasoning.
-Human approval is required before any risky external action.
-Return ONLY valid JSON with this schema:
-{"final":"string","tool_calls":[{"name":"tool_name","args":{}}]}
-Use tool_calls when a tool is needed. If no tool is needed, return an empty tool_calls array.
+Available tools are exposed through the model provider. Use them whenever authoritative database or operational data is required.
+Never invent database facts. Prefer verified tool results and clearly distinguish inference from retrieved facts.
+Human approval is required before any risky external or mutating action.
 Memory:
 ${memory || '(none)'}
 Objective:
 ${objective}
 Context:
 ${JSON.stringify(context)}`;
+}
+
+function agentToolDefinitions(agent: AgentDefinition): AgentToolDefinition[] {
+  return agent.allowedTools
+    .map((name) => TOOLS[name])
+    .filter(Boolean)
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: {
+        type: 'object',
+        properties: Object.fromEntries(Object.entries(tool.parameters || {}).map(([key, value]) => {
+          if (typeof value === 'string') {
+            const type = value === 'number' || value === 'boolean' || value === 'object' || value === 'array' ? value : 'string';
+            return [key, type === 'object' ? { type: 'object', additionalProperties: true } : type === 'array' ? { type: 'array', items: {} } : { type }];
+          }
+          return [key, value];
+        })),
+        additionalProperties: false,
+      },
+    }));
 }
 
 export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRunResult> {
@@ -163,6 +181,8 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
   let totalCost = 0;
   const memory = agent.memoryEnabled === false ? '' : await loadMemory(pool, request.organizationId, agent.id);
   const messages: AgentMessage[] = [{ role: 'user', content: protocol(agent, memory, request.objective, request.context || {}) }];
+  const tools = agentToolDefinitions(agent);
+  let previousResponseId: string | undefined;
 
   await pool.query(
     `INSERT INTO agent_runs (id, organization_id, agent_id, user_id, objective, provider, model, status, input_context, max_attempts, started_at)
@@ -182,7 +202,10 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
         totalCost += estimateCost(provider, result.inputTokens, result.outputTokens);
         await writeRunStep(pool, request.organizationId, runId, attempt, 'completed', { objective: request.objective }, { text: result.text, provider }, undefined, undefined, Date.now() - started);
         const envelope = parseEnvelope(result.text);
-        const calls = Array.isArray(envelope.tool_calls) ? envelope.tool_calls : [];
+        const calls = result.toolCalls?.length
+          ? result.toolCalls.map((call) => ({ name: call.name, args: call.args || {}, id: call.id }))
+          : (Array.isArray(envelope.tool_calls) ? envelope.tool_calls : []);
+        previousResponseId = result.responseId;
         if (!calls.length) {
           const finalText = envelope.final || result.text;
           await pool.query(
@@ -215,8 +238,8 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
           const toolStart = Date.now();
           const output = await executeTool(call.name, call.args || {}, { organizationId: request.organizationId, agentId: agent.id });
           await writeRunStep(pool, request.organizationId, runId, attempt, 'completed', call.args || {}, output, undefined, call.name, Date.now() - toolStart);
-          messages.push({ role:'assistant', content: JSON.stringify({ tool_call: call }) });
-          messages.push({ role:'tool', name:call.name, content:JSON.stringify(output) });
+          messages.push({ role:'assistant', content: result.text || JSON.stringify({ tool_call: call }) });
+          messages.push({ role:'tool', name:call.name, toolCallId:(call as any).id, content:JSON.stringify(output) });
         }
       } catch (error: any) {
         await writeRunStep(pool, request.organizationId, runId, attempt, 'failed', {}, {}, error?.message || String(error), undefined, Date.now() - started);
