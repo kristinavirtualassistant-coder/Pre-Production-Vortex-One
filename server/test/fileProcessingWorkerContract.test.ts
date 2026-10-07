@@ -26,4 +26,8 @@ assert.match(filesRoute, /ON CONFLICT \(file_id,job_type\) DO UPDATE/);
 assert.match(filesRoute, /document_extract/);
 assert.match(filesRoute, /transcript_extract/);
 console.log('File processing worker contract tests passed');
-assert.match(worker, /extractDocumentText/);\nassert.match(filesRoute, /application\\/pdf/);\nassert.match(filesRoute, /application\\/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document/);\nassert.match(filesRoute, /application\\/vnd\\.openxmlformats-officedocument\\.spreadsheetml\\.sheet/);\nassert.match(filesRoute, /application\\/vnd\\.openxmlformats-officedocument\\.presentationml\\.presentation/);\n
+assert.match(worker, /extractDocumentText/);
+assert.match(filesRoute, /application\/pdf/);
+assert.match(filesRoute, /application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document/);
+assert.match(filesRoute, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+assert.match(filesRoute, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
