@@ -158,7 +158,7 @@ export const AccountSecurityPanel: React.FC = () => {
             </div>
           )}
         </div>
-      )}}
+      )}
 
       <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 flex gap-2">
         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
