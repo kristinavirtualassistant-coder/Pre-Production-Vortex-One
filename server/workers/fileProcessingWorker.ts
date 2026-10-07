@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { getPgPool } from '../db/db';
-import { archiveRingCentralRecording } from '../services/fileStorageService';
+import { archiveRingCentralRecording, downloadStoredObject } from '../services/fileStorageService';
 
 export interface FileProcessingJob {
   id: string;
@@ -14,6 +14,8 @@ export interface FileProcessingJob {
   last_error?: string | null;
   call_id?: string | null;
   recording_url?: string | null;
+  storage_path?: string | null;
+  mime_type?: string | null;
 }
 
 export interface FileProcessingWorkerResult {
@@ -69,6 +71,16 @@ export async function claimNextFileProcessingJob(
         WHERE fa.id = j.file_id
           AND fa.organization_id = j.organization_id
       ) AS call_id,
+      (
+        SELECT fa.storage_path
+        FROM file_assets fa
+        WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id
+      ) AS storage_path,
+      (
+        SELECT fa.mime_type
+        FROM file_assets fa
+        WHERE fa.id = j.file_id AND fa.organization_id = j.organization_id
+      ) AS mime_type,
       (
         SELECT fa.metadata->>'source_url'
         FROM file_assets fa
@@ -130,28 +142,41 @@ export async function failFileProcessingJob(
 }
 
 export async function processFileProcessingJob(pool: Pool, job: FileProcessingJob): Promise<'completed' | 'retrying' | 'failed'> {
-  if (job.job_type !== 'recording_archive') {
-    return failFileProcessingJob(pool, job, `Unsupported file processing job type: ${job.job_type}`);
-  }
-
-  const callId = String(job.call_id || '').trim();
-  const recordingUrl = String(job.recording_url || '').trim();
-  if (!callId || !recordingUrl) {
-    return failFileProcessingJob(pool, job, 'Recording archive job is missing call_id or recording_url');
-  }
-
   try {
-    const archived = await archiveRingCentralRecording({
-      organizationId: job.organization_id,
-      callId,
-      recordingUrl,
-    });
-    await completeFileProcessingJob(pool, job, {
-      archived_file_id: archived?.id || job.file_id,
-      storage_path: archived?.storage_path || null,
-      completed_at: new Date().toISOString(),
-    });
-    return 'completed';
+    if (job.job_type === 'recording_archive') {
+      const callId = String(job.call_id || '').trim();
+      const recordingUrl = String(job.recording_url || '').trim();
+      if (!callId || !recordingUrl) return failFileProcessingJob(pool, job, 'Recording archive job is missing call_id or recording_url');
+      const archived = await archiveRingCentralRecording({ organizationId: job.organization_id, callId, recordingUrl });
+      await completeFileProcessingJob(pool, job, {
+        archived_file_id: archived?.id || job.file_id,
+        storage_path: archived?.storage_path || null,
+        completed_at: new Date().toISOString(),
+      });
+      return 'completed';
+    }
+
+    if (job.job_type === 'document_extract' || job.job_type === 'transcript_extract') {
+      const storagePath = String(job.storage_path || '').trim();
+      if (!storagePath) return failFileProcessingJob(pool, job, 'Document extraction job is missing storage_path');
+      const mime = String(job.mime_type || '').toLowerCase();
+      const textMimes = new Set(['text/plain', 'text/csv', 'application/json', 'application/xml', 'text/xml']);
+      if (!textMimes.has(mime)) return failFileProcessingJob(pool, job, 'Text extraction is not supported for MIME type: ' + (mime || 'unknown'));
+      const downloaded = await downloadStoredObject(storagePath);
+      const extractedText = downloaded.body.toString('utf8').replace(/^\uFEFF/, '').trim();
+      await pool.query(
+        `UPDATE file_assets SET extracted_text=$1, status='ready', updated_at=CURRENT_TIMESTAMP WHERE id=$2 AND organization_id=$3`,
+        [extractedText, job.file_id, job.organization_id],
+      );
+      await completeFileProcessingJob(pool, job, {
+        extracted_characters: extractedText.length,
+        mime_type: mime,
+        completed_at: new Date().toISOString(),
+      });
+      return 'completed';
+    }
+
+    return failFileProcessingJob(pool, job, 'Unsupported file processing job type: ' + job.job_type);
   } catch (error: any) {
     return failFileProcessingJob(pool, job, error?.message || String(error));
   }
