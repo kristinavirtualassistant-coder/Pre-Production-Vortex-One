@@ -304,19 +304,51 @@ export class OwnerEnrichmentService {
       for (const phone of result.contacts.phones) {
         const value = normalizePhone(phone.number ?? phone.phone_number);
         if (value.length < 10) continue;
+        const conflicting = await pool.query(
+          `SELECT owner_id FROM owner_contact_points
+             WHERE organization_id=$1 AND type='PHONE' AND normalized_value=$2 AND owner_id<>$3
+             ORDER BY last_seen_at DESC LIMIT 5`,
+          [orgId, value, request.ownerId],
+        );
+        for (const conflict of conflicting.rows) {
+          await pool.query(
+            `INSERT INTO owner_enrichment_conflicts
+              (id, organization_id, owner_id, conflict_type, field_name, conflicting_value, conflicting_owner_id, source_record_id, evidence)
+             VALUES ($1,$2,$3,'CONTACT_COLLISION','phone',$4,$5,$6,$7::jsonb)
+             ON CONFLICT DO NOTHING`,
+            [id('conf'), orgId, request.ownerId, value, conflict.owner_id, sourceId, JSON.stringify({ provider: provider.name })],
+          );
+        }
         const r = await pool.query(
           `INSERT INTO owner_contact_points
             (id, organization_id, owner_id, type, value, normalized_value, contact_subtype, is_primary, is_verified, confidence_score, source_record_id)
            VALUES ($1,$2,$3,'PHONE',$4,$4,$5,$6,$7,$8,$9)
            ON CONFLICT (organization_id, owner_id, type, normalized_value)
-           DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id`,
+           DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id
+           RETURNING (xmax = 0) AS inserted`,
           [id('cp'), orgId, request.ownerId, value, phone.type || phone.phone_type || 'UNKNOWN', Boolean(phone.is_primary), Boolean(phone.is_verified), Number(phone.confidence_score ?? 0.8), sourceId],
         );
-        if (r.rowCount) added += r.rowCount;
+        if (r.rows[0]?.inserted) added += 1;
+        else if (r.rowCount) updated += 1;
       }
       for (const email of result.contacts.emails) {
         const value = normalizeEmail(email.email);
         if (!value) continue;
+        const conflicting = await pool.query(
+          `SELECT owner_id FROM owner_contact_points
+             WHERE organization_id=$1 AND type='EMAIL' AND normalized_value=$2 AND owner_id<>$3
+             ORDER BY last_seen_at DESC LIMIT 5`,
+          [orgId, value, request.ownerId],
+        );
+        for (const conflict of conflicting.rows) {
+          await pool.query(
+            `INSERT INTO owner_enrichment_conflicts
+              (id, organization_id, owner_id, conflict_type, field_name, conflicting_value, conflicting_owner_id, source_record_id, evidence)
+             VALUES ($1,$2,$3,'CONTACT_COLLISION','email',$4,$5,$6,$7::jsonb)
+             ON CONFLICT DO NOTHING`,
+            [id('conf'), orgId, request.ownerId, value, conflict.owner_id, sourceId, JSON.stringify({ provider: provider.name })],
+          );
+        }
         const r = await pool.query(
           `INSERT INTO owner_contact_points
             (id, organization_id, owner_id, type, value, normalized_value, contact_subtype, is_primary, is_verified, confidence_score, source_record_id)
@@ -427,7 +459,7 @@ export class OwnerEnrichmentService {
     if (!pool) throw new Error('PostgreSQL is required for owner enrichment');
     const orgId = requireOrganizationId(organizationId);
     await assertSchemaReady(pool);
-    const [owner, contacts, ownerships, signals, relationships, identityMatches, jobs] = await Promise.all([
+    const [owner, contacts, ownerships, signals, relationships, identityMatches, conflicts, freshness, jobs] = await Promise.all([
       pool.query('SELECT * FROM property_owners WHERE id=$1 AND organization_id=$2 LIMIT 1', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_contact_points WHERE owner_id=$1 AND organization_id=$2 ORDER BY is_primary DESC, last_seen_at DESC', [ownerId, orgId]),
       pool.query(`SELECT oo.*, p.address, p.city, p.state, p.zip, p.apn, p.estimated_value, p.assessed_tax_value, p.estimated_equity, p.units_count
@@ -436,6 +468,10 @@ export class OwnerEnrichmentService {
       pool.query('SELECT * FROM owner_lead_signals WHERE owner_id=$1 AND organization_id=$2 ORDER BY score DESC, observed_at DESC', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_relationships WHERE owner_id=$1 AND organization_id=$2 ORDER BY confidence_score DESC, created_at DESC', [ownerId, orgId]),
       pool.query('SELECT * FROM owner_identity_matches WHERE owner_id=$1 AND organization_id=$2 ORDER BY match_score DESC, created_at DESC', [ownerId, orgId]),
+      pool.query('SELECT * FROM owner_enrichment_conflicts WHERE owner_id=$1 AND organization_id=$2 ORDER BY created_at DESC', [ownerId, orgId]),
+      pool.query(`SELECT MAX(retrieved_at) AS last_retrieved_at, COUNT(*)::int AS source_records,
+                         COUNT(*) FILTER (WHERE retrieved_at >= CURRENT_TIMESTAMP - INTERVAL '90 days')::int AS fresh_source_records
+                    FROM owner_source_records WHERE owner_id=$1 AND organization_id=$2`, [ownerId, orgId]),
       pool.query('SELECT * FROM owner_enrichment_jobs WHERE owner_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 20', [ownerId, orgId]),
     ]);
     if (!owner.rows[0]) throw new Error('Owner record not found for organization');
@@ -446,6 +482,14 @@ export class OwnerEnrichmentService {
       signals: signals.rows,
       relationships: relationships.rows,
       identity_matches: identityMatches.rows,
+      conflicts: conflicts.rows,
+      freshness: {
+        last_retrieved_at: freshness.rows[0]?.last_retrieved_at || null,
+        source_records: Number(freshness.rows[0]?.source_records || 0),
+        fresh_source_records: Number(freshness.rows[0]?.fresh_source_records || 0),
+        status: !freshness.rows[0]?.last_retrieved_at ? 'never_enriched'
+          : new Date(freshness.rows[0].last_retrieved_at).getTime() >= Date.now() - 90 * 24 * 3600 * 1000 ? 'fresh' : 'stale',
+      },
       enrichment_jobs: jobs.rows,
     };
   }
