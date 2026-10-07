@@ -31,6 +31,7 @@ import { inMemoryStore, getPgPool } from '../../db/db';
 import { AuditLogEntry } from '../../../src/types';
 import { taskCacheService } from '../cacheService';
 import { externalWebhookService, buildPropertyDiscoveredPayload } from '../externalWebhookService';
+import { PublicRecordsIngestionService } from '../publicRecordsIngestionService';
 
 export function buildPropertySearchCachePayload(query: PropertySearchQuery): Record<string, any> {
   return {
@@ -475,7 +476,7 @@ export class UnifiedPropertyDataProvider {
       // 2. Persist to PostgreSQL if connected
       if (pool) {
         try {
-          if (owner) {
+          if (owner?.name?.trim()) {
             await pool.query(
               `INSERT INTO property_owners (
                 id, organization_id, name, entity_type, mailing_address, mailing_city,
@@ -504,6 +505,10 @@ export class UnifiedPropertyDataProvider {
               ]
             );
           }
+
+          // Capture authoritative county/GIS provenance and owner linkage separately from the CRM property row.
+          // Providers that legally redact owner identity still produce a durable parcel source record.
+          await PublicRecordsIngestionService.recordResults(pool, orgId, [item]);
 
           await pool.query(
             `INSERT INTO properties (
