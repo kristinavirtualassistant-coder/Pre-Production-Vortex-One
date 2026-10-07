@@ -38,6 +38,9 @@ analyticsRouter.post('/value-events', requireRole(['admin','executive','manager'
     if (!['revenue','acquisition_value','management_value','other'].includes(eventType)) return res.status(400).json({ error: 'Invalid value event type' });
     const amount = Number(amountUsd);
     if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'amountUsd must be a non-negative number' });
+    if (leadId) { const q = await pool.query('SELECT 1 FROM leads WHERE id=$1 AND organization_id=$2', [leadId, organizationId]); if (!q.rowCount) return res.status(400).json({ error: 'Lead does not belong to this organization' }); }
+    if (propertyId) { const q = await pool.query('SELECT 1 FROM properties WHERE id=$1 AND organization_id=$2', [propertyId, organizationId]); if (!q.rowCount) return res.status(400).json({ error: 'Property does not belong to this organization' }); }
+    if (campaignId) { const q = await pool.query('SELECT 1 FROM campaign WHERE id=$1 AND organization_id=$2', [campaignId, organizationId]); if (!q.rowCount) return res.status(400).json({ error: 'Campaign does not belong to this organization' }); }
     const id = 'value_' + randomUUID();
     await recordValueEvent(pool, { organizationId, id, eventType, amountUsd: amount, leadId, propertyId, campaignId, metadata: { ...(metadata || {}), recordedBy: auth.dbUser?.id || null }, occurredAt });
     res.status(201).json({ id, eventType, amountUsd: amount });
