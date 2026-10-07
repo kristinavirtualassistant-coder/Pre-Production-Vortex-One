@@ -18,7 +18,8 @@
     "build:firebase": "npm run build && mkdir -p functions/dist && cp dist/server.cjs functions/dist/server.cjs && esbuild firebase-worker.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=functions/dist/worker.cjs",
     "firebase:deploy": "firebase deploy --only functions,hosting",
     "worker:file-processing": "tsx server/workers/fileProcessingWorker.ts",
-    "test:e2e:smoke": "tsx server/test/browserSmoke.test.ts"
+    "test:e2e:smoke": "tsx server/test/browserSmoke.test.ts",
+    "test:ai": "tsx server/test/realAgentRuntime.test.ts && tsx server/test/agentProviderMock.test.ts && tsx server/test/productionAgents.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
