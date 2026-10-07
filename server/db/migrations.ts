@@ -1349,6 +1349,33 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 34,
+    name: '034_owner_enrichment_conflicts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS owner_enrichment_conflicts (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        conflict_type VARCHAR(50) NOT NULL,
+        field_name VARCHAR(100) NOT NULL,
+        conflicting_value TEXT NOT NULL,
+        conflicting_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'open',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_enrichment_conflict
+        ON owner_enrichment_conflicts(
+          organization_id, owner_id, conflict_type, field_name,
+          conflicting_value, COALESCE(conflicting_owner_id, '')
+        );
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
+        ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
+    `,
+  },
+  {
     version: 33,
     name: '033_owner_identity_match_candidate_reference',
     sql: `
