@@ -7,6 +7,7 @@ import {
   PLAN_CATALOG,
   getOrganizationBilling,
   getUsageSummary,
+  listBillingInvoices,
   createCheckoutSession,
   createPortalSession,
   cancelSubscription,
@@ -51,6 +52,17 @@ router.get('/usage', async (req, res) => {
     res.json(await getUsageSummary(pool, organizationId(req as AuthRequest)));
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to load billing usage' });
+  }
+});
+
+router.get('/invoices', async (req, res) => {
+  const pool = poolOr503(res);
+  if (!pool) return;
+  try {
+    const limit = Number(req.query.limit || 50);
+    res.json(await listBillingInvoices(pool, organizationId(req as AuthRequest), limit));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to load invoice history' });
   }
 });
 
