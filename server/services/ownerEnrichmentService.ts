@@ -354,10 +354,12 @@ export class OwnerEnrichmentService {
             (id, organization_id, owner_id, type, value, normalized_value, contact_subtype, is_primary, is_verified, confidence_score, source_record_id)
            VALUES ($1,$2,$3,'EMAIL',$4,$4,$5,$6,$7,$8,$9)
            ON CONFLICT (organization_id, owner_id, type, normalized_value)
-           DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id`,
+           DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP, source_record_id=EXCLUDED.source_record_id
+           RETURNING (xmax = 0) AS inserted`,
           [id('cp'), orgId, request.ownerId, value, email.type || 'EMAIL', Boolean(email.is_primary), Boolean(email.is_verified), Number(email.confidence_score ?? 0.8), sourceId],
         );
-        if (r.rowCount) added += r.rowCount;
+        if (r.rows[0]?.inserted) added += 1;
+        else if (r.rowCount) updated += 1;
       }
 
       for (const property of result.records) {
