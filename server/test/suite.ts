@@ -88,6 +88,10 @@ async function runAllTests() {
   // a telephony call fixture before exercising FK-constrained services.
   const pgPool = getPgPool();
   if (pgPool) {
+    // Make the suite repeatable: remove CRM rows left by an earlier run of this suite in the fixture organization.
+    for (const table of ['leads', 'properties', 'property_owners']) {
+      await pgPool.query(`DELETE FROM ${table} WHERE organization_id = 'org_test'`).catch(() => {});
+    }
     await pgPool.query(`
       INSERT INTO organizations (id, name, slug)
       VALUES
@@ -228,8 +232,10 @@ async function runAllTests() {
   if (!getPgPool()) {
     assert(true, 'Webhook ingestion requires PostgreSQL (skipped without database)');
   } else {
+    // Unique per run so the suite is repeatable against a database that already holds earlier runs.
+    const webhookEventId = `evt_unique_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const webhookResult1 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
-      eventId: 'evt_unique_101',
+      eventId: webhookEventId,
       telephonyCallId: 'call_501',
       status: 'completed',
       duration_seconds: 90,
@@ -237,7 +243,7 @@ async function runAllTests() {
     assert(webhookResult1.status === 'processed', 'First webhook event is processed');
 
     const webhookResult2 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
-      eventId: 'evt_unique_101',
+      eventId: webhookEventId,
       telephonyCallId: 'call_501',
       status: 'completed',
       duration_seconds: 90,
@@ -787,6 +793,7 @@ async function runAllTests() {
   assert(serverIntegrityReport.organization_id === TEST_ORG_ID, 'Server integrity report scoped to default org');
   assert(serverIntegrityReport.total_properties > 0, 'Server datastore has properties checked');
   assert(serverIntegrityReport.total_owners > 0, 'Server datastore has owners checked');
+  if (serverIntegrityReport.isValid !== true) console.log('Integrity issues:', JSON.stringify(serverIntegrityReport.issues?.slice(0, 5)));
   assert(serverIntegrityReport.isValid === true, 'Authoritative server datastore passes referential integrity check');
 
   // =========================================================================
