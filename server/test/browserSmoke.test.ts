@@ -60,7 +60,7 @@ async function main() {
         throw new Error('React application root element was not rendered');
       }
 
-      const healthResponse = await page.goto(`${baseUrl}/api/health`, {
+      const healthResponse = await page.goto(`${baseUrl}/api/ready`, {
         waitUntil: 'networkidle0',
         timeout: 30_000,
       });
@@ -69,11 +69,11 @@ async function main() {
       }
 
       const health = await page.evaluate(() => JSON.parse(document.body.innerText));
-      if (health.status !== 'ok' || health.db?.type !== 'postgresql') {
-        throw new Error(`Unexpected health payload: ${JSON.stringify(health)}`);
+      if (health.status !== 'ready' || health.database !== 'postgresql') {
+        throw new Error(`Unexpected readiness payload: ${JSON.stringify(health)}`);
       }
 
-      console.log('E2E smoke: PASS — browser, SPA, and PostgreSQL health verified.');
+      console.log('E2E smoke: PASS — browser, SPA, and PostgreSQL readiness verified.');
     } finally {
       await browser.close();
     }

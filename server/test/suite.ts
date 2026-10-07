@@ -106,11 +106,15 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 30, 'Migration list contains 30 defined migrations', `Expected 30, got ${MIGRATIONS.length}`);
+  assert(MIGRATIONS.length === 34, 'Migration list contains 34 defined migrations', `Expected 34, got ${MIGRATIONS.length}`);
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 30 && migration.name === '030_extend_workflow_delivery_idempotency'), 'Workflow delivery idempotency migration 30 present', 'Expected workflow delivery idempotency migration 30 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 31 && migration.name === '031_owner_source_record_idempotency'), 'Owner source idempotency migration 31 present', 'Expected owner source idempotency migration 31 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 32 && migration.name === '032_scope_agent_config_keys_to_organization'), 'Agent config scope migration 32 present', 'Expected agent config scope migration 32 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 33 && migration.name === '033_owner_identity_match_candidate_reference'), 'Owner identity candidate migration 33 present', 'Expected owner identity candidate migration 33 to be present');
+  assert(MIGRATIONS.some((migration) => migration.version === 34 && migration.name === '034_create_native_property_map_spatial_layer'), 'Native property map migration 34 present', 'Expected native property map migration 34 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 17 && migration.name === '017_enforce_global_user_email_identity'), 'Global email identity migration 17 present', 'Expected global email identity migration 17 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 18 && migration.name === '018_create_workflow_automation_runtime'), 'Workflow automation migration 18 present', 'Expected workflow automation migration 18 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 19 && migration.name === '019_production_auth_account_management'), 'Production auth migration 19 present', 'Expected production auth migration 19 to be present');
