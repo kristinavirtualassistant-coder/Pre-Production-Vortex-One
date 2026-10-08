@@ -81,3 +81,20 @@ assert.equal(
 assert.equal(selfBouncePool.calls.length, 0);
 
 console.log('  ✓ PASS: bounce suppression only suppresses one previously contacted recipient and ignores ambiguous/self addresses');
+
+
+import { recordTrackingEvent } from '../services/communicationsService';
+
+const unknownTrackingPool = {
+  async query(sql: string) {
+    if (sql.includes('FROM communication_messages WHERE tracking_token')) return { rowCount: 0, rows: [] };
+    throw new Error('unexpected query');
+  },
+} as any;
+
+await assert.rejects(
+  () => recordTrackingEvent(unknownTrackingPool, 'missing-token', 'clicked', 'https://example.test', 'bad-signature'),
+  /Unknown tracking token/,
+);
+
+console.log('  ✓ PASS: unknown tracking tokens cannot authorize click redirects');

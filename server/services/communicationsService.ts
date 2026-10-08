@@ -394,23 +394,52 @@ async function twilio() {
   return { sid:env('TWILIO_ACCOUNT_SID'), token:env('TWILIO_AUTH_TOKEN') };
 }
 
+function twilioOrganizationNumbers(organizationId: string): string[] {
+  try {
+    const configured = JSON.parse(process.env.TWILIO_ORG_NUMBER_MAP || '{}') as Record<string, unknown>;
+    const raw = configured[organizationId];
+    return Array.isArray(raw) ? [...new Set(raw.map((value) => normalizePhone(String(value))).filter(Boolean))] : [];
+  } catch {
+    throw new Error('TWILIO_ORG_NUMBER_MAP must be valid JSON');
+  }
+}
+
+
 /**
  * Fetch up to 100 Twilio numbers and upsert them for the supplied organization.
  * In production, require and apply the configured phone-number allowlist.
  */
 export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   const cfg = await twilio();
-  const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/IncomingPhoneNumbers.json?PageSize=100',{headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token)}});
-  const allowed = String(process.env.TWILIO_ALLOWED_NUMBERS || '').split(',').map((v)=>normalizePhone(v)).filter(Boolean);
-  const remoteNumbers = (data.incoming_phone_numbers || []).filter((n:any)=>{
-    const normalized=normalizePhone(n.phone_number);
-    return process.env.NODE_ENV !== 'production' || allowed.includes(normalized);
-  });
-  if(process.env.NODE_ENV === 'production' && !allowed.length) throw new Error('TWILIO_ALLOWED_NUMBERS must map Twilio numbers to an organization in production');
-  const numbers = remoteNumbers.map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
+  const organizationNumbers = twilioOrganizationNumbers(organizationId);
+  if (!organizationNumbers.length) {
+    await pool.query("UPDATE messaging_numbers SET status='inactive',updated_at=CURRENT_TIMESTAMP WHERE organization_id=$1 AND provider='twilio'", [organizationId]);
+    throw new Error('No Twilio numbers are assigned to this organization');
+  }
+
+  const headers={Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token)};
+  const remoteNumbers:any[]=[];
+  let nextUrl='https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/IncomingPhoneNumbers.json?PageSize=100';
+  const seen=new Set<string>();
+  for (let page=0; nextUrl && page<100; page += 1) {
+    if (seen.has(nextUrl)) throw new Error('Twilio pagination loop detected');
+    seen.add(nextUrl);
+    const data=await requestJson(nextUrl,{headers});
+    remoteNumbers.push(...(data.incoming_phone_numbers || []));
+    nextUrl=data.next_page_uri ? new URL(data.next_page_uri,'https://api.twilio.com').toString() : '';
+  }
+
+  const numbers = remoteNumbers
+    .filter((n:any)=>organizationNumbers.includes(normalizePhone(n.phone_number)))
+    .map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
+
+  await pool.query(
+    "UPDATE messaging_numbers SET status='inactive',updated_at=CURRENT_TIMESTAMP WHERE organization_id=$1 AND provider='twilio'",
+    [organizationId],
+  );
   for (const n of numbers) {
     await pool.query(
-      "INSERT INTO messaging_numbers (id,organization_id,provider,phone_number,friendly_name,capabilities,status,metadata) VALUES ($1,$2,'twilio',$3,$4,$5,'active',$6) ON CONFLICT (organization_id,provider,phone_number) DO UPDATE SET friendly_name=EXCLUDED.friendly_name,capabilities=EXCLUDED.capabilities,metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP",
+      "INSERT INTO messaging_numbers (id,organization_id,provider,phone_number,friendly_name,capabilities,status,metadata) VALUES ($1,$2,'twilio',$3,$4,$5,'active',$6) ON CONFLICT (organization_id,provider,phone_number) DO UPDATE SET friendly_name=EXCLUDED.friendly_name,capabilities=EXCLUDED.capabilities,status='active',metadata=EXCLUDED.metadata,updated_at=CURRENT_TIMESTAMP",
       ['num_' + randomUUID(),organizationId,n.phone_number,n.friendly_name,JSON.stringify(n.capabilities),JSON.stringify({sid:n.sid})],
     );
   }
@@ -430,12 +459,20 @@ export async function sendSmsNow(pool: Pool, args: any) {
   const idempotencyKey = args.idempotencyKey || 'sms:' + args.organizationId + ':' + to + ':' + createHash('sha256').update(args.body).digest('hex');
   const existing = await pool.query('SELECT * FROM communication_messages WHERE organization_id=$1 AND idempotency_key=$2 LIMIT 1',[args.organizationId,idempotencyKey]);
   if (existing.rowCount) return existing.rows[0];
-  await enforceUsageLimit(pool, args.organizationId, 'sms_month', 1);
   const cfg = await twilio();
   const from = normalizePhone(args.from || process.env.TWILIO_FROM_NUMBER || '');
   if (!from) throw new Error('TWILIO_FROM_NUMBER is not configured');
+  const organizationNumbers = twilioOrganizationNumbers(args.organizationId);
+  if (!organizationNumbers.includes(from)) throw new Error('Twilio sender number is not assigned to this organization');
+  const senderOwnership = await pool.query(
+    "SELECT id FROM messaging_numbers WHERE organization_id=$1 AND provider='twilio' AND phone_number=$2 AND status='active' LIMIT 1",
+    [args.organizationId, from],
+  );
+  if (senderOwnership.rowCount !== 1) throw new Error('Twilio sender number is not active for this organization');
+  await enforceUsageLimit(pool, args.organizationId, 'sms_month', 1);
   const form = new URLSearchParams({To:to,From:from,Body:String(args.body)});
-  const callback = (process.env.APP_URL || '').replace(/\/$/,'') + '/api/communications/webhooks/twilio/status';
+  const base = (process.env.APP_URL || '').replace(/\/$/,'');
+  const callback = base + '/api/communications/webhooks/twilio/status?organizationId=' + encodeURIComponent(args.organizationId);
   if (callback.startsWith('http')) form.set('StatusCallback',callback);
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/Messages.json',{
     method:'POST',headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token),'Content-Type':'application/x-www-form-urlencoded'},body:form,
@@ -718,7 +755,7 @@ export async function listTimeline(pool: Pool, organizationId: string, filters: 
  */
 export async function recordTrackingEvent(pool: Pool, token: string, type:'opened'|'clicked', url?:string, signature?:string) {
   const result=await pool.query('SELECT id,organization_id FROM communication_messages WHERE tracking_token=$1 LIMIT 1',[token]);
-  if (!result.rowCount) return;
+  if (!result.rowCount) throw new Error('Unknown tracking token');
   const message=result.rows[0];
   if (type === 'clicked') {
     if (!url || !/^https?:\/\//i.test(url) || !signature || trackingSignature(token,url) !== signature) throw new Error('Invalid tracking destination');
