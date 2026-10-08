@@ -148,6 +148,19 @@ try {
   const sms = await api(app, 'POST', '/api/communications/sms/send', B, { to: '+13105550146', body: 'hi', from: '+15005550006' });
   assert.ok(refused(sms.status), `a sender number not registered to the organization must be refused, got ${sms.status}`);
   pass('SMS from a number not registered to the caller organization is refused');
+
+  console.log('\n--- Security: billing reads and reference injection ---');
+  for (const path of ['/api/billing', '/api/billing/usage', '/api/billing/invoices', '/api/organization/billing']) {
+    const result = await api(app, 'GET', path, B);
+    assert.ok(result.status === 200 || refused(result.status), `${path} returned ${result.status}`);
+    assert.ok(!result.text.includes(A.organizationId), `${path} must not reference tenant A`);
+  }
+  pass("billing endpoints never expose another tenant's organization");
+
+  const injected = await api(app, 'POST', `/api/campaigns/${ownCampaign.json.id}/contacts`, B, { contacts: [{ contactName: 'inject', phoneNumber: '+13105550147', leadId: ids.lead, lead_id: ids.lead }] });
+  const linked = await pool.query('SELECT 1 FROM campaign_contact WHERE campaign_id=$1 AND lead_id=$2', [ownCampaign.json.id, ids.lead]);
+  assert.equal(linked.rowCount, 0, `a campaign contact must not reference tenant A's lead (status ${injected.status})`);
+  pass("tenant A's lead id cannot be attached to tenant B's campaign contacts");
 } finally {
   await pool.query('DELETE FROM dialing_session WHERE organization_id = ANY($1)', [orgs]).catch(() => {});
   for (const table of ['call', 'leads', 'property_owners', 'webhook_deliveries', 'webhook_endpoints', 'workflows', 'campaign_contact', 'campaign']) {

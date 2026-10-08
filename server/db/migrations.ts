@@ -1545,5 +1545,28 @@ export const MIGRATIONS: Migration[] = [
         ON property_refresh_logs(organization_id, schedule_id, executed_at DESC);
     `,
   },
+  {
+    version: 45,
+    name: '045_database_integrity_constraints',
+    // Constraints are added NOT VALID so they bind every NEW write immediately without failing on historical rows; run
+    // ALTER TABLE ... VALIDATE CONSTRAINT after cleaning any legacy data.
+    sql: `
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_valid') THEN
+          ALTER TABLE users ADD CONSTRAINT users_role_valid
+            CHECK (role IN ('member','agent','manager','executive','admin')) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'jobs_attempts_non_negative') THEN
+          ALTER TABLE jobs ADD CONSTRAINT jobs_attempts_non_negative CHECK (attempts >= 0 AND max_attempts >= 1) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'processed_events_organization_fk') THEN
+          ALTER TABLE processed_events ADD CONSTRAINT processed_events_organization_fk
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE NOT VALID;
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_last_seen ON auth_sessions(last_seen_at);
+    `,
+  },
 ];
 
