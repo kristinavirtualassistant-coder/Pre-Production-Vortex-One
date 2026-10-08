@@ -1441,7 +1441,7 @@ export const MIGRATIONS: Migration[] = [
       EXECUTE FUNCTION prevent_audit_log_mutation();
     `,
   },
-   {
+  {
     version: 39,
     name: '039_add_agent_run_controls',
     sql: `
@@ -1455,118 +1455,30 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 40,
-    name: '040_add_campaign_scheduling_columns',
-    // Code paths read and write these columns but no earlier migration created them, so the features failed on any
-    // database built from the chain: campaign scheduling (CampaignManager) and call note edits (PATCH /api/calls/:id,
-    // POST /api/calls/:id/notes write call.updated_at).
+    name: '040_ensure_owner_enrichment_conflicts',
     sql: `
-      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE;
-      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_by VARCHAR(255);
-      ALTER TABLE call ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-      CREATE INDEX IF NOT EXISTS idx_campaign_due_schedule ON campaign(scheduled_at) WHERE status = 'scheduled';
-    `,
-  },
-  {
-    version: 41,
-    name: '041_add_totp_replay_protection',
-    // The last accepted TOTP time-step per user: a code (or an earlier step) can never be accepted twice.
-    sql: `
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_totp_step BIGINT;
-    `,
-  },
-  {
-    version: 42,
-    name: '042_bind_oauth_state_to_browser',
-    // The OAuth state is bound to the browser that started the flow (HttpOnly nonce cookie), so a callback URL
-    // cannot be completed from a different browser (login-CSRF / account-linking attack).
-    sql: `
-      ALTER TABLE integration_oauth_states ADD COLUMN IF NOT EXISTS browser_nonce_hash VARCHAR(64);
-    `,
-  },
-  {
-    version: 43,
-    name: '043_email_outreach_delivery_safety',
-    // 'manual_review' / 'suppressed' are terminal states; provider_attempted_at is written BEFORE the provider call so a
-    // crash after the provider accepted the message can never lead to a second send (see emailWorker).
-    sql: `
-      ALTER TABLE email_outreach ADD COLUMN IF NOT EXISTS provider_attempted_at TIMESTAMP WITH TIME ZONE;
-      ALTER TABLE email_outreach DROP CONSTRAINT IF EXISTS email_outreach_status_check;
-      ALTER TABLE email_outreach ADD CONSTRAINT email_outreach_status_check
-        CHECK (status IN ('queued','processing','sent','failed','manual_review','suppressed'));
-    `,
-  },
-  {
-    version: 44,
-    name: '044_create_property_refresh_schedules',
-    // The property refresh worker (schedulerWorker / propertyRefreshScheduler) reads and writes these tables, but no
-    // earlier migration created them, so every worker tick failed on a database built from the migration chain.
-    sql: `
-      CREATE TABLE IF NOT EXISTS property_refresh_schedules (
+      CREATE TABLE IF NOT EXISTS owner_enrichment_conflicts (
         id VARCHAR(64) PRIMARY KEY,
         organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
-        description TEXT,
-        target_property_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-        target_selection_mode VARCHAR(30) NOT NULL DEFAULT 'selected'
-          CHECK (target_selection_mode IN ('selected','all','high_equity','absentee_only','county_filter')),
-        county_filter VARCHAR(255),
-        interval_hours INTEGER NOT NULL DEFAULT 24 CHECK (interval_hours > 0),
-        cron_expression VARCHAR(100),
-        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','running')),
-        last_run_at TIMESTAMP WITH TIME ZONE,
-        next_run_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        last_run_status VARCHAR(20),
-        last_run_summary TEXT,
-        last_run_refreshed_count INTEGER,
-        enrichment_options JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        conflict_type VARCHAR(50) NOT NULL,
+        field_name VARCHAR(100) NOT NULL,
+        conflicting_value TEXT NOT NULL,
+        conflicting_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'open',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
       );
-      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_due
-        ON property_refresh_schedules(status, next_run_at);
-      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_org
-        ON property_refresh_schedules(organization_id, status);
-
-      CREATE TABLE IF NOT EXISTS property_refresh_logs (
-        id VARCHAR(64) PRIMARY KEY,
-        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        schedule_id VARCHAR(64) NOT NULL REFERENCES property_refresh_schedules(id) ON DELETE CASCADE,
-        executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-        duration_ms INTEGER NOT NULL DEFAULT 0,
-        properties_processed INTEGER NOT NULL DEFAULT 0,
-        properties_updated INTEGER NOT NULL DEFAULT 0,
-        status VARCHAR(20) NOT NULL,
-        details TEXT,
-        valuation_delta NUMERIC(18,2) DEFAULT 0,
-        equity_delta NUMERIC(18,2) DEFAULT 0,
-        errors JSONB NOT NULL DEFAULT '[]'::jsonb
-      );
-      CREATE INDEX IF NOT EXISTS idx_property_refresh_logs_org_schedule
-        ON property_refresh_logs(organization_id, schedule_id, executed_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_enrichment_conflict
+        ON owner_enrichment_conflicts(
+          organization_id, owner_id, conflict_type, field_name,
+          conflicting_value, COALESCE(conflicting_owner_id, '')
+        );
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
+        ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
     `,
   },
-  {
-    version: 45,
-    name: '045_database_integrity_constraints',
-    // Constraints are added NOT VALID so they bind every NEW write immediately without failing on historical rows; run
-    // ALTER TABLE ... VALIDATE CONSTRAINT after cleaning any legacy data.
-    sql: `
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_valid') THEN
-          ALTER TABLE users ADD CONSTRAINT users_role_valid
-            CHECK (role IN ('member','agent','manager','executive','admin')) NOT VALID;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'jobs_attempts_non_negative') THEN
-          ALTER TABLE jobs ADD CONSTRAINT jobs_attempts_non_negative CHECK (attempts >= 0 AND max_attempts >= 1) NOT VALID;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'processed_events_organization_fk') THEN
-          ALTER TABLE processed_events ADD CONSTRAINT processed_events_organization_fk
-            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE NOT VALID;
-        END IF;
-      END $$;
-      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active ON auth_sessions(user_id) WHERE revoked_at IS NULL;
-      CREATE INDEX IF NOT EXISTS idx_auth_sessions_last_seen ON auth_sessions(last_seen_at);
-    `,
-  },
-];
+ ];
 
