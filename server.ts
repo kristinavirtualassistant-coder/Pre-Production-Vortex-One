@@ -51,6 +51,7 @@ import { isDemoModeEnabled } from './server/security/demoMode';
 import { logError, safeErrorMessage } from './server/security/logger';
 import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
 import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebhook } from './server/routes/machineEndpoints';
+import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -1058,70 +1059,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   // Property Intelligence & Live County GIS Search APIs
   const propertyDataProvider = new UnifiedPropertyDataProvider();
 
-  // External HTTP/HTTPS Webhook Management APIs
-  app.get('/api/webhooks', requirePermission('webhooks:read'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      res.json(await externalWebhookService.listEndpoints(organizationId));
-    } catch (err: any) {
-      res.status(500).json({ error: safeErrorMessage(err, 'Failed to list webhook endpoints') });
-    }
-  });
-
-  app.post('/api/webhooks', requirePermission('webhooks:manage'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
-      res.status(201).json(endpoint);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to create webhook endpoint' });
-    }
-  });
-
-  app.put('/api/webhooks/:id', requirePermission('webhooks:manage'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
-      if (!updated) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json(updated);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to update webhook endpoint' });
-    }
-  });
-
-  app.delete('/api/webhooks/:id', requirePermission('webhooks:manage'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
-      if (!deleted) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json({ success: true, deletedId: req.params.id });
-    } catch (err: any) {
-      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete webhook endpoint') });
-    }
-  });
-
-  app.post('/api/webhooks/:id/test', requirePermission('webhooks:test'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
-      if (!delivery) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json(delivery);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Webhook test failed' });
-    }
-  });
-
-  app.get('/api/webhooks/:id/deliveries', requirePermission('webhooks:read'), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const limit = Math.max(1, Number(req.query.limit) || 50);
-      const ownedEndpoint = await getPgPool()?.query('SELECT 1 FROM webhook_endpoints WHERE organization_id = $1 AND id = $2', [organizationId, req.params.id]);
-      if (!ownedEndpoint?.rowCount) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json(await externalWebhookService.listDeliveries(organizationId, req.params.id, limit));
-    } catch (err: any) {
-      res.status(500).json({ error: safeErrorMessage(err, 'Failed to list webhook deliveries') });
-    }
-  });
+  app.use('/api/webhooks', webhookEndpointsRouter);
 
   app.get('/api/property-search', async (req, res) => {
     try {

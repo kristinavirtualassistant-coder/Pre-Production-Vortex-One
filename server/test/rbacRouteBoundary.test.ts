@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
+const webhookRoutes = fs.readFileSync(new URL('../routes/webhookEndpoints.ts', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8') + '\n' + webhookRoutes;
 
 const mutationLines = source
   .split('\n')
-  .filter((line) => /app\.(post|put|patch|delete)\('/.test(line));
+  .filter((line) => /(app|router)\.(post|put|patch|delete)\('/.test(line));
 
 const explicitlyUnprotected = new Set([
   "app.post('/internal/scheduler/workflows'",
@@ -21,7 +22,7 @@ const explicitlyUnprotected = new Set([
 ]);
 
 for (const line of mutationLines) {
-  const routeStart = line.match(/app\.(post|put|patch|delete)\('[^']+'/)?.[0];
+  const routeStart = line.match(/(app|router)\.(post|put|patch|delete)\('[^']+'/)?.[0];
   assert.ok(routeStart, `Mutation route is parseable: ${line.trim()}`);
   if (explicitlyUnprotected.has(routeStart)) continue;
   assert.match(line, /requireRole\(\[|requirePermission\('/, `Privileged mutation route is protected by RBAC: ${routeStart}`);
@@ -30,9 +31,9 @@ for (const line of mutationLines) {
 const rbacExpectations: Array<[string, string]> = [
   ["app.post('/api/settings/smart-forwarding'", "requireRole(['admin', 'executive'])"],
   ["app.post('/api/audit/log'", "requireRole(['admin', 'executive'])"],
-  ["app.post('/api/webhooks'", "requirePermission('webhooks:manage')"],
-  ["app.put('/api/webhooks/:id'", "requirePermission('webhooks:manage')"],
-  ["app.delete('/api/webhooks/:id'", "requirePermission('webhooks:manage')"],
+  ["router.post('/'", "requirePermission('webhooks:manage')"],
+  ["router.put('/:id'", "requirePermission('webhooks:manage')"],
+  ["router.delete('/:id'", "requirePermission('webhooks:manage')"],
   ["app.post('/api/import/sync-production'", "requireRole(['admin', 'executive'])"],
   ["app.delete('/api/leads/:id'", "requireRole(['admin', 'executive', 'manager'])"],
   ["app.post('/api/campaigns'", "requireRole(['admin', 'executive', 'manager'])"],
