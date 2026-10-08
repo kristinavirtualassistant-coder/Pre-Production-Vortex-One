@@ -6,7 +6,7 @@ const runner = fs.readFileSync('server/workers/run.ts', 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const propertyWorker = fs.readFileSync('server/workers/schedulerWorker.ts', 'utf8');
 const workflowService = fs.readFileSync('server/services/workflowAutomationService.ts', 'utf8');
-const server = fs.readFileSync('server.ts', 'utf8');
+const server = fs.readFileSync('server/routes/machineEndpoints.ts', 'utf8');
 
 // One worker process runs every background unit; claims are PostgreSQL-backed so several workers can run safely.
 assert.match(tick, /runPropertyRefreshWorkerOnce/);

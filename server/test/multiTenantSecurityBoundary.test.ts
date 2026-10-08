@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const server = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
+const machine = fs.readFileSync(new URL('../routes/machineEndpoints.ts', import.meta.url), 'utf8');
 const migrations = fs.readFileSync(new URL('../db/migrations.ts', import.meta.url), 'utf8');
 const gemini = fs.readFileSync(new URL('../gemini.ts', import.meta.url), 'utf8');
 const tools = fs.readFileSync(new URL('../tools/index.ts', import.meta.url), 'utf8');
@@ -16,8 +17,8 @@ function mustNotContain(source: string, text: string, label: string) {
 
 mustContain(server, 'Global cache administration is disabled in production.', 'global cache administration is fail-closed');
 mustContain(server, 'Global agent registry mutation is disabled in production.', 'global agent mutation is fail-closed');
-mustContain(server, 'SELECT DISTINCT organization_id FROM call', 'webhook tenant is database-derived');
-mustContain(server, 'Provider call identity is ambiguous across organizations', 'ambiguous webhook identity is rejected');
+mustContain(machine, 'SELECT DISTINCT organization_id FROM call', 'webhook tenant is database-derived');
+mustContain(machine, 'Provider call identity is ambiguous across organizations', 'ambiguous webhook identity is rejected');
 mustNotContain(server, "(req.body?.organizationId as string) || (req.body?.organization_id as string)", 'webhook no longer trusts body organization');
 mustContain(server, "persist: persist === 'true'", 'live property persistence requires explicit opt-in');
 mustContain(server, 'filePath.startsWith(resolvedOrgDir + path.sep)', 'file download path traversal is blocked');
