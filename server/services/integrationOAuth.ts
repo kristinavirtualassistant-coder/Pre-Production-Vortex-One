@@ -33,7 +33,7 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
       tokenEndpoint: 'https://oauth2.googleapis.com/token',
       clientId: requiredEnv('GOOGLE_INTEGRATION_CLIENT_ID'),
       clientSecret: requiredEnv('GOOGLE_INTEGRATION_CLIENT_SECRET'),
-      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly'],
+      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'],
     };
   }
   return {
