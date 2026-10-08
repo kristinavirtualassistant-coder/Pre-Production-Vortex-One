@@ -33,7 +33,7 @@ function getProviderConfig(provider: OAuthProvider): ProviderConfig {
       tokenEndpoint: 'https://oauth2.googleapis.com/token',
       clientId: requiredEnv('GOOGLE_INTEGRATION_CLIENT_ID'),
       clientSecret: requiredEnv('GOOGLE_INTEGRATION_CLIENT_SECRET'),
-      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly'],
+      scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'],
     };
   }
   return {
@@ -110,6 +110,58 @@ export async function createOAuthStart(pool: Pool, args: {
     params.delete('prompt');
   }
   return `${config.authorizationEndpoint}?${params.toString()}`;
+}
+
+
+/**
+ * Return a usable Google Workspace access token for a tenant.
+ * Refreshes the encrypted OAuth token server-side when it is near expiry.
+ */
+export async function getGoogleWorkspaceAccessToken(pool: Pool, organizationId: string): Promise<string> {
+  const rowResult = await pool.query(
+    `SELECT id, access_token, refresh_token, token_expires_at
+       FROM integration_connections
+      WHERE organization_id=$1 AND provider='google-workspace' AND status='connected'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [organizationId],
+  );
+  const row = rowResult.rows[0];
+  if (!row) throw new Error('Google Workspace is not connected for this organization');
+
+  const expiresAt = row.token_expires_at ? new Date(row.token_expires_at).getTime() : 0;
+  if (row.access_token && expiresAt > Date.now() + 60_000) {
+    return decryptSecret(row.access_token);
+  }
+  if (!row.refresh_token) throw new Error('Google Workspace authorization expired; reconnect Google Workspace');
+
+  const config = getProviderConfig('google-workspace');
+  const body = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    refresh_token: decryptSecret(row.refresh_token),
+    grant_type: 'refresh_token',
+  });
+  const response = await fetch(config.tokenEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const token = await response.json() as Record<string, any>;
+  if (!response.ok || !token.access_token) {
+    await pool.query("UPDATE integration_connections SET status='error', updated_at=CURRENT_TIMESTAMP WHERE id=$1", [row.id]);
+    throw new Error(token.error_description || token.error || 'Google Workspace token refresh failed');
+  }
+
+  const encryptedAccessToken = encryptSecret(String(token.access_token));
+  const expires = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null;
+  await pool.query(
+    `UPDATE integration_connections
+        SET access_token=$1, token_expires_at=$2, status='connected', updated_at=CURRENT_TIMESTAMP
+      WHERE id=$3`,
+    [encryptedAccessToken, expires, row.id],
+  );
+  return String(token.access_token);
 }
 
 export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider, state: string, code: string) {
