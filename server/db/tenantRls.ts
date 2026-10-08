@@ -7,7 +7,7 @@ export const TENANT_RLS_TABLES = [
   'outreach_templates','email_outreach','integration_connections','integration_oauth_states',
   'workflow_runs','workflow_versions','workflow_schedules','workflow_execution_steps',
   'workflow_execution_logs','organization_invites','webhook_endpoints','webhook_deliveries',
-  'voicemail_library','organization_billing','organization_usage','analytics_cost_events',
+  'backup_events','voicemail_library','organization_billing','organization_usage','analytics_cost_events',
   'analytics_ai_usage','analytics_value_events','appointments','file_assets',
   'communication_suppression','workflow_communication_deliveries','owner_enrichment_providers',
   'owner_enrichment_jobs','owner_source_records','owner_contact_points','owner_ownerships',
