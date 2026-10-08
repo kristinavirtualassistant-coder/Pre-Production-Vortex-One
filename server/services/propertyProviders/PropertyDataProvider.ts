@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { requireOrganizationId } from '../organizationContext';
 /**
  * Vortex One - Unified Property Data Provider Architecture
@@ -459,6 +460,29 @@ export class UnifiedPropertyDataProvider {
         property.longitude = geometry.centroid.lon;
       }
 
+      // Provider-derived ids (county/APN based) are tenant-independent but property/owner primary keys are global.
+      // If another organization already owns a row with this id, persist under an organization-scoped id so one
+      // tenant can never overwrite, or become linked to, another tenant's row.
+      if (pool) {
+        try {
+          const scopeIfForeign = async (table: 'properties' | 'property_owners', id: string) => {
+            const row = await pool.query(`SELECT organization_id FROM ${table} WHERE id = $1 LIMIT 1`, [id]);
+            if (row.rowCount && row.rows[0].organization_id !== orgId) {
+              return `${String(id).slice(0, 40)}_${createHash('sha256').update(orgId).digest('hex').slice(0, 16)}`;
+            }
+            return id;
+          };
+          if (property.id) property.id = await scopeIfForeign('properties', property.id);
+          if (owner?.id) {
+            owner.id = await scopeIfForeign('property_owners', owner.id);
+            if ((property as any).owner_id) (property as any).owner_id = owner.id;
+          }
+        } catch (dbErr: any) {
+          if (process.env.NODE_ENV === 'production') throw dbErr;
+          console.warn('[PropertyDataProvider] Could not verify id ownership:', dbErr.message);
+        }
+      }
+
       // 1. PostgreSQL is authoritative in production. Memory is test/dev only.
       if (process.env.NODE_ENV !== 'production') {
         const existingPropIndex = inMemoryStore.properties.findIndex(
@@ -486,7 +510,8 @@ export class UnifiedPropertyDataProvider {
               ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 mailing_address = EXCLUDED.mailing_address,
-                updated_at = NOW()`,
+                updated_at = NOW()
+              WHERE property_owners.organization_id = EXCLUDED.organization_id`,
               [
                 owner.id,
                 orgId,
@@ -513,7 +538,7 @@ export class UnifiedPropertyDataProvider {
               estimated_value, assessed_tax_value, estimated_equity, mortgage_balance,
               is_absentee_owner, is_corporate_owned, tax_delinquent, provenance,
               latitude, longitude, parcel_geometry, map_signals, hazard_flags, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW())
             ON CONFLICT (organization_id, apn) DO UPDATE SET
               address = EXCLUDED.address,
               city = EXCLUDED.city,
@@ -534,7 +559,8 @@ export class UnifiedPropertyDataProvider {
             [
               property.id,
               orgId,
-              owner ? owner.id : null,
+              // Only link an owner row that was actually persisted (blank/redacted county owners are never stored).
+              owner?.name?.trim() ? owner.id : null,
               property.address,
               property.city,
               property.state,

@@ -1,3 +1,4 @@
+import { ResourceNotFoundError } from '../errors';
 import type { Pool } from 'pg';
 import { requireOrganizationId } from './organizationContext';
 import type { CallDisposition } from '../dialer/types';
@@ -52,10 +53,10 @@ export async function applyCallDisposition(pool: Pool, input: DispositionInput):
        FROM call c
        LEFT JOIN leads l ON l.id = c.lead_id AND l.organization_id = c.organization_id
        WHERE c.id = $1 AND c.organization_id = $2
-       FOR UPDATE`,
+       FOR UPDATE OF c`,
       [input.callId, organizationId],
     );
-    if (!call.rows.length) throw new Error('Call not found');
+    if (!call.rows.length) throw new ResourceNotFoundError('Call');
     const row = call.rows[0];
 
     const existingEvent = await client.query(

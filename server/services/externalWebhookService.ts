@@ -4,9 +4,8 @@
  * PostgreSQL is the sole persistence layer for endpoint and delivery state.
  */
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import { getPgPool } from '../db/db';
+import { resolveSafeTarget, safeHttpRequest } from './ssrfGuard';
 
 export type ExternalWebhookEventType = 'property.discovered' | 'lead.enriched';
 
@@ -114,57 +113,8 @@ export function isSupportedWebhookUrl(value: string): boolean {
   }
 }
 
-function isUnsafeIPv4(address: string): boolean {
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 0 || b === 168)) || (a === 198 && (b === 18 || b === 19 || b === 51)) ||
-    (a === 203 && b === 0) || a >= 224;
-}
-
-function isUnsafeIPv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === '::' || normalized === '::1' || normalized.startsWith('ff')) return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') ||
-      normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb') ||
-      normalized.startsWith('::ffff:')) {
-    const mapped = normalized.slice('::ffff:'.length);
-    if (mapped.includes('.') && isUnsafeIPv4(mapped)) return true;
-    return true;
-  }
-  return false;
-}
-
-function isUnsafeAddress(address: string): boolean {
-  const family = isIP(address);
-  return family === 4 ? isUnsafeIPv4(address) : family === 6 ? isUnsafeIPv6(address) : true;
-}
-
 async function assertSafeWebhookTarget(value: string): Promise<void> {
-  if (!isSupportedWebhookUrl(value)) {
-    throw new Error('Webhook URL must use http:// or https://.');
-  }
-
-  const url = new URL(value);
-  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') ||
-      hostname === 'metadata.google.internal' || hostname === 'metadata.google') {
-    throw new Error('Webhook URL targets a local or metadata host, which is not allowed.');
-  }
-
-  const literalFamily = isIP(hostname);
-  if (literalFamily && isUnsafeAddress(hostname)) {
-    throw new Error('Webhook URL targets a private, loopback, link-local, multicast, or otherwise reserved IP address.');
-  }
-
-  if (!literalFamily) {
-    const addresses = await lookup(hostname, { all: true, verbatim: true });
-    if (!addresses.length || addresses.some((entry) => isUnsafeAddress(entry.address))) {
-      throw new Error('Webhook hostname resolves to a private, loopback, link-local, multicast, or otherwise reserved IP address.');
-    }
-  }
+  await resolveSafeTarget(value);
 }
 
 export function buildWebhookSignature(secret: string, timestamp: string, body: string): string {
@@ -422,15 +372,14 @@ export class ExternalWebhookService {
   }
 
   private async defaultSend(url: string, init: RequestInit): Promise<SendResult> {
-    await assertSafeWebhookTarget(url);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await fetch(url, { ...init, signal: controller.signal, redirect: 'manual' });
-      return { ok: response.ok, status: response.status, body: await response.text() };
-    } finally {
-      clearTimeout(timeout);
-    }
+    // Resolve-once + pinned-IP + no-redirect + size-capped request (see ssrfGuard.ts).
+    const response = await safeHttpRequest(url, {
+      method: init.method,
+      headers: init.headers as Record<string, string>,
+      body: typeof init.body === 'string' ? init.body : undefined,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
+    return { ok: response.ok, status: response.status, body: response.body };
   }
 
   private validateEndpointInput(url: string, events: ExternalWebhookEventType[]) {

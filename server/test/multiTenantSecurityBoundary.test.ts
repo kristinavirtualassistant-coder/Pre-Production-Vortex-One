@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const server = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
+const machine = fs.readFileSync(new URL('../routes/machineEndpoints.ts', import.meta.url), 'utf8');
 const migrations = fs.readFileSync(new URL('../db/migrations.ts', import.meta.url), 'utf8');
 const gemini = fs.readFileSync(new URL('../gemini.ts', import.meta.url), 'utf8');
 const tools = fs.readFileSync(new URL('../tools/index.ts', import.meta.url), 'utf8');
@@ -16,8 +17,8 @@ function mustNotContain(source: string, text: string, label: string) {
 
 mustContain(server, 'Global cache administration is disabled in production.', 'global cache administration is fail-closed');
 mustContain(server, 'Global agent registry mutation is disabled in production.', 'global agent mutation is fail-closed');
-mustContain(server, 'SELECT DISTINCT organization_id FROM call', 'webhook tenant is database-derived');
-mustContain(server, 'Provider call identity is ambiguous across organizations', 'ambiguous webhook identity is rejected');
+mustContain(machine, 'SELECT DISTINCT organization_id FROM call', 'webhook tenant is database-derived');
+mustContain(machine, 'Provider call identity is ambiguous across organizations', 'ambiguous webhook identity is rejected');
 mustNotContain(server, "(req.body?.organizationId as string) || (req.body?.organization_id as string)", 'webhook no longer trusts body organization');
 mustContain(server, "persist: persist === 'true'", 'live property persistence requires explicit opt-in');
 mustContain(server, 'filePath.startsWith(resolvedOrgDir + path.sep)', 'file download path traversal is blocked');
@@ -27,7 +28,8 @@ mustContain(gemini, '{ skipCache: true, forceRefresh: options.forceRefresh }', '
 mustContain(gemini, '{ skipCache: true }', 'Gemini TTS caching is disabled');
 
 mustContain(tools, 'agent.allowedTools.includes(toolName)', 'agent tool allow-list is enforced');
-mustContain(rateLimit, 'org:${tenantId}:ip:${clientKey}', 'authenticated rate limits are tenant-scoped');
+mustContain(rateLimit, 'parts.push(`org:${tenantId}`)', 'authenticated rate limits are tenant-scoped');
+mustContain(rateLimit, 'parts.push(`ip:${clientAddress(req)}`)', 'rate limits are scoped by client address');
 mustContain(tools, "if (toolName === 'make_call')", 'outbound call approval gate exists');
 mustContain(tools, "status = 'approved'", 'outbound call requires approved status');
 mustContain(tools, 'organization_id = $2', 'approval lookup is tenant-scoped');

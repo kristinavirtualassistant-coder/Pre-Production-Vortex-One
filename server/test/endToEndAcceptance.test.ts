@@ -30,12 +30,12 @@ testEnvironmentExampleContainsNoLiveSecrets();
 console.log('✓ PASS: .env.example contains no live credentials');
 
 export function testDialerDoesNotFabricateSuccessfulCalls(): void {
-  const serverSource = readFileSync(join(repoRoot, 'server.ts'), 'utf8');
-  assert.match(
-    serverSource,
-    /if\s*\(\s*!telResult\?\.success[\s\S]*?\)\s*\{[\s\S]*?return res\.status\(502\)/,
-    'dial endpoint must return failure when RingCentral initiation fails'
-  );
+  // Provider initiation lives in CampaignManager.dialNextContact (server.ts only delegates to it).
+  const managerSource = readFileSync(join(repoRoot, 'server/dialer/campaignManager.ts'), 'utf8');
+  assert.match(managerSource, /const telephonyResult = await adapter\.initiateCall\(/, 'the call is initiated through the telephony adapter');
+  assert.match(managerSource, /status: telephonyResult\.success \? 'initiated' : 'failed'/, 'a provider failure is recorded as a failed call, never as initiated');
+  assert.match(managerSource, /telephonyResult\.success \? undefined : now/, 'a failed call is ended immediately');
+  assert.match(managerSource, /telephonyResult\.success \? 'dialing' : 'failed'/, 'a failed initiation marks the queued contact failed, not dialing');
 }
 
 testDialerDoesNotFabricateSuccessfulCalls();

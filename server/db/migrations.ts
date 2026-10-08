@@ -3,6 +3,8 @@
  * Handles automated version tracking, transactional migrations, and table bootstrap
  */
 
+import { POSTGRESQL_AUTH_MIGRATION } from './postgresqlAuthMigration';
+
 export interface Migration {
   version: number;
   name: string;
@@ -472,6 +474,11 @@ export const MIGRATIONS: Migration[] = [
     ALTER TABLE call ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_call_org_idempotency ON call(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
   `, },
+  // Version 12 was historically missing from this chain: the authentication/webhook/voicemail foundation was
+  // created lazily at request time by whichever database role served the first login. It is now part of the
+  // ordered, admin-applied migration chain. The SQL is fully idempotent (IF NOT EXISTS), so databases that
+  // already received it through the old lazy bootstrap simply re-run it as a no-op.
+  { version: 12, name: '012_auth_webhook_voicemail_foundation', sql: POSTGRESQL_AUTH_MIGRATION.sql },
   {
     version: 13,
     name: '013_create_email_outreach_schema',

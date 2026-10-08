@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { claimNextJob, completeJob, failJob, recoverStaleJobs } from './jobService';
 import { EMAIL_JOB_TYPE } from './emailOutreachService';
 import { sendEmail } from './emailService';
+import { SuppressionService } from '../dialer/suppressionService';
 
 const WORKER_INTERVAL_MS = 1000;
 const WORKER_STALE_SECONDS = 300;
@@ -22,23 +23,48 @@ export async function processEmailJob(pool: Pool, organizationId: string, worker
 
   try {
     const result = await pool.query(
-      `SELECT id, recipient_email, subject, body, status
+      `SELECT id, recipient_email, subject, body, status, provider_attempted_at
        FROM email_outreach
-       WHERE id = $1 AND organization_id = $2
-       FOR UPDATE`,
+       WHERE id = $1 AND organization_id = $2`,
       [outreachId, organizationId],
     );
     if (!result.rowCount) throw new Error('Email outreach record not found');
 
     const outreach = result.rows[0];
-    if (outreach.status === 'sent') {
+    // Terminal states are never re-sent.
+    if (['sent', 'manual_review', 'suppressed', 'failed'].includes(outreach.status)) {
       await completeJob(pool, organizationId, job.id, workerId);
       return true;
     }
 
+    // A previous attempt wrote the pre-send marker and never recorded an outcome (crash/timeout): the provider may
+    // already have accepted the message. Sending again could duplicate it, so a human reconciles it instead.
+    if (outreach.provider_attempted_at) {
+      await pool.query(
+        `UPDATE email_outreach SET status = 'manual_review', last_error = $3, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND organization_id = $2`,
+        [outreachId, organizationId, 'A previous send attempt has no recorded outcome; verify with the provider before retrying.'],
+      );
+      await completeJob(pool, organizationId, job.id, workerId);
+      return true;
+    }
+
+    // Opt-outs are honoured at send time, not only when the email was queued.
+    const suppression = await SuppressionService.isEmailSuppressed(organizationId, String(outreach.recipient_email).toLowerCase());
+    if (suppression.isSuppressed) {
+      await pool.query(
+        `UPDATE email_outreach SET status = 'suppressed', last_error = $3, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND organization_id = $2`,
+        [outreachId, organizationId, `Recipient suppressed: ${suppression.reason || 'suppressed'}`],
+      );
+      await completeJob(pool, organizationId, job.id, workerId);
+      return true;
+    }
+
+    // Pre-send marker, committed BEFORE the provider is contacted.
     await pool.query(
       `UPDATE email_outreach
-       SET status = 'processing', attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+       SET status = 'processing', attempts = attempts + 1, provider_attempted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND organization_id = $2`,
       [outreachId, organizationId],
     );
@@ -59,15 +85,19 @@ export async function processEmailJob(pool: Pool, organizationId: string, worker
     await completeJob(pool, organizationId, job.id, workerId);
     return true;
   } catch (error: any) {
-    const message = error?.message || 'Email delivery failed';
+    const message = String(error?.message || 'Email delivery failed');
+    // Timeouts / dropped sockets are ambiguous (the provider may have accepted the message): never auto-retry those.
+    const ambiguous = /ETIMEDOUT|ESOCKET|ECONNRESET|EPIPE/.test(message);
     await pool.query(
       `UPDATE email_outreach
-       SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'queued' END,
+       SET status = CASE WHEN $4 THEN 'manual_review' WHEN attempts >= 3 THEN 'failed' ELSE 'queued' END,
+           provider_attempted_at = CASE WHEN $4 THEN provider_attempted_at ELSE NULL END,
            last_error = $1, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2 AND organization_id = $3`,
-      [message.slice(0, 2000), outreachId, organizationId],
+      [message.slice(0, 2000), outreachId, organizationId, ambiguous],
     );
-    await failJob(pool, organizationId, job.id, workerId, message.slice(0, 2000));
+    if (ambiguous) await completeJob(pool, organizationId, job.id, workerId);
+    else await failJob(pool, organizationId, job.id, workerId, message.slice(0, 2000));
     return true;
   }
 }

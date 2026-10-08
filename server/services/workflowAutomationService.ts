@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { requireOrganizationId } from './organizationContext';
-import { enqueueJob, enqueueJobWithClient, claimNextJob, completeJob, failJob, recoverStaleJobs, type JobRecord } from './jobService';
+import { enqueueJob, enqueueJobWithClient, claimNextJob, completeJob, failJob, recoverStaleJobs, withJobHeartbeat, type JobRecord } from './jobService';
 import { sendEmail } from './emailService';
 import { executeAgentRun } from '../agents/agentRuntime';
 import { getTelephonyAdapter } from '../dialer/telephonyAdapter';
 import { SuppressionService } from '../dialer/suppressionService';
 import { validateWebhookTarget } from './safeWebhookService';
+import { safeHttpRequest } from './ssrfGuard';
 
-export const WORKFLOW_JOB_TYPE = 'workflow.execute';
-export type WorkflowActionType = 'email'|'sms'|'phone'|'webhook'|'ai_agent'|'wait'|'noop';
+export { WORKFLOW_JOB_TYPE } from './workflowApprovals';
+import { WORKFLOW_JOB_TYPE } from './workflowApprovals';
+export type WorkflowActionType = 'email'|'sms'|'phone'|'webhook'|'ai_agent'|'wait'|'noop'|'approval';
 
 function parseJson(value: unknown, fallback: any = {}) { if (value == null) return fallback; if (typeof value === 'string') { try { return JSON.parse(value); } catch { return fallback; } } return value; }
 function cronFieldMatches(value:number, field:string, min:number, max:number){
@@ -57,14 +59,14 @@ export async function createWorkflowVersion(pool:Pool,organizationId:string,work
   try { await client.query('BEGIN'); const wf=await client.query('SELECT id,name,description,category,steps FROM workflows WHERE id=$1 AND organization_id=$2 FOR UPDATE',[workflowId,org]); if(!wf.rowCount) throw new Error('Workflow not found');
     const n=await client.query('SELECT COALESCE(MAX(version),0)+1 AS version FROM workflow_versions WHERE workflow_id=$1 AND organization_id=$2',[workflowId,org]); const version=Number(n.rows[0].version);
     if(publish) await client.query("UPDATE workflow_versions SET status='archived' WHERE workflow_id=$1 AND organization_id=$2 AND status='published'",[workflowId,org]);
-    const result=await client.query("INSERT INTO workflow_versions (id,organization_id,workflow_id,version,definition,status,created_by,published_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,CASE WHEN $6='published' THEN CURRENT_TIMESTAMP ELSE NULL END) RETURNING *",['wfv_'+randomUUID(),org,workflowId,version,JSON.stringify({name:wf.rows[0].name,description:wf.rows[0].description,category:wf.rows[0].category,steps:wf.rows[0].steps}),publish?'published':'draft',createdBy]);
+    const result=await client.query("INSERT INTO workflow_versions (id,organization_id,workflow_id,version,definition,status,created_by,published_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6::varchar,$7,CASE WHEN $6::varchar='published' THEN CURRENT_TIMESTAMP ELSE NULL END) RETURNING *",['wfv_'+randomUUID(),org,workflowId,version,JSON.stringify({name:wf.rows[0].name,description:wf.rows[0].description,category:wf.rows[0].category,steps:wf.rows[0].steps}),publish?'published':'draft',createdBy]);
     await client.query('COMMIT'); return result.rows[0]; } catch(e){await client.query('ROLLBACK');throw e;} finally{client.release();}
 }
 export async function publishWorkflowVersion(pool:Pool,organizationId:string,workflowId:string,versionId:string){
   const org=requireOrganizationId(organizationId); const client=await pool.connect(); try{await client.query('BEGIN');
     const v=await client.query('SELECT * FROM workflow_versions WHERE id=$1 AND workflow_id=$2 AND organization_id=$3 FOR UPDATE',[versionId,workflowId,org]); if(!v.rowCount) throw new Error('Workflow version not found');
     await client.query("UPDATE workflow_versions SET status='archived' WHERE workflow_id=$1 AND organization_id=$2 AND status='published'",[workflowId,org]);
-    const result=await client.query("UPDATE workflow_versions SET status='published',published_at=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *",[versionId]); await client.query('COMMIT'); return result.rows[0];
+    const result=await client.query("UPDATE workflow_versions SET status='published',published_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$2 RETURNING *",[versionId,org]); await client.query('COMMIT'); return result.rows[0];
   }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
 export async function scheduleWorkflow(pool:Pool,organizationId:string,workflowId:string,createdBy:string,input:any){
@@ -146,11 +148,16 @@ export async function retryWorkflowRun(pool:Pool,organizationId:string,runId:str
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:string,channel:'email'|'sms'|'phone'|'webhook',destination:string,idempotencyKey:string,payload:any){
-  const existing=await pool.query('SELECT * FROM workflow_communication_deliveries WHERE organization_id=$1 AND idempotency_key=$2 FOR UPDATE',[orgId,idempotencyKey]);
-  if(existing.rowCount){const row=existing.rows[0]; if(row.status==='sent') return {state:'sent',row}; if(row.status==='sending'||row.status==='manual_review') return {state:'manual_review',row};}
-  const result=await pool.query("INSERT INTO workflow_communication_deliveries (id,organization_id,workflow_run_id,workflow_step_id,channel,destination,idempotency_key,status,request_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,'sending',$8::jsonb) ON CONFLICT (organization_id,idempotency_key) DO UPDATE SET status='sending',updated_at=CURRENT_TIMESTAMP,request_payload=EXCLUDED.request_payload RETURNING *",['wcd_'+randomUUID(),orgId,runId,stepId,channel,destination,idempotencyKey,JSON.stringify(payload)]);
-  return {state:'send',row:result.rows[0]};
+export async function reserveCommunication(pool:Pool,orgId:string,runId:string,stepId:string,channel:'email'|'sms'|'phone'|'webhook',destination:string,idempotencyKey:string,payload:any){
+  // Single atomic statement: only a row that does not exist yet, or a previous attempt that definitively FAILED, can be
+  // (re)reserved. A row that is 'sending', 'sent' or 'manual_review' is never touched, so two workers can never both
+  // proceed to send for the same idempotency key.
+  const reserved=await pool.query("INSERT INTO workflow_communication_deliveries (id,organization_id,workflow_run_id,workflow_step_id,channel,destination,idempotency_key,status,request_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,'sending',$8::jsonb) ON CONFLICT (organization_id,idempotency_key) DO UPDATE SET status='sending',updated_at=CURRENT_TIMESTAMP,request_payload=EXCLUDED.request_payload WHERE workflow_communication_deliveries.status='failed' RETURNING *",['wcd_'+randomUUID(),orgId,runId,stepId,channel,destination,idempotencyKey,JSON.stringify(payload)]);
+  if(reserved.rowCount) return {state:'send',row:reserved.rows[0]};
+  const existing=await pool.query('SELECT * FROM workflow_communication_deliveries WHERE organization_id=$1 AND idempotency_key=$2',[orgId,idempotencyKey]);
+  const row=existing.rows[0];
+  if(row&&row.status==='sent') return {state:'sent',row};
+  return {state:'manual_review',row};
 }
 async function finishCommunication(pool:Pool,orgId:string,idempotencyKey:string,status:'sent'|'failed'|'manual_review',reference?:string,error?:string){ await pool.query('UPDATE workflow_communication_deliveries SET status=$1,provider_reference=$2,error=$3,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$4 AND idempotency_key=$5',[status,reference||null,error||null,orgId,idempotencyKey]); }
 
@@ -191,7 +198,7 @@ async function executeAction(pool:Pool,orgId:string,step:any,context:any,runId:s
       if(delivery.state==='sent') return {ok:true,replayed:true,providerReference:delivery.row.provider_reference};
       if(delivery.state==='manual_review') throw new Error('Webhook delivery is already in progress or requires manual reconciliation');
       try {
-        const r=await fetch(u,{method:'POST',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify(input.body||{}),signal:AbortSignal.timeout(10000)});
+        const r=await safeHttpRequest(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input.body||{}),timeoutMs:10000});
         if(!r.ok) throw new Error('Webhook returned HTTP '+r.status);
         await finishCommunication(pool,orgId,runId+':'+stepId,'sent',String(r.status));
         return {ok:true,status:r.status};
@@ -200,11 +207,19 @@ async function executeAction(pool:Pool,orgId:string,step:any,context:any,runId:s
         throw error;
       }
     }
+    case 'approval': {
+      const approvalId='appr_'+runId+'_'+stepId;
+      return {waitingApproval:true,approvalId,description:String(input.description||step.name||'Workflow approval required'),reason:String(input.reason||'Workflow rule requires human approval before continuing.')};
+    }
     case 'ai_agent': { const agentId=String(input.agent_id||step.assigned_agent||'sub_agent_1'); const objective=String(input.objective||step.objective||''); if(!objective) throw new Error('AI agent action requires objective'); const result=await executeAgentRun({organizationId:orgId,agentId,objective,context:{workflow_run_id:runId,workflow_step_id:stepId,workflow_input:input,workflow_context:context},idempotencyKey:'workflow-agent:'+runId+':'+stepId}); return {ok:result.status!=='failed',agentRunId:result.runId,status:result.status,finalText:result.finalText,pendingApprovalId:result.pendingApprovalId,error:result.error,provider:result.provider,model:result.model}; }
     default: throw new Error('Unsupported workflow action: '+action);
   }
 }
 export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string){
+  // The lease is renewed while the job runs so a slow step is not recovered and executed a second time.
+  return withJobHeartbeat(pool,job.organization_id,job.id,workerId,()=>processWorkflowJobInner(pool,job,workerId));
+}
+async function processWorkflowJobInner(pool:Pool,job:JobRecord,workerId:string){
   const org=requireOrganizationId(job.organization_id); const scheduleId=String(job.payload?.scheduleId||''); const schedule=(await pool.query('SELECT * FROM workflow_schedules WHERE id=$1 AND organization_id=$2',[scheduleId,org])).rows[0]; if(!schedule){await completeJob(pool,org,job.id,workerId);return;}
   const version=(await pool.query('SELECT * FROM workflow_versions WHERE id=$1 AND organization_id=$2',[schedule.workflow_version_id,org])).rows[0]; if(!version){await failJob(pool,org,job.id,workerId,'Workflow version not found',60);return;}
   const def=parseJson(version.definition,{}); const steps=Array.isArray(def.steps)?def.steps:[]; const runId=String(job.payload?.runId||'wfr_'+randomUUID()); const start=Number(job.payload?.resumeStepIndex||0);
@@ -227,6 +242,14 @@ export async function processWorkflowJob(pool:Pool,job:JobRecord,workerId:string
       await pool.query("INSERT INTO workflow_execution_steps (id,organization_id,workflow_run_id,workflow_step_id,step_index,action_type,status,attempt,max_attempts,idempotency_key,input,started_at) VALUES ($1,$2,$3,$4,$5,$6,'running',1,$7,$8,$9::jsonb,CURRENT_TIMESTAMP) ON CONFLICT (organization_id,idempotency_key) DO UPDATE SET status='running',attempt=workflow_execution_steps.attempt+1,started_at=CURRENT_TIMESTAMP",['wfsx_'+randomUUID(),org,runId,stepId,i,String(step.action_type||step.action||step.type||'noop'),Number(step.retryCount||2)+1,idem,JSON.stringify(step.input_mapping||{})]);
       await logWorkflowEvent(pool,org,{runId,stepId,event:'step_started',message:'Started '+String(step.name||stepId)});
       const output=await executeAction(pool,org,step,context,runId,stepId);
+      if(output.waitingApproval){
+        const resume={scheduleId,workflowId:schedule.workflow_id,workflowVersionId:schedule.workflow_version_id,triggerPayload:job.payload?.triggerPayload,runId,stepId,resumeStepIndex:i+1};
+        await pool.query("INSERT INTO approvals (id,organization_id,workflow_run_id,action_type,description,reason,risk_level,requires_human_approval,proposed_by,payload,status) VALUES ($1,$2,$3,'workflow_approval',$4,$5,'medium',true,'workflow-engine',$6::jsonb,'pending') ON CONFLICT (id) DO NOTHING",[output.approvalId,org,runId,output.description,output.reason,JSON.stringify({workflowResume:resume,stepOutputs:context.steps})]);
+        await pool.query("UPDATE workflow_execution_steps SET status='blocked',output=$1::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$2 AND idempotency_key=$3",[JSON.stringify({approvalId:output.approvalId}),org,idem]);
+        await pool.query("UPDATE workflow_runs SET status='paused_approval',current_step_id=$1,current_step_name=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$3 AND organization_id=$4",[stepId,String(step.name||stepId),runId,org]);
+        await logWorkflowEvent(pool,org,{runId,stepId,level:'info',event:'approval_requested',message:'Waiting for human approval',metadata:{approvalId:output.approvalId}});
+        await completeJob(pool,org,job.id,workerId); return;
+      }
       if(output.waiting){ const delay=Math.max(1,Number(output.delay_seconds||60)); await pool.query("UPDATE workflow_execution_steps SET status='waiting',scheduled_at=CURRENT_TIMESTAMP+($1*INTERVAL '1 second'),output=$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$3 AND idempotency_key=$4",[delay,JSON.stringify(output),org,idem]); await enqueueJob(pool,org,WORKFLOW_JOB_TYPE,{scheduleId,workflowId:schedule.workflow_id,workflowVersionId:schedule.workflow_version_id,triggerPayload:job.payload?.triggerPayload,runId,resumeStepIndex:i+1},Number(step.retryCount||2)+1,delay); await completeJob(pool,org,job.id,workerId); return; }
       context.steps[stepId]=output; context.last=output; await pool.query("UPDATE workflow_execution_steps SET status='completed',output=$1::jsonb,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE organization_id=$2 AND idempotency_key=$3",[JSON.stringify(output),org,idem]);
       await pool.query("UPDATE workflow_runs SET step_outputs=COALESCE(step_outputs,'{}'::jsonb)||$1::jsonb,completed_steps=$2,current_step_id=$3,current_step_name=$4,updated_at=CURRENT_TIMESTAMP WHERE id=$5 AND organization_id=$6",[JSON.stringify({[stepId]:output}),i+1,stepId,String(step.name||stepId),runId,org]); await logWorkflowEvent(pool,org,{runId,stepId,event:'step_succeeded',message:'Completed '+String(step.name||stepId),metadata:output});

@@ -1,26 +1,33 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const firebaseConfig = fs.readFileSync('firebase.json', 'utf8');
-const functions = fs.readFileSync('functions/index.cjs', 'utf8');
-const worker = fs.readFileSync('firebase-worker.ts', 'utf8');
+const tick = fs.readFileSync('server/workers/tick.ts', 'utf8');
+const runner = fs.readFileSync('server/workers/run.ts', 'utf8');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const propertyWorker = fs.readFileSync('server/workers/schedulerWorker.ts', 'utf8');
 const workflowService = fs.readFileSync('server/services/workflowAutomationService.ts', 'utf8');
+const server = fs.readFileSync('server/routes/machineEndpoints.ts', 'utf8');
 
-assert.match(firebaseConfig, /"source": "functions"/);
-assert.match(firebaseConfig, /"functionId": "api"/);
-assert.match(firebaseConfig, /"region": "us-west1"/);
-assert.match(firebaseConfig, /"pinTag": true/);
-assert.match(functions, /exports\.api = onRequest/);
-assert.match(functions, /exports\.workerTick = onSchedule/);
-assert.match(functions, /every 1 minutes/);
-assert.match(functions, /VORTEX_ONE_RUNTIME_CONFIG/);
-assert.match(worker, /runPropertyRefreshWorkerOnce/);
-assert.match(worker, /runEmailWorkerOnce/);
-assert.match(worker, /claimDueWorkflowSchedules/);
-assert.match(worker, /runWorkflowWorkerOnce/);
+// One worker process runs every background unit; claims are PostgreSQL-backed so several workers can run safely.
+assert.match(tick, /runPropertyRefreshWorkerOnce/);
+assert.match(tick, /runEmailWorkerOnce/);
+assert.match(tick, /claimDueWorkflowSchedules/);
+assert.match(tick, /runWorkflowWorkerOnce/);
+assert.match(tick, /runFileProcessingWorkerOnce/);
+assert.match(tick, /purgeExpiredSessions/);
+assert.match(runner, /SIGTERM/);
+assert.match(runner, /initializeDatabase/);
+assert.equal(pkg.scripts.worker, 'tsx server/workers/run.ts');
+assert.match(pkg.scripts.build, /dist\/worker\.cjs/);
+assert.equal(pkg.scripts['start:worker'], 'node dist/worker.cjs');
+// The HTTP trigger remains an alternative and is machine-authenticated only.
+assert.match(server, /\/internal\/scheduler\/workflows', requireSchedulerSecret/);
 assert.match(propertyWorker, /claimNextJob/);
 assert.match(propertyWorker, /completeJob/);
 assert.match(propertyWorker, /failJob/);
 assert.match(workflowService, /export async function runWorkflowWorkerOnce/);
-console.log('Firebase scheduler contract tests passed');
+// No GCP/Firebase deployment surface remains.
+for (const gone of ['firebase.json', '.firebaserc', 'functions', 'firebase-worker.ts', 'netlify.toml']) {
+  assert.equal(fs.existsSync(gone), false, `${gone} must not exist`);
+}
+console.log('Worker and scheduler contract tests passed');

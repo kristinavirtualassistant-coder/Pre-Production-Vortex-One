@@ -1,3 +1,4 @@
+import { ResourceNotFoundError } from '../errors';
 import { Router } from 'express';
 import { type AuthRequest, requireRole } from '../middleware/auth';
 import { requireOrganizationId } from '../services/organizationContext';
@@ -68,7 +69,7 @@ export function createOwnerEnrichmentRouter(): Router {
       });
       return res.status(200).json(result);
     } catch (error: any) {
-      return res.status(400).json({ error: error?.message || 'Owner enrichment failed' });
+      return res.status(error instanceof ResourceNotFoundError ? 404 : 400).json({ error: error?.message || 'Owner enrichment failed' });
     }
   });
 
