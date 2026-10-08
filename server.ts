@@ -52,6 +52,7 @@ import { logError, safeErrorMessage } from './server/security/logger';
 import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
 import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebhook } from './server/routes/machineEndpoints';
 import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
+import { ownerRouter } from './server/routes/owner';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -151,6 +152,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   app.use('/api/communications/email', limits.expensiveLimiter('email', 120));
 
   app.use('/api/integrations', integrationsRouter);
+  // Platform-owner control plane: requirePlatformOwner is the first middleware inside the router.
+  app.use('/api/owner', ownerRouter);
   app.use('/api/billing', billingRouter);
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());

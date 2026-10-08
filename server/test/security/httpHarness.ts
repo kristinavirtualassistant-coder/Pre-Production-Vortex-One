@@ -116,3 +116,77 @@ export async function api(app: TestApp, method: string, path: string, tenant: Pi
 export function pass(name: string): void {
   console.log(`  ✓ PASS: ${name}`);
 }
+
+// ---------------------------------------------------------------- platform owner helpers
+
+import pg from 'pg';
+import { createTotpSecret, encryptMfaSecret, totpCode } from '../../services/accountSecurity';
+
+/** Administrative connection (NOT the runtime role): used only to provision the owner and inspect protected tables. */
+export async function adminClient(): Promise<pg.Client> {
+  const url = process.env.SECURITY_TEST_ADMIN_URL;
+  if (!url) throw new Error('SECURITY_TEST_ADMIN_URL is required for owner portal tests');
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  return client;
+}
+
+/** Mirrors scripts/provision-platform-owner.ts: the only legitimate way an owner row is written. */
+export async function provisionOwnerAsAdmin(userId: string, opts: { replace?: boolean } = {}): Promise<void> {
+  const admin = await adminClient();
+  try {
+    await admin.query('BEGIN');
+    await admin.query("SELECT set_config('vortex_one.platform_provisioning', 'on', true)");
+    if (opts.replace) await admin.query('DELETE FROM platform_owners');
+    await admin.query("INSERT INTO platform_owners (user_id, provisioned_by) VALUES ($1, 'security-test')", [userId]);
+    await admin.query('COMMIT');
+  } catch (error) {
+    await admin.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { await admin.end(); }
+}
+
+export async function removeOwnerAsAdmin(): Promise<void> {
+  const admin = await adminClient();
+  try {
+    await admin.query('BEGIN');
+    await admin.query("SELECT set_config('vortex_one.platform_provisioning', 'on', true)");
+    await admin.query('DELETE FROM platform_owners');
+    await admin.query('COMMIT');
+  } finally { await admin.end(); }
+}
+
+export interface OwnerIdentity extends TestTenant { mfaSecret: string }
+
+/** Creates an MFA-enabled user, provisions it as THE platform owner, and signs in through the normal login + MFA flow. */
+export async function createPlatformOwner(app: TestApp, label = 'owner'): Promise<OwnerIdentity> {
+  const base = await createTestTenant(app, label, 'admin');
+  const secret = createTotpSecret();
+  await requirePool().query('UPDATE users SET mfa_enabled = true, mfa_secret = $1 WHERE id = $2', [encryptMfaSecret(secret), base.userId]);
+  await provisionOwnerAsAdmin(base.userId, { replace: true });
+  const token = await loginWithMfa(app, base.email, secret);
+  return { ...base, token, auth: { Authorization: `Bearer ${token}` }, mfaSecret: secret };
+}
+
+let lastStep = 0;
+export async function loginWithMfa(app: TestApp, email: string, secret: string, password = 'Correct-Horse-Battery-9'): Promise<string> {
+  const first = await fetch(`${app.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) });
+  const challenge: any = await first.json();
+  if (!challenge.challengeToken) throw new Error(`Expected an MFA challenge, got ${JSON.stringify(challenge)}`);
+  // TOTP codes are single-use per time step; wait for the next step when the previous one was already consumed.
+  let now = Date.now();
+  while (Math.floor(now / 30000) <= lastStep) { await new Promise((r) => setTimeout(r, 1000)); now = Date.now(); }
+  lastStep = Math.floor(now / 30000);
+  const verify = await fetch(`${app.baseUrl}/api/auth/mfa/verify`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-session-transport': 'bearer' },
+    body: JSON.stringify({ challengeToken: challenge.challengeToken, code: totpCode(secret, now) }),
+  });
+  const body: any = await verify.json();
+  if (verify.status !== 200 || !body.token) throw new Error(`MFA verify failed (${verify.status}): ${JSON.stringify(body)}`);
+  return body.token as string;
+}
+
+/** Owner API call: adds the CSRF header the portal always sends. */
+export function ownerApi(app: TestApp, method: string, path: string, who: Pick<TestTenant, 'auth'> | null, body?: unknown, headers: Record<string, string> = {}) {
+  return api(app, method, path, who, body, { 'x-vortex-owner': '1', ...headers });
+}

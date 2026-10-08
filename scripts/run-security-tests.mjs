@@ -28,6 +28,7 @@ const baseEnv = {
   VORTEX_ONE_SKIP_LIVE_GIS: '1',
   SQL_SSL: 'false',
   APP_URL: 'http://localhost:4173',
+  SECURITY_TEST_ADMIN_URL: adminUrl,
   AUTH_ENCRYPTION_KEY: process.env.AUTH_ENCRYPTION_KEY || 'IgIHEDzfX63nIZ72ptfG1GXx8EAaJXWQEytbOCbJYh8=',
   INTEGRATION_ENCRYPTION_KEY: process.env.INTEGRATION_ENCRYPTION_KEY || 'LmUBBZ+sEseYw1OU0qDWJheOoHi+jhQ0ciXL1VF0Vp4=',
   // Suites share one client IP and sign in many times; the limiter suite resets the multiplier to 1.
@@ -71,6 +72,10 @@ try {
   await grants.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${appRole}`);
   await grants.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${appRole}`);
   await grants.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${appRole}`);
+  // Production hardening mirrored here: the runtime role can READ the platform-owner table but never write it, and can
+  // only append to the owner audit trail.
+  await grants.query(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON platform_owners FROM ${appRole}`);
+  await grants.query(`REVOKE UPDATE, DELETE, TRUNCATE ON platform_audit_logs FROM ${appRole}`);
 } finally {
   await grants.end();
 }
