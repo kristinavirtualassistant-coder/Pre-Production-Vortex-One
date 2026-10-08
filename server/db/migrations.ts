@@ -1402,18 +1402,6 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 39,
-    name: '039_add_agent_run_controls',
-    sql: `
-      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
-        ON agent_runs(organization_id, idempotency_key)
-        WHERE idempotency_key IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
-        ON agent_runs(organization_id, started_at, estimated_cost_usd);
-    `,
-  },
-  {
     version: 37,
     name: '037_extend_workflow_delivery_idempotency',
     sql: `
@@ -1444,6 +1432,45 @@ export const MIGRATIONS: Migration[] = [
       BEFORE UPDATE OR DELETE ON audit_logs
       FOR EACH ROW
       EXECUTE FUNCTION prevent_audit_log_mutation();
+    `,
+  },
+  {
+    version: 39,
+    name: '039_add_agent_run_controls',
+    sql: `
+      ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_org_idempotency
+        ON agent_runs(organization_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_org_budget
+        ON agent_runs(organization_id, started_at, estimated_cost_usd);
+    `,
+  },
+  {
+    version: 40,
+    name: '040_ensure_owner_enrichment_conflicts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS owner_enrichment_conflicts (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        owner_id VARCHAR(64) NOT NULL REFERENCES property_owners(id) ON DELETE CASCADE,
+        conflict_type VARCHAR(50) NOT NULL,
+        field_name VARCHAR(100) NOT NULL,
+        conflicting_value TEXT NOT NULL,
+        conflicting_owner_id VARCHAR(64) REFERENCES property_owners(id) ON DELETE SET NULL,
+        source_record_id VARCHAR(64) REFERENCES owner_source_records(id) ON DELETE SET NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'open',
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_enrichment_conflict
+        ON owner_enrichment_conflicts(
+          organization_id, owner_id, conflict_type, field_name,
+          conflicting_value, COALESCE(conflicting_owner_id, '')
+        );
+      CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
+        ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
     `,
   },
  ];
