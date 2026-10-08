@@ -20,7 +20,7 @@ export interface AgentRunRequest {
 
 export interface AgentRunResult {
   runId: string;
-  status: 'completed' | 'awaiting_approval' | 'failed';
+  status: 'completed' | 'awaiting_approval' | 'cancelled' | 'failed';
   finalText?: string;
   pendingApprovalId?: string;
   error?: string;
@@ -72,8 +72,8 @@ async function persistVerifiedMemories(pool: any, organizationId: string, agentI
   for (const memory of memoryWrites || []) {
     if (!memory?.memoryKey || !memory?.content || !memory?.sourceTool || !completedToolNames.has(memory.sourceTool)) continue;
     const importance = Math.min(1, Math.max(0, Number(memory.importance ?? 0.7)));
-    await pool.query("INSERT INTO agent_memories (id,organization_id,agent_id,memory_key,content,importance,metadata,source_run_id,source_tool,verified) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,TRUE) ON CONFLICT (organization_id,agent_id,memory_key) DO UPDATE SET content=EXCLUDED.content,importance=EXCLUDED.importance,metadata=EXCLUDED.metadata,source_run_id=EXCLUDED.source_run_id,source_tool=EXCLUDED.source_tool,verified=TRUE,updated_at=CURRENT_TIMESTAMP", ["amem_"+Date.now()+"_"+Math.random().toString(36).slice(2,8),organizationId,agentId,memory.memoryKey,memory.content,importance,JSON.stringify({provenance:'verified_tool_result'}),runId,memory.sourceTool]);
-    await auditAgentLifecycle(pool, { organizationId, agentId, runId, action:'memory_written', input:{memoryKey:memory.memoryKey,sourceTool:memory.sourceTool}, output:{verified:true} });
+    await pool.query("INSERT INTO agent_memories (id,organization_id,agent_id,memory_key,content,importance,metadata,source_run_id,source_tool,verified) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,FALSE) ON CONFLICT (organization_id,agent_id,memory_key) DO UPDATE SET content=EXCLUDED.content,importance=EXCLUDED.importance,metadata=EXCLUDED.metadata,source_run_id=EXCLUDED.source_run_id,source_tool=EXCLUDED.source_tool,verified=FALSE,updated_at=CURRENT_TIMESTAMP", ["amem_"+Date.now()+"_"+Math.random().toString(36).slice(2,8),organizationId,agentId,memory.memoryKey,memory.content,importance,JSON.stringify({provenance:'verified_tool_result'}),runId,memory.sourceTool]);
+    await auditAgentLifecycle(pool, { organizationId, agentId, runId, action:'memory_written', input:{memoryKey:memory.memoryKey,sourceTool:memory.sourceTool}, output:{verified:false} });
   }
 }
 
@@ -302,6 +302,7 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
         totalOutput += result.outputTokens || 0;
         totalCost += estimateCost(provider,result.inputTokens,result.outputTokens);
         if (maxCostUsd > 0 && totalCost > maxCostUsd) throw new Error(`AI agent run exceeded cost limit of ${maxCostUsd.toFixed(4)}.`);
+        if (await isRunCancelled(pool, request.organizationId, runId)) throw new Error('Agent run cancelled');
 
         const envelope=parseEnvelope(result.text);
         await writeRunStep(pool,request.organizationId,runId,attempt,'completed',{objective:request.objective},{text:result.text,provider},undefined,undefined,Date.now()-started);
@@ -311,11 +312,19 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
 
         if (!calls.length) {
           const finalText=envelope.final || result.text;
-          await persistVerifiedMemories(pool, request.organizationId, agent.id, runId, envelope.memory_writes || [], completedToolNames);
-          await pool.query(
-            `UPDATE agent_runs SET status='completed',output=$2::jsonb,attempts=$3,input_tokens=$4,output_tokens=$5,estimated_cost_usd=$6,execution_time_ms=$7,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8`,
+          if (await isRunCancelled(pool, request.organizationId, runId)) throw new Error('Agent run cancelled');
+          if (agent.memoryEnabled !== false) {
+            await persistVerifiedMemories(pool, request.organizationId, agent.id, runId, envelope.memory_writes || [], completedToolNames);
+          }
+          const completed = await pool.query(
+            `UPDATE agent_runs SET status='completed',output=$2::jsonb,attempts=$3,input_tokens=$4,output_tokens=$5,estimated_cost_usd=$6,execution_time_ms=$7,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$8 AND status='running' RETURNING id`,
             [runId,JSON.stringify({final:finalText}),attempt,totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
           );
+          if (!completed.rowCount) {
+            const current = await pool.query('SELECT status FROM agent_runs WHERE id=$1 AND organization_id=$2',[runId,request.organizationId]);
+            if (current.rows[0]?.status === 'cancelled') throw new Error('Agent run cancelled');
+            throw new Error(`Agent run state changed before completion: ${current.rows[0]?.status || 'missing'}`);
+          }
           await auditAgentLifecycle(pool, { organizationId: request.organizationId, agentId: agent.id, runId, action:'run_completed', output:{attempts:attempt,estimatedCostUsd:totalCost} });
           return {runId,status:'completed',finalText,provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost,attempts:attempt};
         }
@@ -376,7 +385,7 @@ export async function executeAgentRun(request: AgentRunRequest): Promise<AgentRu
       [runId,cancelled ? 'cancelled' : 'failed',error?.message || String(error),totalInput,totalOutput,totalCost,Date.now()-started,request.organizationId],
     );
     await auditAgentLifecycle(pool, { organizationId:request.organizationId, agentId:agent.id, runId, action:cancelled ? 'run_cancelled' : 'run_failed', error:error?.message || String(error) });
-    return {runId,status:'failed',error:error?.message || String(error),provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost};
+    return {runId,status:cancelled ? 'cancelled' : 'failed',error:error?.message || String(error),provider,model:agent.model,inputTokens:totalInput,outputTokens:totalOutput,estimatedCostUsd:totalCost};
   }
 }
 
@@ -418,7 +427,21 @@ export async function continueApprovedAgentRun(organizationId:string,runId:strin
   if(!['approved','modified'].includes(approval.rows[0].status)) throw new Error('Approval is not approved');
   const approvalRow=approval.rows[0];
   const payload=approvalRow.payload || {};
+  if (payload.run_id !== runId || !payload.tool_name || payload.agent_id == null) throw new Error('Approval does not belong to this agent run');
+
+  const claimed=await pool.query(
+    `UPDATE agent_runs SET status='running',pending_approval_id=NULL
+     WHERE id=$1 AND organization_id=$2 AND status='awaiting_approval' AND pending_approval_id=$3
+     RETURNING objective,agent_id`,
+    [runId,organizationId,approvalId],
+  );
+  if (!claimed.rowCount) throw new Error('Agent run is no longer awaiting this approval');
+  const objective=claimed.rows[0].objective;
   await auditAgentLifecycle(pool, { organizationId, agentId:payload.agent_id, runId, action:'approval_decided', input:{approvalId,decision:approvalRow.status,decidedBy} });
+
+  const agent=await getAgentConfig(pool,organizationId,payload.agent_id);
+  const provider=agent.provider || inferAgentProvider(agent.model);
+  const messages: AgentMessage[]=[{role:'user',content:'Continue the original objective after the approved tool result. Return JSON with final and tool_calls. Original objective: '+objective}];
   const actionKey=`agent-action:${runId}:${payload.tool_name}:${JSON.stringify(payload.args || {})}`;
   const prior=await pool.query(
     `SELECT output FROM agent_run_steps WHERE organization_id=$1 AND run_id=$2 AND tool_name=$3 AND status='completed' AND input->>'_idempotency_key'=$4 LIMIT 1`,
@@ -430,21 +453,44 @@ export async function continueApprovedAgentRun(organizationId:string,runId:strin
     await auditAgentAction(pool,{organizationId,agentId:payload.agent_id,runId,toolName:payload.tool_name,action:'requested',input:payload.args || {},source:'approval'});
     const approvalToolStart=Date.now();
     output=await executeTool(payload.tool_name,{...(payload.args || {}),_idempotency_key:actionKey},{organizationId,agentId:payload.agent_id});
-    const approvalToolLatency=Date.now()-approvalToolStart;
-    await writeRunStep(pool,organizationId,runId,Date.now(),'completed',{...(payload.args || {}),_idempotency_key:actionKey},output,undefined,payload.tool_name,approvalToolLatency);
-    await auditAgentAction(pool,{organizationId,agentId:payload.agent_id,runId,toolName:payload.tool_name,action:'completed',input:payload.args || {},output,latencyMs:approvalToolLatency,source:'approval'});
+    await writeRunStep(pool,organizationId,runId,1,'completed',{...(payload.args || {}),_idempotency_key:actionKey},output,undefined,payload.tool_name,Date.now()-approvalToolStart);
+    await auditAgentAction(pool,{organizationId,agentId:payload.agent_id,runId,toolName:payload.tool_name,action:'completed',input:payload.args || {},output,latencyMs:Date.now()-approvalToolStart,source:'approval'});
   }
-  await pool.query(`UPDATE agent_runs SET status='running',pending_approval_id=NULL WHERE id=$1 AND organization_id=$2`,[runId,organizationId]);
-  const agent=await getAgentConfig(pool,organizationId,payload.agent_id);
-  const provider=agent.provider || inferAgentProvider(agent.model);
-  const result=await generateWithAgentProvider({
-    provider,model:agent.model,systemInstruction:agent.systemInstructions,
-    messages:[{role:'user',content:`The approved tool ${payload.tool_name} completed. Tool result:\n${JSON.stringify(output)}\nOriginal objective: ${(await getAgentRun(organizationId,runId))?.objective}. Return only JSON {"final":"...","tool_calls":[]}.`}],
-    temperature:agent.temperature,maxTokens:agent.maxTokens,tools:agentToolDefinitions(agent),
-  });
-  await pool.query(
-    `UPDATE agent_runs SET status='completed',output=$2::jsonb,output_tokens=COALESCE(output_tokens,0)+$3,input_tokens=COALESCE(input_tokens,0)+$4,estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6`,
-    [runId,JSON.stringify({final:parseEnvelope(result.text).final || result.text}),result.outputTokens || 0,result.inputTokens || 0,estimateCost(provider,result.inputTokens,result.outputTokens),organizationId],
-  );
-  return {runId,status:'completed',finalText:parseEnvelope(result.text).final || result.text,provider,model:agent.model};
+  if (await isRunCancelled(pool,organizationId,runId)) throw new Error('Agent run cancelled');
+  messages.push({role:'tool',name:payload.tool_name,content:JSON.stringify(output)});
+
+  for (let step=1; step<=3; step++) {
+    const result=await generateWithAgentProvider({provider,model:agent.model,systemInstruction:agent.systemInstructions,messages,tools:agentToolDefinitions(agent),temperature:agent.temperature,maxTokens:agent.maxTokens});
+    if (await isRunCancelled(pool,organizationId,runId)) throw new Error('Agent run cancelled');
+    const envelope=parseEnvelope(result.text);
+    const calls=result.toolCalls?.length ? result.toolCalls.map((call:any)=>({name:call.name,args:call.args || {},id:call.id})) : (Array.isArray(envelope.tool_calls)?envelope.tool_calls:[]);
+    if (!calls.length) {
+      const finalText=envelope.final || result.text;
+      const completed=await pool.query(
+        `UPDATE agent_runs SET status='completed',output=$2::jsonb,output_tokens=COALESCE(output_tokens,0)+$3,input_tokens=COALESCE(input_tokens,0)+$4,estimated_cost_usd=COALESCE(estimated_cost_usd,0)+$5,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND organization_id=$6 AND status='running' RETURNING id`,
+        [runId,JSON.stringify({final:finalText}),result.outputTokens || 0,result.inputTokens || 0,estimateCost(provider,result.inputTokens,result.outputTokens),organizationId],
+      );
+      if(!completed.rowCount) throw new Error('Agent run state changed before completion');
+      return {runId,status:'completed',finalText,provider,model:agent.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens,estimatedCostUsd:estimateCost(provider,result.inputTokens,result.outputTokens)};
+    }
+    for (const call of calls) {
+      assertToolAllowed(agent,call.name);
+      if (DANGEROUS_TOOLS.has(call.name) && !agent.permissions.includes('auto_execute_external')) {
+        const nextApprovalId=`approval_agent_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+        await createApproval(pool,organizationId,{approval_id:nextApprovalId,action_type:`agent_tool:${call.name}`,description:`Agent ${agent.name} requested tool ${call.name}`,reason:'Agent permission policy requires human approval before external or mutating action.',risk_level:'high',requires_human_approval:true,proposed_by:agent.id,payload:{run_id:runId,agent_id:agent.id,tool_name:call.name,args:call.args || {}},status:'pending',issues:[]});
+        await pool.query(`UPDATE agent_runs SET status='awaiting_approval',pending_approval_id=$2 WHERE id=$1 AND organization_id=$3 AND status='running'`,[runId,nextApprovalId,organizationId]);
+        return {runId,status:'awaiting_approval',pendingApprovalId:nextApprovalId,provider,model:agent.model};
+      }
+      const nextKey=`agent-action:${runId}:${call.name}:${JSON.stringify(call.args || {})}`;
+      const existing=await pool.query(`SELECT output FROM agent_run_steps WHERE organization_id=$1 AND run_id=$2 AND tool_name=$3 AND status='completed' AND input->>'_idempotency_key'=$4 LIMIT 1`,[organizationId,runId,call.name,nextKey]);
+      if (existing.rows.length) { messages.push({role:'tool',name:call.name,content:JSON.stringify(existing.rows[0].output)}); continue; }
+      if (await isRunCancelled(pool,organizationId,runId)) throw new Error('Agent run cancelled');
+      const toolStart=Date.now();
+      const toolOutput=await executeTool(call.name,{...(call.args || {}),_idempotency_key:nextKey},{organizationId,agentId:agent.id});
+      await writeRunStep(pool,organizationId,runId,step+1,'completed',{...(call.args || {}),_idempotency_key:nextKey},toolOutput,undefined,call.name,Date.now()-toolStart);
+      messages.push({role:'assistant',content:JSON.stringify({tool_call:call})});
+      messages.push({role:'tool',name:call.name,content:JSON.stringify(toolOutput)});
+    }
+  }
+  throw new Error('Approved agent continuation exceeded tool-call limit');
 }
