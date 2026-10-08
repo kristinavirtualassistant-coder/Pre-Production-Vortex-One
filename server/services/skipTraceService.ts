@@ -2,6 +2,7 @@ import { getPgPool } from '../db/db';
 import { requireOrganizationId } from './organizationContext';
 import { OwnerEnrichmentService } from './ownerEnrichmentService';
 import { enforceUsageLimit } from './billingService';
+import { backupContact } from './googleBackupService';
 
 /** Compatibility facade for the existing skip-trace UI. */
 export class SkipTraceService {
@@ -94,29 +95,82 @@ export class SkipTraceService {
     const pool = getPgPool();
     if (!pool) throw new Error('PostgreSQL is required to persist discovered contacts');
     const organizationId = requireOrganizationId(params.organizationId);
-    const ownerResult = await pool.query(
-      'SELECT id, phone_numbers, email_addresses, notes FROM property_owners WHERE id = $1 AND organization_id = $2 LIMIT 1',
-      [params.ownerId, organizationId],
-    );
-    if (!ownerResult.rows[0]) throw new Error('Owner record not found for organization');
-    const normalizePhone = (value: unknown) => String(value ?? '').replace(/\D/g, '');
-    const validPhones = (params.phoneNumbers || [])
-      .map((entry: any) => ({ ...entry, number: normalizePhone(entry?.number ?? entry?.phone_number ?? entry) }))
-      .filter((entry: any) => entry.number.length >= 10);
-    const validEmails = (params.emailAddresses || [])
-      .map((entry: any) => typeof entry === 'string' ? { email: entry } : entry)
-      .filter((entry: any) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(entry?.email || '').trim()))
-      .map((entry: any) => ({ ...entry, email: String(entry.email).trim().toLowerCase() }));
-    const existingPhones = Array.isArray(ownerResult.rows[0].phone_numbers) ? ownerResult.rows[0].phone_numbers : [];
-    const existingEmails = Array.isArray(ownerResult.rows[0].email_addresses) ? ownerResult.rows[0].email_addresses : [];
-    const phones = [...existingPhones, ...validPhones].filter((item, index, all) => all.findIndex((x: any) => x?.number === item?.number) === index);
-    const emails = [...existingEmails, ...validEmails].filter((item, index, all) => all.findIndex((x: any) => x?.email === item?.email) === index);
-    const notes = params.notes === undefined ? ownerResult.rows[0].notes : params.notes;
-    const result = await pool.query(
-      `UPDATE property_owners SET phone_numbers = $1::jsonb, email_addresses = $2::jsonb, notes = $3, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $4 AND organization_id = $5 RETURNING id, phone_numbers, email_addresses, notes, updated_at`,
-      [JSON.stringify(phones), JSON.stringify(emails), notes, params.ownerId, organizationId],
-    );
-    return { success: true, owner: result.rows[0], property_id: params.propertyId || null, source_status: 'supplied_data_persisted' };
-  }
-}
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      const ownerResult = await client.query(
+        'SELECT id, name, phone_numbers, email_addresses, notes FROM property_owners WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE',
+        [params.ownerId, organizationId],
+      );
+      const owner = ownerResult.rows[0];
+      if (!owner) throw new Error('Owner record not found for organization');
+
+      const normalizePhone = (value: unknown) => String(value ?? '').replace(/\D/g, '');
+      const validPhones = (params.phoneNumbers || [])
+        .map((entry: any) => ({ ...entry, number: normalizePhone(entry?.number ?? entry?.phone_number ?? entry) }))
+        .filter((entry: any) => entry.number.length >= 10);
+      const validEmails = (params.emailAddresses || [])
+        .map((entry: any) => typeof entry === 'string' ? { email: entry } : entry)
+        .filter((entry: any) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(entry?.email || '').trim()))
+        .map((entry: any) => ({ ...entry, email: String(entry.email).trim().toLowerCase() }));
+
+      const existingPhones = Array.isArray(owner.phone_numbers) ? owner.phone_numbers : [];
+      const existingEmails = Array.isArray(owner.email_addresses) ? owner.email_addresses : [];
+      const phones = [...existingPhones, ...validPhones].filter((item, index, all) =>
+        all.findIndex((x: any) => x?.number === item?.number) === index,
+      );
+      const emails = [...existingEmails, ...validEmails].filter((item, index, all) =>
+        all.findIndex((x: any) => x?.email === item?.email) === index,
+      );
+      const notes = params.notes === undefined ? owner.notes : params.notes;
+
+      await client.query(
+        `UPDATE property_owners
+            SET phone_numbers = $1::jsonb, email_addresses = $2::jsonb, notes = $3, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4 AND organization_id = $5`,
+        [JSON.stringify(phones), JSON.stringify(emails), notes, params.ownerId, organizationId],
+      );
+
+      const contactId = `contact_${params.ownerId}`;
+      const contactResult = await client.query(
+        `INSERT INTO contacts
+          (id, organization_id, owner_id, full_name, phone_numbers, email_addresses, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+         ON CONFLICT (organization_id, full_name)
+         DO UPDATE SET
+           owner_id=COALESCE(EXCLUDED.owner_id,contacts.owner_id),
+           phone_numbers=EXCLUDED.phone_numbers,
+           email_addresses=EXCLUDED.email_addresses,
+           updated_at=CURRENT_TIMESTAMP
+         RETURNING id, organization_id, owner_id, full_name, phone_numbers, email_addresses, created_at, updated_at`,
+        [
+          contactId, organizationId, params.ownerId, owner.name || 'Property Owner',
+          JSON.stringify(phones), JSON.stringify(emails),
+        ],
+      );
+
+      await client.query('COMMIT');
+
+      const contact = contactResult.rows[0];
+      const backup = await backupContact(contact).catch((error: any) => ({
+        sheets: 'failed' as const,
+        drive: 'failed' as const,
+        error: error?.message || String(error),
+      }));
+
+      return {
+        success: true,
+        owner: { ...owner, phone_numbers: phones, email_addresses: emails, notes },
+        contact,
+        property_id: params.propertyId || null,
+        source_status: 'supplied_data_persisted',
+        backup,
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }}
