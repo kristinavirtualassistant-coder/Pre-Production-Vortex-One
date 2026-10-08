@@ -1472,6 +1472,31 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_owner_enrichment_conflicts_org_owner
         ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
     `,
+  },  {
+    version: 36,
+    name: '036_create_backup_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS backup_events (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        entity_type VARCHAR(64) NOT NULL,
+        entity_id VARCHAR(128) NOT NULL,
+        destination VARCHAR(32) NOT NULL CHECK (destination IN ('google_sheets','google_drive')),
+        status VARCHAR(32) NOT NULL CHECK (status IN ('pending','success','failed')),
+        content_hash VARCHAR(128) NOT NULL,
+        external_id VARCHAR(255),
+        external_url TEXT,
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMP WITH TIME ZONE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_events_destination
+        ON backup_events(organization_id, entity_type, entity_id, destination, content_hash);
+      CREATE INDEX IF NOT EXISTS idx_backup_events_org_status
+        ON backup_events(organization_id, status, created_at DESC);
+    `,
   },
+
  ];
 
