@@ -1,4 +1,4 @@
-import { inflateRawSync } from 'node:zlib';
+import { inflateRawSync, inflateSync } from 'node:zlib';
 
 const MAX_ARCHIVE_ENTRIES = 500;
 const MAX_ENTRY_BYTES = 10 * 1024 * 1024;
@@ -154,29 +154,38 @@ function extractOfficeOpenXml(buffer: Buffer, kind: 'docx' | 'xlsx' | 'pptx'): s
 }
 
 function extractPdf(buffer: Buffer): string {
-  const chunks: string[] = [];
+  const chunks: Array<{ index: number; text: string }> = [];
   const source = buffer.toString('latin1');
-  for (const match of source.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+  for (const match of source.matchAll(/stream\r?\n([\\s\\S]*?)\r?\nendstream/g)) {
+    const header = source.slice(Math.max(0, (match.index || 0) - 2048), match.index || 0);
     const raw = Buffer.from(match[1], 'latin1');
     let decoded = raw;
-    try {
-      decoded = inflateRawSync(raw);
-    } catch {
-      // Uncompressed PDF content streams are also valid.
+    if (/\/FlateDecode(?:\s|\]|\/|$)/.test(header)) {
+      try {
+        decoded = inflateSync(raw);
+      } catch {
+        try { decoded = inflateRawSync(raw); } catch { decoded = raw; }
+      }
     }
     const text = decoded.toString('latin1');
     for (const tj of text.matchAll(/\((?:\\.|[^)])*\)\s*Tj/g)) {
-      chunks.push(tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\\()])/g, '$1'));
+      chunks.push({
+        index: tj.index ?? 0,
+        text: tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\\()])/g, '$1'),
+      });
     }
-    for (const tjArray of text.matchAll(/\[([\s\S]*?)\]\s*TJ/g)) {
+    for (const tjArray of text.matchAll(/\[([\\s\\S]*?)\]\s*TJ/g)) {
       for (const part of tjArray[1].matchAll(/\((?:\\.|[^)])*\)/g)) {
-        chunks.push(part[0].slice(1, -1).replace(/\\([\\()])/g, '$1'));
+        chunks.push({
+          index: tjArray.index !== undefined ? tjArray.index : 0,
+          text: part[0].slice(1, -1).replace(/\\([\\()])/g, '$1'),
+        });
       }
     }
   }
-  return decodeXml(chunks.join(' ')).replace(/\s+/g, ' ').trim();
+  chunks.sort((a, b) => a.index - b.index);
+  return decodeXml(chunks.map((chunk) => chunk.text).join(' ')).replace(/\s+/g, ' ').trim();
 }
-
 export function extractDocumentText(buffer: Buffer, mimeType: string): string {
   const mime = mimeType.toLowerCase().split(';')[0].trim();
   if (mime === 'application/pdf') return extractPdf(buffer);
