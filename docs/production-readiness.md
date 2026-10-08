@@ -19,6 +19,7 @@ Status legend: ✅ done and covered by an automated test · 🟡 done, needs a h
 | Single worker process | ✅ | `workerTick.test.ts` |
 | PostgreSQL CI job, security job, audit | ✅ | `.github/workflows/ci.yml` |
 | Production bundle boots as non-superuser role | ✅ | verified manually (`/api/ready` 200) |
+| Owner portal: single provisioned owner, backend RBAC, append-only audit, MFA, support mode | ✅ | `docs/owner-portal.md`, `owner.http.test.ts`, `ownerPortal.browser.test.ts` |
 | Row-level security | ⛔ (decision) | `docs/tenant-isolation.md` |
 | Real Stripe / SMTP / RingCentral / Google / Microsoft credentials exercised | 🟡 | needs a staging environment |
 | Database TLS with provider CA (`DATABASE_SSL_CA`) | 🟡 | verification is now on by default |

@@ -12,9 +12,9 @@ export interface TestApp {
 }
 
 /** Boots the REAL Express application (all middleware, routes, migrations) on an ephemeral port. */
-export async function startTestApp(): Promise<TestApp> {
+export async function startTestApp(opts: { frontend?: boolean } = {}): Promise<TestApp> {
   const { createApp } = await import('../../../server');
-  const app = await createApp({ serveFrontend: false, backgroundTimers: false });
+  const app = await createApp({ serveFrontend: opts.frontend === true, backgroundTimers: false });
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
@@ -189,4 +189,12 @@ export async function loginWithMfa(app: TestApp, email: string, secret: string, 
 /** Owner API call: adds the CSRF header the portal always sends. */
 export function ownerApi(app: TestApp, method: string, path: string, who: Pick<TestTenant, 'auth'> | null, body?: unknown, headers: Record<string, string> = {}) {
   return api(app, method, path, who, body, { 'x-vortex-owner': '1', ...headers });
+}
+
+/** A TOTP code for a time step nobody has used yet (codes are single-use), waiting for the next step when necessary. */
+export async function freshTotp(secret: string): Promise<string> {
+  let now = Date.now();
+  while (Math.floor(now / 30000) <= lastStep) { await new Promise((r) => setTimeout(r, 1000)); now = Date.now(); }
+  lastStep = Math.floor(now / 30000);
+  return totpCode(secret, now);
 }

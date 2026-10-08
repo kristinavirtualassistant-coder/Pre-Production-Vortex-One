@@ -4385,6 +4385,14 @@ ${transcript}`;
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    // The Owner Portal HTML shell is never cached, framed or indexed. (Authorization still happens in /api/owner/*.)
+    app.use('/owner', (_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      next();
+    });
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
