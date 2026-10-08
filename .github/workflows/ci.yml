@@ -1,38 +1,45 @@
 name: Vortex One CI
-# QA gate: build, PostgreSQL integration, browser smoke, and scheduled live GIS.
+# Quality gate. Every job must pass; nothing is allowed to fail silently.
 
 on:
   push:
-    branches:
-      - main
-      - 'release/*'
-      - 'qa/production-readiness'
+    branches: [main, 'release/*']
   pull_request:
-    branches:
-      - main
+    branches: [main]
   schedule:
     - cron: '0 2 * * 1-5'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
 jobs:
   validate:
+    name: Typecheck and build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - name: Dependency audit (production dependencies, high and above)
+        run: npm audit --omit=dev --audit-level=high
 
   integration:
+    name: PostgreSQL integration tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
         image: postgis/postgis:16-3.5
@@ -57,19 +64,50 @@ jobs:
       SQL_PASSWORD: postgres
       SQL_SSL: "false"
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
-      VORTEX_ONE_SEED_DEMO_DATA: "0"
       VORTEX_ONE_SKIP_LIVE_GIS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Run deterministic PostgreSQL integration suite
-        run: npm test
+      # Runs the integrated suite and every standalone server/test/*.test.ts file (see scripts/run-tests.mjs).
+      - run: npm test
+
+  security:
+    name: Security tests (production mode, least-privileged database role)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vortex_one_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vortex_one_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SECURITY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/vortex_one_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Creates the non-superuser vortex_app role, migrates as admin, then runs the HTTP security suites with
+      # NODE_ENV=production against the real Express app.
+      - run: npm run test:security
 
   e2e-smoke:
+    name: Browser smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -96,22 +134,20 @@ jobs:
       SQL_PASSWORD: postgres
       SQL_SSL: "false"
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
-      VORTEX_ONE_SEED_DEMO_DATA: "0"
       VORTEX_ONE_SKIP_LIVE_GIS: "1"
       E2E_PORT: "4173"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Install Puppeteer Chrome
-        run: npx puppeteer browsers install chrome
-      - name: Run browser smoke test
-        run: npm run test:e2e:smoke
+      - run: npx puppeteer browsers install chrome
+      - run: npm run test:e2e:smoke
 
   live-gis:
+    name: Live government GIS (scheduled)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -139,19 +175,18 @@ jobs:
       SQL_PASSWORD: postgres
       SQL_SSL: "false"
       AUTH_SESSION_PEPPER: ci-only-session-pepper-32-characters-minimum
-      VORTEX_ONE_SEED_DEMO_DATA: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - name: Run live government GIS integration suite
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | tee live-gis-output.log
+          npm run test:suite 2>&1 | tee live-gis-output.log
           grep -Fq "Executing Live Query against Orange County Public Works GIS..." live-gis-output.log
           grep -Fq "Executing Live Query against Los Angeles County Assessor GIS..." live-gis-output.log
           ! grep -Fq "Skipping live government GIS integration tests" live-gis-output.log
