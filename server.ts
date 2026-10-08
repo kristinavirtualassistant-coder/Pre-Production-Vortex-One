@@ -4438,6 +4438,13 @@ ${transcript}`;
 
   // --- Vite Middleware / Static Serving ---
   if (process.env.NODE_ENV !== 'production') {
+    // Serve the HTML shell directly so Vite does not inject /@vite/client.
+    // The preview host does not provide Vite's HMR websocket, which otherwise
+    // leaves the client repeatedly trying to connect at runtime.
+    app.get('/', (_req, res) => {
+      res.sendFile(path.join(process.cwd(), 'index.html'));
+    });
+
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
