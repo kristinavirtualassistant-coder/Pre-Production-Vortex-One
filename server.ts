@@ -1781,7 +1781,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/skip-trace/save-contacts', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
+  app.post('/api/skip-trace/save-contacts', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
     try {
       const ownerId = req.body.ownerId || req.body.owner_id;
       const propertyId = req.body.propertyId || req.body.property_id;
