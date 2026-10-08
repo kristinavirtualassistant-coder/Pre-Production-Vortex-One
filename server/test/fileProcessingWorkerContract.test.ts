@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const worker = fs.readFileSync('server/workers/fileProcessingWorker.ts', 'utf8');
-const firebaseWorker = fs.readFileSync('firebase-worker.ts', 'utf8');
+const workerTick = fs.readFileSync('server/workers/tick.ts', 'utf8');
 const webhook = fs.readFileSync('server/dialer/webhookHandler.ts', 'utf8');
 const storage = fs.readFileSync('server/services/fileStorageService.ts', 'utf8');
 const filesRoute = fs.readFileSync('server/routes/files.ts', 'utf8');
@@ -17,7 +17,7 @@ assert.match(worker, /job\.job_type === 'document_extract'/);
 assert.match(worker, /job\.job_type === 'transcript_extract'/);
 assert.match(worker, /downloadStoredObject/);
 assert.match(worker, /status='completed'/);
-assert.match(firebaseWorker, /runFileProcessingWorkerOnce/);
+assert.match(workerTick, /runFileProcessingWorkerOnce/);
 assert.match(webhook, /getRingCentralRecordingFileId/);
 assert.match(storage, /export function getRingCentralRecordingFileId/);
 assert.match(filesRoute, /TEXT_EXTRACTION_MIMES/);

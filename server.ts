@@ -160,7 +160,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   });
 
   // All API routes are authenticated except the minimal health endpoint and
-  // provider callbacks that must be reachable without a Firebase user token.
+  // provider callbacks that must be reachable without a user session.
   app.use('/api', (req: AuthRequest, res, next) => {
     if (shouldBypassApiAuth(req.path)) {
       return next();
