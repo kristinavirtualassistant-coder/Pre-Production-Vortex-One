@@ -68,14 +68,15 @@ Vortex One now exposes a single communications API/UI for email and SMS.
 
 ### Email providers
 - Gmail uses `gmail.send` + `gmail.readonly`.
-- Microsoft 365 uses `Mail.Send` + `Mail.Read`.
+- Microsoft 365 uses `Mail.Read` + `Mail.ReadWrite` + `Mail.Send`.
 - Reconnect existing accounts after deploying the new scopes so the stored OAuth grant contains the mail permissions.
 - Email sync imports recent inbox messages and associates them to Lead/Owner/Property records when a matching contact address exists.
-- Sent HTML includes open/click tracking and an unsubscribe link.
+- Sent HTML includes open/click tracking and a confirmation-based unsubscribe link.
 
 ### SMS
 - Twilio credentials: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
-- Sync numbers with `POST /api/communications/numbers/sync`.
+- Tenant-bound sender mapping: `TWILIO_ORG_NUMBER_MAP` is a JSON object keyed by Vortex One organization ID, with an array of assigned E.164 Twilio numbers.
+- Sync numbers with `POST /api/communications/numbers/sync`; only numbers assigned to the requesting organization are persisted.
 - Configure the Twilio inbound webhook as `https://YOUR_APP/api/communications/webhooks/twilio/inbound`.
 - Configure the Twilio status callback as `https://YOUR_APP/api/communications/webhooks/twilio/status`.
 - Twilio signatures are validated in production; use HTTPS in production.
