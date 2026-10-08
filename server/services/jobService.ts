@@ -59,9 +59,12 @@ export async function recoverStaleJobs(
   if (!Number.isFinite(staleAfterSeconds) || staleAfterSeconds <= 0) {
     throw new Error('staleAfterSeconds must be greater than zero');
   }
+  // An abandoned lease counts as an attempt (claimNextJob already incremented it). A job that has used every attempt is
+  // failed rather than re-queued forever, so a job that crashes its worker cannot loop indefinitely.
   const result = await pool.query(
     `UPDATE jobs
-     SET status = 'queued', available_at = CURRENT_TIMESTAMP, locked_at = NULL, locked_by = NULL,
+     SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,
+         available_at = CURRENT_TIMESTAMP, locked_at = NULL, locked_by = NULL,
          last_error = COALESCE(last_error, 'Recovered abandoned processing lease')
      WHERE organization_id = $1
        AND status = 'processing'
@@ -70,4 +73,21 @@ export async function recoverStaleJobs(
     [orgId, staleAfterSeconds],
   );
   return result.rowCount || 0;
+}
+
+/** Extends the lease of a job this worker still holds. Returns false when the lease was lost (recovered/reassigned). */
+export async function heartbeatJob(pool: Pool, organizationId: string, jobId: string, workerId: string): Promise<boolean> {
+  const orgId = requireOrganizationId(organizationId);
+  const result = await pool.query(
+    `UPDATE jobs SET locked_at = CURRENT_TIMESTAMP WHERE id = $1 AND organization_id = $2 AND status = 'processing' AND locked_by = $3`,
+    [jobId, orgId, workerId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Runs fn while renewing the job lease on an interval, so a long step is not mistaken for an abandoned job. */
+export async function withJobHeartbeat<T>(pool: Pool, organizationId: string, jobId: string, workerId: string, fn: () => Promise<T>, intervalMs = 60_000): Promise<T> {
+  const timer = setInterval(() => { void heartbeatJob(pool, organizationId, jobId, workerId).catch(() => {}); }, intervalMs);
+  timer.unref?.();
+  try { return await fn(); } finally { clearInterval(timer); }
 }

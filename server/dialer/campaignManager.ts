@@ -3,6 +3,7 @@
  * Manages predictive & preview campaigns, contact queues, and automated DNC checks
  */
 
+import { ResourceNotFoundError } from '../errors';
 import { getPgPool } from '../db/db';
 import {
   CampaignRecord,
@@ -308,6 +309,14 @@ export class CampaignManager {
 
     try {
       await withPostgresTransaction(pool, async (client) => {
+        // Tenant ownership: the campaign (and any referenced leads) must belong to the caller's organization.
+        const ownedCampaign = await client.query('SELECT 1 FROM campaign WHERE id = $1 AND organization_id = $2', [campaignId, organizationId]);
+        if (!ownedCampaign.rowCount) throw new ResourceNotFoundError('Campaign');
+        const referencedLeadIds = [...new Set(contacts.map((c) => c.leadId).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+        if (referencedLeadIds.length > 0) {
+          const ownedLeads = await client.query('SELECT id FROM leads WHERE id = ANY($1::text[]) AND organization_id = $2', [referencedLeadIds, organizationId]);
+          if (ownedLeads.rowCount !== referencedLeadIds.length) throw new ResourceNotFoundError('Lead');
+        }
         for (const c of contacts) {
           const normalizedPhone = normalizePhoneNumber(c.phoneNumber);
           if (!normalizedPhone) continue;
@@ -336,6 +345,7 @@ export class CampaignManager {
       });
     } catch (err: any) {
       createdRecords.length = 0;
+      if (err instanceof ResourceNotFoundError) throw err;
       throw new Error(`${AUTHORITATIVE_STATE_ERROR}: ${err?.message || String(err)}`, { cause: err });
     }
 
@@ -373,6 +383,14 @@ export class CampaignManager {
         [campaignId, organizationId]
       );
       if (campaignRow.rows.length === 0) return { status: 'queue_empty' };
+      if (sessionId) {
+        // A client-supplied session id must belong to this organization AND this campaign.
+        const ownedSession = await pool.query(
+          'SELECT 1 FROM dialing_session WHERE id = $1 AND organization_id = $2 AND campaign_id = $3 LIMIT 1',
+          [sessionId, organizationId, campaignId],
+        );
+        if (!ownedSession.rowCount) throw new ResourceNotFoundError('Dialing session');
+      }
       const retryLimit = Math.max(1, Number(campaignRow.rows[0].retry_limit || 3));
       const eligibility = buildCampaignEligibilityQuery(organizationId, campaignId, { retryLimit });
       const claim = await pool.query(eligibility.text, eligibility.values);
@@ -390,8 +408,8 @@ export class CampaignManager {
       if (pool) {
         try {
           await pool.query(
-            `UPDATE campaign_contact SET dial_status = 'suppressed' WHERE id = $1`,
-            [contact.id]
+            `UPDATE campaign_contact SET dial_status = 'suppressed' WHERE id = $1 AND organization_id = $2`,
+            [contact.id, organizationId]
           );
         } catch (err: any) {}
       }
@@ -473,20 +491,20 @@ export class CampaignManager {
 
         // Update contact dial_status and attempts
         await pool.query(
-          `UPDATE campaign_contact SET dial_status = $1, last_dialed_at = $2 WHERE id = $3`,
-          [telephonyResult.success ? 'dialing' : 'failed', now, contact.id]
+          `UPDATE campaign_contact SET dial_status = $1, last_dialed_at = $2 WHERE id = $3 AND organization_id = $4`,
+          [telephonyResult.success ? 'dialing' : 'failed', now, contact.id, organizationId]
         );
 
         // Update campaign counters
         await pool.query(
-          `UPDATE campaign SET dialed_count = dialed_count + 1, updated_at = $1 WHERE id = $2`,
-          [now, campaignId]
+          `UPDATE campaign SET dialed_count = dialed_count + 1, updated_at = $1 WHERE id = $2 AND organization_id = $3`,
+          [now, campaignId, organizationId]
         );
 
         if (sessionId) {
           await pool.query(
-            `UPDATE dialing_session SET calls_placed = calls_placed + 1, contacts_reached = contacts_reached + 1 WHERE id = $1`,
-            [sessionId]
+            `UPDATE dialing_session SET calls_placed = calls_placed + 1, contacts_reached = contacts_reached + 1 WHERE id = $1 AND organization_id = $2`,
+            [sessionId, organizationId]
           );
         }
       } catch (err: any) {

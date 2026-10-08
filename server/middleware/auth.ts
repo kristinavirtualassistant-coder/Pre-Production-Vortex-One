@@ -4,9 +4,11 @@ import { getPgPool } from '../db/db';
 import { getOrganizationBilling, planLimits } from '../services/billingService';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
 import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
-import { appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
+import { matchTotpStep, appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
+import { can } from '../security/permissionMatrix';
+import { sessionIdleHours } from '../security/sessionPolicy';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -39,6 +41,19 @@ export class AuthorizationError extends Error {
  */
 export function shouldBypassApiAuth(path: string): boolean {
   return path === '/health' || path === '/ready' || path === '/billing/webhook' || path.startsWith('/telephony/webhook/') || path.startsWith('/integrations/oauth/callback/') || path.startsWith('/communications/webhooks/') || path.startsWith('/communications/tracking/');
+}
+
+/**
+ * Identity headers that older clients sent. The authenticated PostgreSQL user (session -> users ->
+ * organizations) is the ONLY source of user id, email, organization and role, so these are deleted before any
+ * handler can read them. `x-organization-id` is deliberately not listed: it is validated for consistency in
+ * canonicalizeOrganizationContext and then overwritten with the authenticated organization.
+ */
+export const CLIENT_IDENTITY_HEADERS = ['x-user-id', 'x-user-email', 'x-user-role', 'x-user-name', 'x-uid'] as const;
+
+export function stripClientIdentityHeaders(req: Request, _res: Response, next: NextFunction) {
+  for (const header of CLIENT_IDENTITY_HEADERS) delete req.headers[header];
+  next();
 }
 
 export function isLocalDevelopmentAuthEnabled(): boolean {
@@ -83,6 +98,11 @@ export function canonicalizeOrganizationContext(req: AuthRequest): string {
   return organizationId;
 }
 
+/** The session token lives in the HttpOnly cookie. API clients that cannot use cookies opt in to receive it. */
+function wantsBearerToken(req: Request): boolean {
+  return String(req.headers['x-session-transport'] || '').toLowerCase() === 'bearer';
+}
+
 async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -107,7 +127,7 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
   }
   const token = await issueSession(pool,user.id,req,res);
   await pool.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[user.id]);
-  return res.json({ token, user: {
+  return res.json({ ...(wantsBearerToken(req) ? { token } : {}), user: {
     id:user.id,organization_id:user.organization_id,organization_name:user.organization_name,
     organization_slug:user.organization_slug,organization_settings:user.organization_settings,
     email:user.email,name:user.name,role:user.role
@@ -125,11 +145,24 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!inviteToken && (organizationName.length < 2 || organizationName.length > 255)) return res.status(400).json({ error: 'Organization name must be between 2 and 255 characters' });
 
+  // Self-service organization creation can be closed or restricted to approved email domains.
+  if (!inviteToken) {
+    if (process.env.SIGNUP_ENABLED === 'false') return res.status(403).json({ error: 'Self-service sign-up is disabled. Ask an administrator for an invitation.' });
+    const allowed = (process.env.SIGNUP_ALLOWED_DOMAINS || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+    if (allowed.length && !allowed.includes(email.split('@')[1] || '')) return res.status(403).json({ error: 'Sign-up is not available for this email domain.' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const existingEmail = await client.query('SELECT id FROM users WHERE lower(email)=lower($1) LIMIT 1',[email]);
-    if (existingEmail.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'An account with this email already exists' }); }
+    if (existingEmail.rowCount) {
+      // Anti-enumeration: respond exactly as for a new account and do equivalent work (hashing), so neither the
+      // response nor its timing reveals that the address is registered.
+      await client.query('ROLLBACK');
+      await hashPassword(password);
+      return res.status(201).json({ verificationRequired:true, email });
+    }
 
     let organizationId: string;
     let assignedRole = 'admin';
@@ -144,7 +177,7 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
       await client.query('UPDATE organization_invites SET accepted_at=CURRENT_TIMESTAMP WHERE id=$1',[row.id]);
     } else {
       const existingOrganization = await client.query('SELECT id FROM organizations WHERE lower(name)=lower($1) LIMIT 1',[organizationName]);
-      if (existingOrganization.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'An organization with this name already exists. Ask an administrator to invite you.' }); }
+      if (existingOrganization.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error:'Unable to create an account with these details' }); }
       organizationId=`org_${randomUUID()}`;
       const slugBase=organizationName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80)||'organization';
       let slug=slugBase;
@@ -188,7 +221,7 @@ async function handleSignup(req: AuthRequest, res: Response, pool: NonNullable<R
     });
   } catch(error:any) {
     try { await client.query('ROLLBACK'); } catch {}
-    if(error?.code==='23505') return res.status(409).json({error:'An account or organization with these details already exists'});
+    if(error?.code==='23505') return res.status(409).json({error:'Unable to create an account with these details'});
     console.error('PostgreSQL signup error:',error);
     return res.status(500).json({error:'Account creation failed'});
   } finally { client.release(); }
@@ -198,7 +231,7 @@ async function createTenantInvite(req: AuthRequest, res: Response, pool: NonNull
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const role = typeof req.body?.role === 'string' ? req.body.role : 'member';
   const allowedRoles = ['member', 'agent', 'manager', 'executive'];
-  if (!email || !/^\\S+@\\S+\\.\\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid invite role' });
   if (!req.dbUser?.organization_id) return res.status(403).json({ error: 'No tenant organization is associated with this account' });
   if (!['admin', 'executive', 'manager'].includes(req.dbUser.role)) return res.status(403).json({ error: 'Only tenant administrators and managers can invite members' });
@@ -290,7 +323,29 @@ async function handleMfaEnable(req: AuthRequest, res: Response, pool: NonNullabl
   if(!verifyTotp(decryptMfaSecret(row.mfa_secret),code)) return res.status(400).json({error:'Invalid authenticator code'});
   const backupCodes=generateBackupCodes();
   await pool.query('UPDATE users SET mfa_enabled=true,mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(await hashBackupCodes(backupCodes)),req.dbUser.id]);
+  await revokeOtherSessionsFor(pool,req);
   return res.json({enabled:true,backupCodes});
+}
+
+/** Security-sensitive change (MFA enable/disable): every session except the current one is revoked. */
+async function revokeOtherSessionsFor(pool: NonNullable<ReturnType<typeof getPgPool>>, req: AuthRequest) {
+  const token=getSessionToken(req);
+  if(!req.dbUser||!token)return;
+  await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND token_hash<>$2 AND revoked_at IS NULL',[req.dbUser.id,hashSessionToken(token)]);
+}
+
+async function revokeAllSessions(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const result=await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=$1 AND revoked_at IS NULL',[req.dbUser.id]);
+  clearSessionCookie(res);
+  return res.json({revoked:result.rowCount??0});
+}
+
+async function revokeSessionById(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>, id: string) {
+  if(!req.dbUser) return res.status(401).json({error:'Unauthorized'});
+  const result=await pool.query('UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',[id,req.dbUser.id]);
+  if(!result.rowCount) return res.status(404).json({error:'Session not found'});
+  return res.json({revoked:true});
 }
 
 async function handleMfaDisable(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
@@ -299,6 +354,7 @@ async function handleMfaDisable(req: AuthRequest, res: Response, pool: NonNullab
   const row=(await pool.query('SELECT password_hash FROM users WHERE id=$1',[req.dbUser.id])).rows[0];
   if(!row?.password_hash||!(await verifyPassword(password,row.password_hash))) return res.status(401).json({error:'Current password is required'});
   await pool.query("UPDATE users SET mfa_enabled=false,mfa_secret=NULL,mfa_backup_codes='[]'::jsonb WHERE id=$1",[req.dbUser.id]);
+  await revokeOtherSessionsFor(pool,req);
   return res.json({enabled:false});
 }
 
@@ -309,14 +365,16 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const result=await client.query(`SELECT c.id,c.user_id,c.attempts,u.email,u.name,u.role,u.organization_id,u.mfa_secret,u.mfa_backup_codes,
+    const result=await client.query(`SELECT c.id,c.user_id,c.attempts,u.email,u.name,u.role,u.organization_id,u.mfa_secret,u.mfa_backup_codes,u.mfa_last_totp_step,
       o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
       FROM auth_mfa_challenges c JOIN users u ON u.id=c.user_id JOIN organizations o ON o.id=u.organization_id
       WHERE c.challenge_hash=$1 AND c.expires_at>CURRENT_TIMESTAMP AND u.disabled_at IS NULL FOR UPDATE`,
       [hashOneTimeToken(challengeToken)]);
     const row=result.rows[0];
     if(!row||row.attempts>=5){await client.query('ROLLBACK');return res.status(401).json({error:'MFA challenge is invalid or expired'});}
-    const totpValid=row.mfa_secret?verifyTotp(decryptMfaSecret(row.mfa_secret),code):false;
+    const totpStep=row.mfa_secret?matchTotpStep(decryptMfaSecret(row.mfa_secret),code):null;
+    // Replay protection: a TOTP time-step that was already used (or an older one) is never accepted again.
+    const totpValid=totpStep!==null&&(row.mfa_last_totp_step===null||row.mfa_last_totp_step===undefined||totpStep>Number(row.mfa_last_totp_step));
     const backups=Array.isArray(row.mfa_backup_codes)?row.mfa_backup_codes:[];
     const backupIndex=totpValid?-1:backups.findIndex((hash:string)=>hashOneTimeToken(code)===hash);
     if(!totpValid&&backupIndex<0){
@@ -325,11 +383,12 @@ async function handleMfaVerify(req: AuthRequest, res: Response, pool: NonNullabl
       return res.status(401).json({error:'Invalid MFA code'});
     }
     if(backupIndex>=0){backups.splice(backupIndex,1);await client.query('UPDATE users SET mfa_backup_codes=$1::jsonb WHERE id=$2',[JSON.stringify(backups),row.user_id]);}
+    if(totpValid)await client.query('UPDATE users SET mfa_last_totp_step=$1 WHERE id=$2',[totpStep,row.user_id]);
     await client.query('DELETE FROM auth_mfa_challenges WHERE id=$1',[row.id]);
     await client.query('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1',[row.user_id]);
     await client.query('COMMIT');
     const token=await issueSession(pool,row.user_id,req,res,{mfaVerified:true});
-    return res.json({token,user:{id:row.user_id,organization_id:row.organization_id,organization_name:row.organization_name,organization_slug:row.organization_slug,organization_settings:row.organization_settings,email:row.email,name:row.name,role:row.role}});
+    return res.json({...(wantsBearerToken(req)?{token}:{}),user:{id:row.user_id,organization_id:row.organization_id,organization_name:row.organization_name,organization_slug:row.organization_slug,organization_settings:row.organization_settings,email:row.email,name:row.name,role:row.role}});
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
@@ -394,7 +453,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
       FROM auth_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
-        AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash]);
+        AND s.last_seen_at>CURRENT_TIMESTAMP-make_interval(secs=>$2::float8)
+        AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash,sessionIdleHours()*3600]);
     const dbUser=rows[0];
     if(!dbUser)return res.status(401).json({error:'Unauthorized: Invalid or expired session'});
     req.dbUser=dbUser;
@@ -431,6 +491,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     }
     if(req.path==='/auth/sessions'&&req.method==='GET')return listSessions(req,res,pool);
     if(req.path==='/auth/sessions/revoke-others'&&req.method==='POST')return revokeOtherSessions(req,res,pool);
+    if(req.path==='/auth/sessions/revoke-all'&&req.method==='POST')return revokeAllSessions(req,res,pool);
+    {const m=req.path.match(/^\/auth\/sessions\/([A-Za-z0-9_-]{1,100})\/revoke$/);if(m&&req.method==='POST')return revokeSessionById(req,res,pool,m[1]);}
     if(req.path==='/auth/mfa/setup'&&req.method==='POST')return handleMfaSetup(req,res,pool);
     if(req.path==='/auth/mfa/enable'&&req.method==='POST')return handleMfaEnable(req,res,pool);
     if(req.path==='/auth/mfa/disable'&&req.method==='POST')return handleMfaDisable(req,res,pool);
@@ -442,7 +504,10 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       return res.json({invites});
     }
     if(req.path==='/organization/settings'&&(req.method==='GET'||req.method==='PATCH'))return organizationSettings(req,res,pool);
-    if(req.path==='/organization/billing'&&req.method==='GET')return billingAndUsage(req,res,pool);
+    if(req.path==='/organization/billing'&&req.method==='GET'){
+      if(!can(dbUser.role,'billing:read'))return res.status(403).json({error:'Forbidden: billing access requires a manager or administrator role'});
+      return billingAndUsage(req,res,pool);
+    }
     if(req.path==='/organization/billing/checkout'&&req.method==='POST'){
       if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
       const plan=String(req.body?.plan||'') as 'starter'|'professional'|'enterprise';

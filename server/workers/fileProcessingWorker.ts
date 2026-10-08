@@ -53,7 +53,7 @@ export async function claimNextFileProcessingJob(pool: Pool, workerId: string): 
     SET status = 'processing',
         attempts = attempts + 1,
         locked_at = CURRENT_TIMESTAMP,
-        result = COALESCE(j.result, '{}'::jsonb) || jsonb_build_object('worker_id', $1),
+        result = COALESCE(j.result, '{}'::jsonb) || jsonb_build_object('worker_id', $1::text),
         updated_at = CURRENT_TIMESTAMP
     FROM candidate
     WHERE j.id = candidate.id

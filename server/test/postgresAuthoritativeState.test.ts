@@ -97,8 +97,10 @@ const fakeClient = {
   release: () => undefined,
 };
 const successfulPool = {
-  query: async (sql: string) => {
+  query: async (sql: string, params: unknown[] = []) => {
     successfulQueries.push(sql);
+    // Reads of the persisted campaign return the row that the (fake) database would hold.
+    if (sql.includes('FROM campaign') && sql.includes('organization_id')) return { rowCount: 1, rows: [{ id: params[0], organization_id: orgId, name: 'DB success campaign', status: 'draft' }] };
     return { rowCount: 1, rows: [] };
   },
   connect: async () => fakeClient,
@@ -106,16 +108,20 @@ const successfulPool = {
 
 setPgPoolForTests(successfulPool as any);
 resetMemory();
+// PostgreSQL is the ONLY store: a committed mutation is persisted through SQL and never mirrored into process memory.
 const successfulCampaign = await CampaignManager.createCampaign({ organizationId: orgId, name: 'DB success campaign' });
-assert.equal(inMemoryStore.campaigns.length, 1, 'successful create mirrors the committed campaign in memory');
+assert.equal(inMemoryStore.campaigns.length, 0, 'successful create is persisted in PostgreSQL, not mirrored into memory');
+assert.ok(successfulQueries.some((sql) => sql.includes('INSERT INTO campaign')), 'create persists the campaign with SQL');
 const successfulStart = await CampaignManager.startCampaign(orgId, successfulCampaign.id, 'agent_phase1');
 assert.equal(successfulStart.session.status, 'active');
+assert.ok(successfulQueries.some((sql) => sql.includes('INSERT INTO dialing_session')), 'start persists the dialing session');
 await CampaignManager.addContacts(orgId, successfulCampaign.id, [{ contactName: 'Owner', phoneNumber: '+15625550125' }]);
-assert.equal(inMemoryStore.campaignContacts.length, 1, 'successful addContacts mirrors committed contacts in memory');
+assert.equal(inMemoryStore.campaignContacts.length, 0, 'addContacts persists contacts in PostgreSQL, not memory');
+assert.ok(successfulQueries.some((sql) => sql.includes('INSERT INTO campaign_contact')), 'addContacts persists contacts with SQL');
 await CampaignManager.pauseCampaign(orgId, successfulCampaign.id);
-assert.equal(inMemoryStore.campaigns[0].status, 'paused');
 await CampaignManager.stopCampaign(orgId, successfulCampaign.id);
-assert.equal(inMemoryStore.campaigns[0].status, 'completed');
+assert.equal(inMemoryStore.campaigns.length, 0, 'pause/stop never create in-memory campaign state');
+assert.ok(successfulQueries.filter((sql) => sql.includes('UPDATE campaign')).length >= 2, 'pause and stop update the campaign in PostgreSQL');
 assert(successfulQueries.includes('BEGIN') && successfulQueries.includes('COMMIT'), 'multi-step campaign mutations use PostgreSQL transactions');
 
 setPgPoolForTests(null);

@@ -69,7 +69,9 @@ export function decryptSecret(value: string): string {
 }
 
 function baseUrl(): string {
-  return (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '');
+  const configured = process.env.APP_URL;
+  if (!configured && process.env.NODE_ENV === 'production') throw new Error('APP_URL is required in production');
+  return (configured || 'http://localhost:8080').replace(/\/$/, '');
 }
 
 export function callbackUrl(provider: OAuthProvider): string {
@@ -80,6 +82,8 @@ export async function createOAuthStart(pool: Pool, args: {
   provider: OAuthProvider;
   userId: string;
   organizationId: string;
+  /** Random per-browser value, also set as an HttpOnly cookie; the callback must present the same value. */
+  browserNonce: string;
 }): Promise<string> {
   const config = getProviderConfig(args.provider);
   const state = randomBytes(32).toString('base64url');
@@ -89,9 +93,9 @@ export async function createOAuthStart(pool: Pool, args: {
 
   await pool.query(
     `INSERT INTO integration_oauth_states
-      (state_hash, provider, user_id, organization_id, code_verifier, redirect_uri, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
-    [createHash('sha256').update(state).digest('hex'), args.provider, args.userId, args.organizationId, encryptSecret(codeVerifier), redirectUri],
+      (state_hash, provider, user_id, organization_id, code_verifier, redirect_uri, expires_at, browser_nonce_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP + INTERVAL '10 minutes', $7)`,
+    [createHash('sha256').update(state).digest('hex'), args.provider, args.userId, args.organizationId, encryptSecret(codeVerifier), redirectUri, createHash('sha256').update(args.browserNonce).digest('hex')],
   );
 
   const params = new URLSearchParams({
@@ -112,59 +116,7 @@ export async function createOAuthStart(pool: Pool, args: {
   return `${config.authorizationEndpoint}?${params.toString()}`;
 }
 
-
-/**
- * Return a usable Google Workspace access token for a tenant.
- * Refreshes the encrypted OAuth token server-side when it is near expiry.
- */
-export async function getGoogleWorkspaceAccessToken(pool: Pool, organizationId: string): Promise<string> {
-  const rowResult = await pool.query(
-    `SELECT id, access_token, refresh_token, token_expires_at
-       FROM integration_connections
-      WHERE organization_id=$1 AND provider='google-workspace' AND status='connected'
-      ORDER BY updated_at DESC
-      LIMIT 1`,
-    [organizationId],
-  );
-  const row = rowResult.rows[0];
-  if (!row) throw new Error('Google Workspace is not connected for this organization');
-
-  const expiresAt = row.token_expires_at ? new Date(row.token_expires_at).getTime() : 0;
-  if (row.access_token && expiresAt > Date.now() + 60_000) {
-    return decryptSecret(row.access_token);
-  }
-  if (!row.refresh_token) throw new Error('Google Workspace authorization expired; reconnect Google Workspace');
-
-  const config = getProviderConfig('google-workspace');
-  const body = new URLSearchParams({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    refresh_token: decryptSecret(row.refresh_token),
-    grant_type: 'refresh_token',
-  });
-  const response = await fetch(config.tokenEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-  const token = await response.json() as Record<string, any>;
-  if (!response.ok || !token.access_token) {
-    await pool.query("UPDATE integration_connections SET status='error', updated_at=CURRENT_TIMESTAMP WHERE id=$1", [row.id]);
-    throw new Error(token.error_description || token.error || 'Google Workspace token refresh failed');
-  }
-
-  const encryptedAccessToken = encryptSecret(String(token.access_token));
-  const expires = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null;
-  await pool.query(
-    `UPDATE integration_connections
-        SET access_token=$1, token_expires_at=$2, status='connected', updated_at=CURRENT_TIMESTAMP
-      WHERE id=$3`,
-    [encryptedAccessToken, expires, row.id],
-  );
-  return String(token.access_token);
-}
-
-export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider, state: string, code: string) {
+export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider, state: string, code: string, browserNonce: string) {
   const stateHash = createHash('sha256').update(state).digest('hex');
   const client = await pool.connect();
   try {
@@ -177,6 +129,12 @@ export async function completeOAuthCallback(pool: Pool, provider: OAuthProvider,
     );
     const oauthState = stateResult.rows[0];
     if (!oauthState) throw new Error('OAuth state is invalid or expired');
+    const nonceHash = createHash('sha256').update(browserNonce || '').digest('hex');
+    if (!browserNonce || !oauthState.browser_nonce_hash || oauthState.browser_nonce_hash !== nonceHash) {
+      // Do not consume the state: the legitimate browser can still finish. Possible cross-browser replay.
+      await client.query('ROLLBACK');
+      throw new Error('OAuth state does not belong to this browser session');
+    }
 
     await client.query('DELETE FROM integration_oauth_states WHERE state_hash = $1', [stateHash]);
     const config = getProviderConfig(provider);

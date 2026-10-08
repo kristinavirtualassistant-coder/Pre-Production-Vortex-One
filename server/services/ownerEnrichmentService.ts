@@ -1,3 +1,4 @@
+import { ResourceNotFoundError } from '../errors';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { getPgPool } from '../db/db';
@@ -269,6 +270,13 @@ export class OwnerEnrichmentService {
     await assertSchemaReady(pool);
 
     const provider = PROVIDERS.find((p) => p.name === (request.provider || 'public_records')) || publicRecordsProvider;
+    // The owner and any referenced property must belong to the caller's organization BEFORE a job row is written.
+    const ownedOwner = await pool.query('SELECT 1 FROM property_owners WHERE id = $1 AND organization_id = $2 LIMIT 1', [request.ownerId, orgId]);
+    if (!ownedOwner.rowCount) throw new ResourceNotFoundError('Owner');
+    if (request.propertyId) {
+      const ownedProperty = await pool.query('SELECT 1 FROM properties WHERE id = $1 AND organization_id = $2 LIMIT 1', [request.propertyId, orgId]);
+      if (!ownedProperty.rowCount) throw new ResourceNotFoundError('Property');
+    }
     const jobId = id('enrich');
     await pool.query(
       `INSERT INTO owner_enrichment_jobs

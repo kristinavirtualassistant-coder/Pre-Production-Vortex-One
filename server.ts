@@ -23,7 +23,7 @@ import { DataImportService } from './server/services/dataImportService';
 import { UnifiedPropertyDataProvider } from './server/services/propertyProviders/PropertyDataProvider';
 import { SkipTraceService } from './server/services/skipTraceService';
 import { externalWebhookService } from './server/services/externalWebhookService';
-import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole } from './server/middleware/auth';
+import { requireAuth, AuthRequest, shouldBypassApiAuth, requireRole, stripClientIdentityHeaders } from './server/middleware/auth';
 import { taskCacheService } from './server/services/cacheService';
 import { requireOrganizationId } from './server/services/organizationContext';
 import { startDialingEngine } from './server/dialer/dialingEngine';
@@ -41,47 +41,56 @@ import { createWorkflowVersion, publishWorkflowVersion, scheduleWorkflow, update
 import { runWorkflowSchedulerOnce as runWorkflowScheduler } from './server/workers/workflowWorker';
 import { executeAgentRun, listAgentRuns, getAgentRun, continueApprovedAgentRun, cancelAgentRun } from './server/agents/agentRuntime';
 import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemoryService';
-import { createCheckoutSession, createPortalSession, verifyStripeWebhook, handleStripeEvent, enforceUsageLimit } from './server/services/billingService';
+import { createCheckoutSession, createPortalSession, verifyStripeWebhook, processStripeWebhookEvent, enforceUsageLimit } from './server/services/billingService';
+import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
+import { httpStatusForError } from './server/errors';
+import { requirePermission } from './server/security/permissions';
+import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
+import { TENANT_GUC } from './server/db/tenantContext';
+import { isDemoModeEnabled } from './server/security/demoMode';
+import { logError, safeErrorMessage } from './server/security/logger';
+import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
+import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebhook } from './server/routes/machineEndpoints';
+import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
+import * as limits from './server/middleware/limits';
+import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
-async function startServer() {
+export interface CreateAppOptions {
+  /** Serve the Vite dev middleware (development) or built static assets (production). Default true. */
+  serveFrontend?: boolean;
+  /** Start the legacy in-process refresh/campaign timer. Default true; the timer never keeps the process alive. */
+  backgroundTimers?: boolean;
+}
+
+/**
+ * Builds the fully configured Express application WITHOUT binding a port, so it can be mounted by a
+ * serverless handler or exercised over real HTTP in tests. `startServer()` below binds the port.
+ */
+export async function createApp(options: CreateAppOptions = {}): Promise<express.Express> {
+  const serveFrontend = options.serveFrontend ?? true;
+  const backgroundTimers = options.backgroundTimers ?? true;
   const app = express();
-  const PORT = Number(process.env.PORT || 8080);
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Stripe requires the exact raw request bytes for webhook signature verification.
-  app.post('/api/billing/webhook', requireRole(['admin', 'executive', 'manager']), express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
-    const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-    const signature = req.header('stripe-signature') || '';
-    if (!secret || !signature || !Buffer.isBuffer(req.body)) {
-      return res.status(400).json({ error: 'Stripe webhook is not configured correctly' });
-    }
-    if (!verifyStripeWebhook(req.body, signature, secret)) {
-      return res.status(400).json({ error: 'Invalid Stripe webhook signature' });
-    }
-    try {
-      const event = JSON.parse(req.body.toString('utf8'));
-      if (!event?.id || typeof event.id !== 'string' || !event.type) {
-        return res.status(400).json({ error: 'Invalid Stripe event' });
-      }
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'Database unavailable' });
-      const inserted = await pool.query(
-        `INSERT INTO stripe_webhook_events(id,event_type,payload)
-         VALUES($1,$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
-        [event.id, event.type, JSON.stringify(event)],
-      );
-      if (inserted.rowCount === 1) {
-        await handleStripeEvent(pool, event);
-      }
-      return res.json({ received: true, processed: inserted.rowCount === 1 });
-    } catch (error: any) {
-      console.error('Stripe webhook processing failed:', error);
-      return res.status(500).json({ error: 'Stripe webhook processing failed' });
-    }
-  });
+  // req.ip (used by every rate limiter) is only correct behind a proxy when the hop count is configured.
+  app.set('trust proxy', resolveTrustProxy());
+  app.disable('x-powered-by');
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
+  app.use(stripClientIdentityHeaders);
+
+  registerStripeWebhook(app);
+
+  // Small pre-auth body limits (bulk-import routes get a bounded larger parser after authentication).
+  app.use(defaultBodyParsers);
+  app.use(rejectUnsafeBodies);
+
+  // Public authentication endpoints: abuse protection runs before any credential is checked.
+  app.use('/api/auth', limits.authAbuseProtection());
+  app.use('/api/telephony/webhook', limits.webhookIngressLimiter());
+  app.use('/api/integrations/oauth/callback', limits.webhookIngressLimiter());
+  app.use('/api/integrations/oauth', integrationOAuthCallbackRouter);
+  app.use('/api/communications/webhooks', limits.webhookIngressLimiter());
 
   // Initialize DB & Migrations on Boot
   try {
@@ -118,7 +127,7 @@ async function startServer() {
   });
 
   // All API routes are authenticated except the minimal health endpoint and
-  // provider callbacks that must be reachable without a Firebase user token.
+  // provider callbacks that must be reachable without a user session.
   app.use('/api', (req: AuthRequest, res, next) => {
     if (shouldBypassApiAuth(req.path)) {
       return next();
@@ -126,28 +135,35 @@ async function startServer() {
     return requireAuth(req, res, next);
   });
 
+  app.use(largeBodyParser);
+  app.use(rejectUnsafeBodies);
+
+  // Cost-bearing routes: per-tenant (+IP) limits after authentication.
+  app.use('/api/tts', limits.expensiveLimiter('tts', 30));
+  app.use('/api/ai', limits.expensiveLimiter('ai', 30));
+  app.use('/api/ai-agents', limits.expensiveLimiter('ai-agents', 60));
+  app.use('/api/property-search', limits.expensiveLimiter('property-search', 60));
+  app.use('/api/skip-trace', limits.expensiveLimiter('skip-trace', 30));
+  app.use('/api/owner-enrichment', limits.expensiveLimiter('enrichment', 60));
+  app.use('/api/workflows/execute', limits.expensiveLimiter('wf-execute', 30));
+  app.use('/api/dial-batch', limits.expensiveLimiter('dial-batch', 10));
+  app.use('/api/communications/sms', limits.expensiveLimiter('sms', 120));
+  app.use('/api/communications/email', limits.expensiveLimiter('email', 120));
+
+  app.use('/api/integrations', integrationsRouter);
   app.use('/api/billing', billingRouter);
 
   app.use('/api/owner-enrichment', createOwnerEnrichmentRouter());
   app.use('/api/communications', communicationsRouter);
 
-  app.post('/internal/scheduler/workflows', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    const expected = process.env.SCHEDULER_TRIGGER_SECRET?.trim();
-    const supplied = String(req.header('x-vortex-scheduler-secret') || '').trim();
-    if (!expected || supplied !== expected) return res.status(401).json({ error: 'Unauthorized scheduler request' });
-    try {
-      res.json(await runWorkflowScheduler());
-    } catch (err: any) {
-      console.error('Workflow scheduler failed:', err);
-      res.status(500).json({ error: err.message || 'Workflow scheduler failed' });
-    }
+  registerSchedulerTrigger(app);
+
+  app.get('/api/db/status', requirePermission('system:read'), (req, res) => {
+    const { instance: _instance, error, ...status } = getDatabaseStatus();
+    res.json({ ...status, ...(error ? { error: 'Database unavailable' } : {}) });
   });
 
-  app.get('/api/db/status', (req, res) => {
-    res.json(getDatabaseStatus());
-  });
-
-  app.get('/api/operational/metrics', async (req, res) => {
+  app.get('/api/operational/metrics', requirePermission('metrics:read'), async (req, res) => {
     try {
       const organizationId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -161,18 +177,18 @@ async function startServer() {
           (SELECT COUNT(*) FROM jobs WHERE organization_id = $1 AND status = 'failed') AS failed_jobs`, [organizationId]);
       res.json({ organizationId, ...result.rows[0], database: getDatabaseStatus() });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to load operational metrics' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to load operational metrics') });
     }
   });
 
   // --- Task Cache & Saved Answers Management APIs ---
-  app.get('/api/cache/stats', (req, res) => {
+  app.get('/api/cache/stats', requirePermission('system:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
     res.setHeader('Content-Type', 'application/json');
     res.json(taskCacheService.getStats());
   });
 
-  app.get('/api/cache/entries', (req, res) => {
+  app.get('/api/cache/entries', requirePermission('system:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Global cache administration is disabled in production.' });
     const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit || '100'), 10) || 100, 1), 100);
     const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -212,7 +228,7 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       console.error('Orchestration error:', err);
-      res.status(500).json({ error: err.message || 'Orchestration failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Orchestration failed') });
     }
   });
 
@@ -329,12 +345,13 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow versioning'});
     try { res.status(201).json(await createWorkflowVersion(pool,orgId,req.params.id,userId,Boolean(req.body?.publish))); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to create workflow version'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to create workflow version')}); }
   });
 
   app.get('/api/workflows/:id/versions', async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow versions'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     const result=await pool.query('SELECT * FROM workflow_versions WHERE workflow_id=$1 AND organization_id=$2 ORDER BY version DESC',[req.params.id,orgId]);
     res.json(result.rows);
   });
@@ -343,14 +360,15 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow publishing'});
     try { res.json(await publishWorkflowVersion(pool,orgId,req.params.id,req.params.versionId)); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to publish workflow version'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to publish workflow version')}); }
   });
 
   app.post('/api/workflows/:id/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     try { res.status(201).json(await scheduleWorkflow(pool,orgId,req.params.id,userId,req.body||{})); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to schedule workflow'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to schedule workflow')}); }
   });
 
   app.patch('/api/workflows/:id/schedules/:scheduleId', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -359,7 +377,7 @@ async function startServer() {
     const status=String(req.body?.status||'');
     if(!['active','paused','cancelled'].includes(status)) return res.status(400).json({error:'status must be active, paused, or cancelled'});
     try { res.json(await updateWorkflowScheduleStatus(pool,orgId,req.params.scheduleId,status as 'active'|'paused'|'cancelled')); }
-    catch(err:any){ res.status(404).json({error:err.message||'Failed to update workflow schedule'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to update workflow schedule')}); }
   });
 
   app.post('/api/workflows/:id/schedules/:scheduleId/run-now', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -368,12 +386,13 @@ async function startServer() {
     try {
       const result=await runWorkflowScheduleNow(pool,orgId,req.params.scheduleId);
       res.status(202).json(result);
-    } catch(err:any){ res.status(400).json({error:err.message||'Failed to queue workflow'}); }
+    } catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to queue workflow')}); }
   });
 
   app.get('/api/workflows/:id/schedules', async (req, res) => {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow schedules'});
+    if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     const result=await pool.query('SELECT * FROM workflow_schedules WHERE workflow_id=$1 AND organization_id=$2 ORDER BY created_at DESC',[req.params.id,orgId]);
     res.json(result.rows);
   });
@@ -394,7 +413,7 @@ async function startServer() {
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow retry'});
     try { res.status(202).json(await retryWorkflowRun(pool,orgId,req.params.id)); }
-    catch(err:any){ res.status(400).json({error:err.message||'Failed to retry workflow'}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to retry workflow')}); }
   });
 
   app.get('/api/workflow-runs/:id/steps', async (req, res) => {
@@ -667,7 +686,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Workflow execution error:', err);
-      res.status(500).json({ error: err.message || 'Workflow execution failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Workflow execution failed') });
     }
   });
 
@@ -961,7 +980,7 @@ async function startServer() {
       res.end();
     } catch (err: any) {
       console.error('Workflow stream error:', err);
-      sendEvent('error', { error: err.message || 'Streaming execution failed' });
+      sendEvent('error', { error: safeErrorMessage(err, 'Streaming execution failed') });
       res.end();
     }
   });
@@ -1004,10 +1023,11 @@ async function startServer() {
   });
 
   // Audit Logging API
-  app.get('/api/audit/logs', (req, res) => {
+  app.get('/api/audit/logs', requirePermission('audit:read'), (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy audit-log API was removed; use /api/audit.' });
     try {
-      res.json(inMemoryStore.auditLogs);
+      const auditOrgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      res.json(inMemoryStore.auditLogs.filter((entry: any) => entry.organization_id === auditOrgId));
     } catch (err: any) {
       console.error('Failed to get audit logs:', err);
       res.status(500).json({ error: 'Failed to get audit logs' });
@@ -1039,68 +1059,7 @@ async function startServer() {
   // Property Intelligence & Live County GIS Search APIs
   const propertyDataProvider = new UnifiedPropertyDataProvider();
 
-  // External HTTP/HTTPS Webhook Management APIs
-  app.get('/api/webhooks', async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      res.json(await externalWebhookService.listEndpoints(organizationId));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to list webhook endpoints' });
-    }
-  });
-
-  app.post('/api/webhooks', requireRole(['admin', 'executive']), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
-      res.status(201).json(endpoint);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to create webhook endpoint' });
-    }
-  });
-
-  app.put('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const updated = await externalWebhookService.updateEndpoint(organizationId, req.params.id, req.body);
-      if (!updated) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json(updated);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to update webhook endpoint' });
-    }
-  });
-
-  app.delete('/api/webhooks/:id', requireRole(['admin', 'executive']), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const deleted = await externalWebhookService.deleteEndpoint(organizationId, req.params.id);
-      if (!deleted) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json({ success: true, deletedId: req.params.id });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete webhook endpoint' });
-    }
-  });
-
-  app.post('/api/webhooks/:id/test', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const delivery = await externalWebhookService.testEndpointById(organizationId, req.params.id);
-      if (!delivery) return res.status(404).json({ error: 'Webhook endpoint not found' });
-      res.json(delivery);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Webhook test failed' });
-    }
-  });
-
-  app.get('/api/webhooks/:id/deliveries', async (req, res) => {
-    try {
-      const organizationId = (req as AuthRequest).dbUser!.organization_id;
-      const limit = Math.max(1, Number(req.query.limit) || 50);
-      res.json(await externalWebhookService.listDeliveries(organizationId, req.params.id, limit));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to list webhook deliveries' });
-    }
-  });
+  app.use('/api/webhooks', webhookEndpointsRouter);
 
   app.get('/api/property-search', async (req, res) => {
     try {
@@ -1175,7 +1134,7 @@ async function startServer() {
       res.json({ success: true, ...result });
     } catch (err: any) {
       console.error('Database property search error:', err);
-      res.status(500).json({ error: err.message || 'Property search failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Property search failed') });
     }
   });
 
@@ -1206,7 +1165,7 @@ async function startServer() {
       });
       res.status(result.created ? 201 : 200).json({ success: true, ...result, propertyId: property.id, ownerId: property.owner_id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create canonical CRM lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create canonical CRM lead') });
     }
   });
 
@@ -1233,7 +1192,7 @@ async function startServer() {
       res.json(results);
     } catch (err: any) {
       console.error('Live property provider search error:', err);
-      res.status(500).json({ error: err.message || 'Live property search failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Live property search failed') });
     }
   });
 
@@ -1453,7 +1412,7 @@ async function startServer() {
       let result: any;
       try {
         await client.query('BEGIN');
-        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
+        await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, orgId]);
         await client.query('SET LOCAL statement_timeout = 5000');
         result = await client.query(
         `SELECT
@@ -1607,7 +1566,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Bulk tag properties error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update property tags' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update property tags') });
     }
   });
 
@@ -1733,7 +1692,7 @@ async function startServer() {
       res.json(updatedProp);
     } catch (err: any) {
       console.error('Update property tags error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update property tags' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update property tags') });
     }
   });
 
@@ -1752,7 +1711,7 @@ async function startServer() {
       return res.json(result.rows);
     } catch (err: any) {
       console.error('Owner query error:', err);
-      return res.status(500).json({ error: err.message || 'Failed to load owners' });
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to load owners') });
     }
   });
 
@@ -1777,7 +1736,7 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       console.error('Skip trace execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute 5-step skip trace' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute 5-step skip trace') });
     }
   });
 
@@ -1806,7 +1765,7 @@ async function startServer() {
       res.json(saveResult);
     } catch (err: any) {
       console.error('Save discovered contacts error:', err);
-      res.status(500).json({ error: err.message || 'Failed to save discovered contacts' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to save discovered contacts') });
     }
   });
 
@@ -1968,7 +1927,7 @@ async function startServer() {
       res.json(pipelineResult);
     } catch (err: any) {
       console.error('Automated pipeline execution error:', err);
-      res.status(500).json({ error: err.message || 'Failed to run automated property search & skip trace pipeline' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to run automated property search & skip trace pipeline') });
     }
   });
 
@@ -1986,7 +1945,7 @@ async function startServer() {
       res.json(batchResult);
     } catch (err: any) {
       console.error('Batch skip trace error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute batch skip trace' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute batch skip trace') });
     }
   });
 
@@ -2009,7 +1968,7 @@ async function startServer() {
       res.json(enriched);
     } catch (err: any) {
       console.error('Auto-enrich error:', err);
-      res.status(500).json({ error: err.message || 'Failed to auto-enrich contact info' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to auto-enrich contact info') });
     }
   });
 
@@ -2020,7 +1979,7 @@ async function startServer() {
       const stats = SkipTraceService.getAutomationStats(orgId);
       res.json(stats);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to load skip trace telemetry stats' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to load skip trace telemetry stats') });
     }
   });
 
@@ -2034,7 +1993,7 @@ async function startServer() {
         return res.status(400).json({ error: 'leadIds array is required' });
       }
 
-      const leads = inMemoryStore.leads.filter((l) => leadIds.includes(l.id));
+      const leads = inMemoryStore.leads.filter((l) => leadIds.includes(l.id) && l.organization_id === orgId);
 
       const enriched = leads.map((l, idx) => {
         // Update lead stage in memory store to enriched
@@ -2077,7 +2036,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Deep enrichment error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute deep enrichment workflow' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute deep enrichment workflow') });
     }
   });
 
@@ -2278,7 +2237,7 @@ async function startServer() {
   };
 
   // Background timer interval: check every 30 seconds for due schedules & scheduled campaign execution
-  setInterval(() => {
+  const refreshTimer = backgroundTimers ? setInterval(() => {
     try {
       const now = new Date().getTime();
       const schedules = inMemoryStore.propertyRefreshSchedules || [];
@@ -2301,7 +2260,8 @@ async function startServer() {
     } catch (schedTickErr) {
       console.error('[Scheduler] Periodic tick check error:', schedTickErr);
     }
-  }, 30000);
+  }, 30000) : undefined;
+  refreshTimer?.unref();
 
   // Scheduler API Endpoints
   app.get('/api/scheduler/schedules', (req, res) => {
@@ -2373,7 +2333,7 @@ async function startServer() {
       res.status(201).json(newSchedule);
     } catch (err: any) {
       console.error('Create schedule error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create schedule') });
     }
   });
 
@@ -2402,7 +2362,7 @@ async function startServer() {
       inMemoryStore.propertyRefreshSchedules[index] = updated;
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to update schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update schedule') });
     }
   });
 
@@ -2427,7 +2387,7 @@ async function startServer() {
       inMemoryStore.propertyRefreshSchedules[index] = existing;
       res.json(existing);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to toggle schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to toggle schedule') });
     }
   });
 
@@ -2440,7 +2400,7 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       console.error('Manual schedule run error:', err);
-      res.status(500).json({ error: err.message || 'Failed to execute scheduled property refresh' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to execute scheduled property refresh') });
     }
   });
 
@@ -2460,7 +2420,7 @@ async function startServer() {
 
       res.json({ success: true, message: 'Schedule deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete schedule' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete schedule') });
     }
   });
 
@@ -2555,7 +2515,7 @@ async function startServer() {
             assigned_agent = COALESCE($4, assigned_agent),
             dnc_compliant = COALESCE($5, dnc_compliant),
             updated_at = NOW()
-          WHERE id = $6`,
+          WHERE id = $6 AND organization_id = $7`,
           [
             updates.stage || null,
             updates.lead_score || null,
@@ -2563,6 +2523,7 @@ async function startServer() {
             updates.assigned_agent || null,
             updates.dnc_compliant !== undefined ? updates.dnc_compliant : null,
             id,
+            orgId,
           ]
         );
       } catch (pgErr) {
@@ -2571,7 +2532,7 @@ async function startServer() {
 
       res.json(updatedLead);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to update lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update lead') });
     }
   });
 
@@ -2661,7 +2622,7 @@ async function startServer() {
         message: `Successfully updated ${updatedCount} leads.`,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Batch lead update failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Batch lead update failed') });
     }
   });
 
@@ -2768,7 +2729,7 @@ async function startServer() {
 
       res.status(201).json(newLead);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create lead') });
     }
   });
 
@@ -2788,7 +2749,7 @@ async function startServer() {
 
       res.json({ success: true, message: 'Lead deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete lead' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete lead') });
     }
   });
 
@@ -2809,7 +2770,7 @@ async function startServer() {
 
       res.json({ success: true, deletedCount, message: `Deleted ${deletedCount} leads.` });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Batch delete failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Batch delete failed') });
     }
   });
 
@@ -2832,7 +2793,7 @@ async function startServer() {
       res.status(200).json(result);
     } catch (err: any) {
       console.error('Data import reconciliation error:', err);
-      res.status(500).json({ error: err.message || 'Reconciliation failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Reconciliation failed') });
     }
   });
 
@@ -2856,11 +2817,11 @@ async function startServer() {
       res.json(report);
     } catch (err: any) {
       console.error('Referential integrity validation error:', err);
-      res.status(500).json({ error: err.message || 'Integrity validation failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Integrity validation failed') });
     }
   });
 
-  app.get('/api/import/audit-logs', async (req, res) => {
+  app.get('/api/import/audit-logs', requirePermission('audit:read'), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
@@ -2929,11 +2890,20 @@ async function startServer() {
 
       res.json(audits);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
   // Dialer & Campaign Lifecycle APIs
+  // Responds 404 and returns false unless the row belongs to the caller's organization (see tenantGuards).
+  const ensureOwned = async (res: express.Response, table: OwnedTable, id: unknown, orgId: string): Promise<boolean> => {
+    const pool = getPgPool();
+    if (pool && await isOwned(pool, table, id, orgId)) return true;
+    res.status(404).json({ error: 'Not found' });
+    return false;
+  };
+  const ensureOwnedCampaign = (req: express.Request, res: express.Response, orgId: string) => ensureOwned(res, 'campaign', req.params.id, orgId);
+
   app.get('/api/campaigns', async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
@@ -2999,7 +2969,7 @@ async function startServer() {
 
       res.status(201).json({ ...camp, addedContacts });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3016,7 +2986,7 @@ async function startServer() {
       const updated = await CampaignManager.scheduleCampaign(orgId, req.params.id, scheduledAt, timezone, scheduledBy);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3026,7 +2996,7 @@ async function startServer() {
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3036,7 +3006,7 @@ async function startServer() {
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3046,7 +3016,7 @@ async function startServer() {
       await CampaignManager.pauseCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'paused', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3056,7 +3026,7 @@ async function startServer() {
       await CampaignManager.stopCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'completed', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3065,6 +3035,8 @@ async function startServer() {
     const pool = getPgPool();
     if (pool) {
       try {
+        const ownedCampaign = await pool.query('SELECT 1 FROM campaign WHERE id = $1 AND organization_id = $2', [req.params.id, orgId]);
+        if (!ownedCampaign.rowCount) return res.status(404).json({ error: 'Not found' });
         const result = await pool.query(
           `SELECT id, organization_id, campaign_id, lead_id, contact_name, phone_number, property_address, dial_status, attempts, last_dialed_at, priority, created_at
            FROM campaign_contact WHERE campaign_id = $1 AND organization_id = $2 ORDER BY priority DESC, created_at ASC`,
@@ -3085,13 +3057,14 @@ async function startServer() {
       const result = await CampaignManager.addContacts(orgId, req.params.id, contacts);
       res.status(201).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
   app.post('/api/campaigns/:id/dial-next', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!(await ensureOwnedCampaign(req, res, orgId))) return;
       const result = await CampaignManager.dialNextContact({
         organizationId: orgId,
         campaignId: req.params.id,
@@ -3101,7 +3074,7 @@ async function startServer() {
       });
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3118,17 +3091,18 @@ async function startServer() {
       const result = await startDialingEngine({ organizationId: orgId, campaignId: req.params.id, sessionId: req.body.session_id, concurrency, callStrategyBrief: req.body.call_strategy_brief });
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
   app.post('/api/campaigns/:id/shuffle', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
+      if (!(await ensureOwnedCampaign(req, res, orgId))) return;
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
     }
   });
 
@@ -3171,7 +3145,7 @@ async function startServer() {
   });
 
   // Call Records & Telephony FSM APIs
-  app.get('/api/calls', async (req, res) => {
+  app.get('/api/calls', requirePermission('calls:read'), async (req, res) => {
     const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Production call records require PostgreSQL', code: 'CALL_DATABASE_UNAVAILABLE' });
@@ -3192,6 +3166,7 @@ async function startServer() {
     const pool = getPgPool();
     if (!pool) return res.status(503).json({ error: 'Production call events require PostgreSQL', code: 'CALL_EVENT_DATABASE_UNAVAILABLE' });
     try {
+      await assertOwned(pool, 'call', req.params.id, orgId);
       const result = await pool.query(
         `SELECT id, organization_id, call_id, event_type, payload, occurred_at
          FROM call_event WHERE call_id = $1 AND organization_id = $2 ORDER BY occurred_at ASC`,
@@ -3199,6 +3174,7 @@ async function startServer() {
       );
       return res.json(result.rows);
     } catch (err: any) {
+      if (httpStatusForError(err) === 404) return res.status(404).json({ error: 'Not found' });
       return res.status(503).json({ error: 'Production call events are temporarily unavailable', code: 'CALL_EVENT_DATABASE_ERROR' });
     }
   });
@@ -3278,7 +3254,7 @@ async function startServer() {
       );
       res.status(201).json(record);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3288,56 +3264,11 @@ async function startServer() {
       const success = await SuppressionService.removeSuppression(orgId, req.params.id);
       res.json({ success, id: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
-  // Telephony Webhook Ingestion & Idempotency API (RingCentral)
-  app.post('/api/telephony/webhook/:provider', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
-    if (req.params.provider !== 'ringcentral') return res.status(404).json({ error: 'Unsupported telephony provider' });
-
-    // RingCentral sends a validation request when a subscription is created. It has no
-    // organization/event payload, so handle it before tenant extraction.
-    const validationToken = String(req.headers['validation-token'] || '').trim();
-    if (validationToken) {
-      const validation = handleRingCentralValidation(req.headers);
-      if (!validation) return res.status(401).json({ error: 'Invalid RingCentral validation token' });
-      res.status(validation.statusCode);
-      Object.entries(validation.headers).forEach(([key, value]) => res.setHeader(key, value));
-      return res.end(validation.body);
-    }
-
-    if (!verifyRingCentralWebhook(req.headers)) {
-      return res.status(401).json({ error: 'Invalid RingCentral webhook authentication' });
-    }
-
-    try {
-      const pool = getPgPool();
-      if (!pool) return res.status(503).json({ error: 'PostgreSQL is required for webhook tenant resolution' });
-
-      const body = req.body?.body || req.body;
-      const telephonyCallId = String(
-        body?.telephonyCallId || body?.callId || body?.sessionId ||
-        req.body?.telephonyCallId || req.body?.callId || req.body?.sessionId || ''
-      ).trim();
-      if (!telephonyCallId) return res.status(400).json({ error: 'Provider call identity is required' });
-
-      const tenantLookup = await pool.query(
-        "SELECT DISTINCT organization_id FROM call WHERE telephony_session_id = $1 OR telephony_call_id = $1 LIMIT 2",
-        [telephonyCallId],
-      );
-      if (!tenantLookup.rowCount) return res.status(404).json({ error: 'Call identity is not registered' });
-      if (tenantLookup.rowCount > 1) return res.status(409).json({ error: 'Provider call identity is ambiguous across organizations' });
-
-      const orgId = requireOrganizationId(tenantLookup.rows[0].organization_id);
-      const result = await WebhookHandler.processWebhook('ringcentral', orgId, req.body, req.headers);
-      if (result.status === 'error') return res.status(400).json(result);
-      return res.status(200).json(result);
-    } catch (err: any) {
-      console.error('Telephony Webhook error:', err);
-      return res.status(400).json({ error: err.message });
-    }
-  });
+  registerTelephonyWebhook(app);
 
   // Human Approval Center APIs — PostgreSQL authoritative, tenant scoped, fail closed.
   app.get('/api/approvals', async (req, res) => {
@@ -3363,7 +3294,7 @@ async function startServer() {
   });
 
   // PostgreSQL-authoritative audit log reader.
-  app.get('/api/audit', async (req, res) => {
+  app.get('/api/audit', requirePermission('audit:read'), async (req, res) => {
     try {
       const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool();
       if(!pool) return res.status(503).json({error:'Audit logs require PostgreSQL'});
@@ -3381,7 +3312,7 @@ async function startServer() {
       res.json({ success: !!base64Audio, audio: base64Audio });
     } catch (err: any) {
       console.error('TTS error:', err.message);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3416,7 +3347,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       const dropNote = `[Automated Voicemail Drop]: Left pre-recorded message "${label}" at ${new Date().toLocaleTimeString()}. Agent line released immediately for next contact.`;
 
       await client.query('BEGIN');
-        await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', orgId]);
+        await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, orgId]);
       const callUpdate = await client.query(
         `UPDATE call
          SET disposition = 'voicemail',
@@ -3460,7 +3391,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     } finally {
       client.release();
     }
@@ -3480,7 +3411,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3498,7 +3429,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       if (!result.rowCount) return res.status(404).json({ error: 'Call not found' });
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3514,7 +3445,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
       const ended = await adapter.terminateCall(row.telephony_session_id || '', row.ringcentral_party_id || undefined, row.ringcentral_ringout_id || undefined);
       if (!ended) return res.status(409).json({ error: 'RingCentral cannot end this call in its current state; wait for session/party identifiers or provider completion.' });
       res.json({ success: true });
-    } catch (err: any) { res.status(500).json({ error: err.message }); }
+    } catch (err: any) { res.status(500).json({ error: safeErrorMessage(err, 'Request failed') }); }
   });
 
   app.post('/api/calls/:id/disposition', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -3569,7 +3500,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
 
       res.json({ suggestedTask: result.text });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3624,7 +3555,7 @@ ${transcript}`;
       res.json(parsed);
     } catch (err: any) {
       console.error('AI call analysis failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to analyze call' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to analyze call') });
     }
   });
 
@@ -3680,7 +3611,7 @@ ${transcript}`;
 
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -3711,12 +3642,12 @@ ${transcript}`;
         createdAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to create imported files folder' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create imported files folder') });
     }
   });
 
   // List all files in the Imported Files folder
-  app.get('/api/imported-files', (req, res) => {
+  app.get('/api/imported-files', requirePermission('files:read'), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -3750,12 +3681,12 @@ ${transcript}`;
         files: fileList,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to retrieve imported files' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to retrieve imported files') });
     }
   });
 
   // Download raw file from Imported Files folder
-  app.get('/api/imported-files/:id/download', (req, res) => {
+  app.get('/api/imported-files/:id/download', requirePermission('files:read'), (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const orgDir = path.join(process.cwd(), 'data', 'imported_files', orgId);
@@ -3793,7 +3724,7 @@ ${transcript}`;
       res.setHeader('Content-Type', targetMeta.fileName.endsWith('.csv') ? 'text/csv' : 'application/json');
       fs.createReadStream(filePath).pipe(res);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Download failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Download failed') });
     }
   });
 
@@ -3834,7 +3765,7 @@ ${transcript}`;
 
       res.json({ success: true, message: 'Imported file deleted successfully' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete file' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete file') });
     }
   });
 
@@ -3876,7 +3807,7 @@ ${transcript}`;
   // 1. List Templates with optional filters
   app.get('/api/outreach-templates', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
-    if (process.env.VORTEX_ONE_SEED_DEMO_DATA === '1' && process.env.NODE_ENV !== 'production' && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
+    if (isDemoModeEnabled() && (!inMemoryStore.outreachTemplates || inMemoryStore.outreachTemplates.length === 0)) {
       seedInitialData();
     }
 
@@ -3928,7 +3859,7 @@ ${transcript}`;
   // 2. Get single template
   app.get('/api/outreach-templates/:id', (req, res) => {
     if (isProduction) return res.status(410).json({ error: 'Legacy in-memory outreach template storage was removed from production.' });
-    const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id);
+    const tpl = (inMemoryStore.outreachTemplates || []).find((t) => t.id === req.params.id && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
     if (!tpl) return res.status(404).json({ error: 'Outreach template not found' });
     res.json(tpl);
   });
@@ -3996,7 +3927,7 @@ ${transcript}`;
       res.status(201).json(newTemplate);
     } catch (err: any) {
       console.error('Create template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to create template') });
     }
   });
 
@@ -4006,7 +3937,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4053,7 +3984,7 @@ ${transcript}`;
       res.json(updated);
     } catch (err: any) {
       console.error('Update template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to update template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to update template') });
     }
   });
 
@@ -4063,7 +3994,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4086,7 +4017,7 @@ ${transcript}`;
 
       res.json({ success: true, deleted_id: deleted.id });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to delete template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete template') });
     }
   });
 
@@ -4096,7 +4027,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const existing = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId);
+      const existing = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (!existing) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4121,7 +4052,7 @@ ${transcript}`;
       inMemoryStore.outreachTemplates.unshift(cloned);
       res.status(201).json(cloned);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to duplicate template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to duplicate template') });
     }
   });
 
@@ -4144,7 +4075,7 @@ ${transcript}`;
       let bodyText = rawTemplate?.body || '';
 
       if (templateId) {
-        const found = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId);
+        const found = (inMemoryStore.outreachTemplates || []).find((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
         if (found) {
           channel = found.channel;
           subjectText = found.subject || '';
@@ -4154,13 +4085,13 @@ ${transcript}`;
 
       // Build context dictionary
       let matchedProp = propertyId
-        ? inMemoryStore.properties.find((p) => p.id === propertyId)
+        ? inMemoryStore.properties.find((p) => p.id === propertyId && p.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id))
         : null;
       let matchedOwner = matchedProp
-        ? inMemoryStore.propertyOwners.find((o) => o.id === matchedProp?.owner_id)
+        ? inMemoryStore.propertyOwners.find((o) => o.id === matchedProp?.owner_id && o.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id))
         : null;
       let matchedLead = matchedProp
-        ? inMemoryStore.leads.find((l) => l.primary_property_id === matchedProp?.id || l.owner_id === matchedProp?.owner_id)
+        ? inMemoryStore.leads.find((l) => l.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id) && (l.primary_property_id === matchedProp?.id || l.owner_id === matchedProp?.owner_id))
         : null;
 
       // Merge with custom overrides or defaults
@@ -4225,7 +4156,7 @@ ${transcript}`;
       });
     } catch (err: any) {
       console.error('Render template error:', err);
-      res.status(500).json({ error: err.message || 'Failed to render template' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Failed to render template') });
     }
   });
 
@@ -4235,7 +4166,7 @@ ${transcript}`;
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const templateId = req.params.id;
-      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId);
+      const index = (inMemoryStore.outreachTemplates || []).findIndex((t) => t.id === templateId && t.organization_id === requireOrganizationId((req as AuthRequest).dbUser?.organization_id));
 
       if (index === -1) {
         return res.status(404).json({ error: 'Template not found' });
@@ -4267,7 +4198,7 @@ ${transcript}`;
 
       res.json(tpl);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: safeErrorMessage(err, 'Request failed') });
     }
   });
 
@@ -4437,7 +4368,9 @@ ${transcript}`;
   });
 
   // --- Vite Middleware / Static Serving ---
-  if (process.env.NODE_ENV !== 'production') {
+  if (!serveFrontend) {
+    // API-only application (tests, serverless API handler)
+  } else if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -4456,16 +4389,21 @@ ${transcript}`;
   }
 
   // Multi-Dialer Execution Route
-  app.post('/api/dial-batch', requireRole(['admin', 'executive', 'manager', 'agent']), async (req, res) => {
+  app.post('/api/dial-batch', requirePermission('dial:bulk'), async (req, res) => {
     try {
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       const pool = getPgPool();
       if (pool) await enforceUsageLimit(pool, orgId, 'calls_month', Math.max(1, Array.isArray(req.body?.leads) ? req.body.leads.length : 1));
-      const { campaignId, leads, fromNumber, dialRatioMultiplier } = req.body;
+      const { campaignId, leads, dialRatioMultiplier } = req.body;
 
       if (!campaignId || !leads || !Array.isArray(leads)) {
         return res.status(400).json({ error: 'campaignId and leads array are required' });
       }
+      // The campaign must belong to the caller's organization. A caller-supplied from-number is never honored:
+      // the outbound caller id is a server-side/organization setting, not request input.
+      if (!pool) return res.status(503).json({ error: 'Dialing requires PostgreSQL' });
+      const ownedCampaign = await pool.query('SELECT 1 FROM campaign WHERE id = $1 AND organization_id = $2', [campaignId, orgId]);
+      if (!ownedCampaign.rowCount) return res.status(404).json({ error: 'Not found' });
 
       // Import the services from /src/services/ as they implement batch dialing
       const { SubAgentPool } = await import('./src/services/subAgents');
@@ -4487,7 +4425,7 @@ ${transcript}`;
 
       await manager.executeDialingBatch(
         campaignId,
-        fromNumber || process.env.RINGCENTRAL_FROM_NUMBER!,
+        process.env.RINGCENTRAL_FROM_NUMBER!,
         leads,
         dialRatioMultiplier
       );
@@ -4495,13 +4433,32 @@ ${transcript}`;
       res.json({ success: true, message: 'Dialing batch initiated' });
     } catch (err: any) {
       console.error('Dial batch execution error:', err);
-      res.status(500).json({ error: err.message || 'Dial batch execution failed' });
+      res.status(500).json({ error: safeErrorMessage(err, 'Dial batch execution failed') });
     }
   });
 
+  app.use(jsonErrorHandler);
+  return app;
+}
+
+/** Builds the app and binds the HTTP port. Invoked by server-bootstrap.ts, never on import. */
+let processHandlersInstalled = false;
+function installProcessHandlers() {
+  if (processHandlersInstalled) return;
+  processHandlersInstalled = true;
+  process.on('unhandledRejection', (reason) => logError('unhandledRejection', reason));
+  process.on('uncaughtException', (error) => {
+    logError('uncaughtException', error);
+    // State is undefined after an uncaught exception; exit and let the supervisor restart the process.
+    setTimeout(() => process.exit(1), 100).unref();
+  });
+}
+
+export async function startServer() {
+  installProcessHandlers();
+  const PORT = Number(process.env.PORT || 8080);
+  const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
   });
 }
-
-startServer();
