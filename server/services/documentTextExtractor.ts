@@ -156,7 +156,7 @@ function extractOfficeOpenXml(buffer: Buffer, kind: 'docx' | 'xlsx' | 'pptx'): s
 function extractPdf(buffer: Buffer): string {
   const chunks: Array<{ index: number; text: string }> = [];
   const source = buffer.toString('latin1');
-  for (const match of source.matchAll(/stream\r?\n([\\s\\S]*?)\r?\nendstream/g)) {
+  for (const match of source.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
     const header = source.slice(Math.max(0, (match.index || 0) - 2048), match.index || 0);
     const raw = Buffer.from(match[1], 'latin1');
     let decoded = raw;
@@ -174,7 +174,7 @@ function extractPdf(buffer: Buffer): string {
         text: tj[0].replace(/\s*Tj$/, '').replace(/^\(|\)$/g, '').replace(/\\([\\()])/g, '$1'),
       });
     }
-    for (const tjArray of text.matchAll(/\[([\\s\\S]*?)\]\s*TJ/g)) {
+    for (const tjArray of text.matchAll(/\[([\s\S]*?)\]\s*TJ/g)) {
       for (const part of tjArray[1].matchAll(/\((?:\\.|[^)])*\)/g)) {
         chunks.push({
           index: tjArray.index !== undefined ? tjArray.index : 0,
