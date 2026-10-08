@@ -76,7 +76,7 @@ router.get('/timeline', async (req: AuthRequest, res) => {
         return raw;
       })(),
     })});
-  } catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load communications timeline' }); }
+  } catch (e:any) { const message=e.message || 'Failed to load communications timeline'; res.status(/^limit must be a positive integer$/.test(message) ? 400 : 500).json({ error:message }); }
 });
 
 /**
