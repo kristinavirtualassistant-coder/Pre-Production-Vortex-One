@@ -43,7 +43,7 @@ async function findOrCreateFolder(token: string, name: string): Promise<string> 
 }
 
 async function findOrCreateSpreadsheet(token: string, folderId: string): Promise<string> {
-  const q = encodeURIComponent(`mimeType='application/vnd.google-apps.spreadsheet' and name='Vortex One Backup' and trashed=false`);
+  const q = encodeURIComponent(`mimeType='application/vnd.google-apps.spreadsheet' and name='Vortex One Backup' and trashed=false and '${folderId}' in parents`);
   const found = await googleJson(
     `https://www.googleapis.com/drive/v3/files?q=${q}&pageSize=1&fields=files(id,name,parents)`,
     token,
