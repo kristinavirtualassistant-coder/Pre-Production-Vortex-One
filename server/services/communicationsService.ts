@@ -400,13 +400,21 @@ async function twilio() {
  */
 export async function listTwilioNumbers(pool: Pool, organizationId: string) {
   const cfg = await twilio();
+  let organizationNumbers: string[] = [];
+  try {
+    const configured = JSON.parse(process.env.TWILIO_ORG_NUMBER_MAP || '{}') as Record<string, unknown>;
+    const raw = configured[organizationId];
+    if (Array.isArray(raw)) organizationNumbers = raw.map((value) => normalizePhone(String(value))).filter(Boolean);
+  } catch {
+    throw new Error('TWILIO_ORG_NUMBER_MAP must be valid JSON');
+  }
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/IncomingPhoneNumbers.json?PageSize=100',{headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token)}});
-  const allowed = String(process.env.TWILIO_ALLOWED_NUMBERS || '').split(',').map((v)=>normalizePhone(v)).filter(Boolean);
-  const remoteNumbers = (data.incoming_phone_numbers || []).filter((n:any)=>{
-    const normalized=normalizePhone(n.phone_number);
-    return process.env.NODE_ENV !== 'production' || allowed.includes(normalized);
-  });
-  if(process.env.NODE_ENV === 'production' && !allowed.length) throw new Error('TWILIO_ALLOWED_NUMBERS must map Twilio numbers to an organization in production');
+  const remoteNumbers = (data.incoming_phone_numbers || []).filter((n:any) =>
+    organizationNumbers.includes(normalizePhone(n.phone_number))
+  );
+  if (!organizationNumbers.length) {
+    throw new Error('No Twilio numbers are assigned to this organization');
+  }
   const numbers = remoteNumbers.map((n:any)=>({phone_number:n.phone_number,friendly_name:n.friendly_name,sid:n.sid,capabilities:n.capabilities || {}}));
   for (const n of numbers) {
     await pool.query(
@@ -434,8 +442,14 @@ export async function sendSmsNow(pool: Pool, args: any) {
   const cfg = await twilio();
   const from = normalizePhone(args.from || process.env.TWILIO_FROM_NUMBER || '');
   if (!from) throw new Error('TWILIO_FROM_NUMBER is not configured');
+  const senderOwnership = await pool.query(
+    "SELECT id FROM messaging_numbers WHERE organization_id=$1 AND provider='twilio' AND phone_number=$2 AND status='active' LIMIT 1",
+    [args.organizationId, from],
+  );
+  if (senderOwnership.rowCount !== 1) throw new Error('Twilio sender number is not assigned to this organization');
   const form = new URLSearchParams({To:to,From:from,Body:String(args.body)});
-  const callback = (process.env.APP_URL || '').replace(/\/$/,'') + '/api/communications/webhooks/twilio/status';
+  const base = (process.env.APP_URL || '').replace(/\/$/,'');
+  const callback = base + '/api/communications/webhooks/twilio/status?organizationId=' + encodeURIComponent(args.organizationId);
   if (callback.startsWith('http')) form.set('StatusCallback',callback);
   const data = await requestJson('https://api.twilio.com/2010-04-01/Accounts/' + cfg.sid + '/Messages.json',{
     method:'POST',headers:{Authorization:'Basic ' + basicAuth(cfg.sid,cfg.token),'Content-Type':'application/x-www-form-urlencoded'},body:form,
@@ -718,7 +732,7 @@ export async function listTimeline(pool: Pool, organizationId: string, filters: 
  */
 export async function recordTrackingEvent(pool: Pool, token: string, type:'opened'|'clicked', url?:string, signature?:string) {
   const result=await pool.query('SELECT id,organization_id FROM communication_messages WHERE tracking_token=$1 LIMIT 1',[token]);
-  if (!result.rowCount) return;
+  if (!result.rowCount) throw new Error('Unknown tracking token');
   const message=result.rows[0];
   if (type === 'clicked') {
     if (!url || !/^https?:\/\//i.test(url) || !signature || trackingSignature(token,url) !== signature) throw new Error('Invalid tracking destination');
