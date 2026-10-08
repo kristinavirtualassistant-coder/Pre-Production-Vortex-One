@@ -216,7 +216,7 @@ export async function backupContact(contact: BackupContact): Promise<{
     return { sheets: 'failed', drive: 'failed' };
   }
 
-  const result = { sheets: 'failed' as const, drive: 'failed' as const };
+  const result: { sheets: 'success' | 'failed'; drive: 'success' | 'failed' } = { sheets: 'failed', drive: 'failed' };
   try { await backupContactToSheets(pool, token, contact, contentHash); result.sheets = 'success'; }
   catch (error: any) {
     await recordEvent(pool, {
