@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { deflateRawSync } from 'node:zlib';
+import { deflateRawSync, deflateSync } from 'node:zlib';
 import { extractDocumentText } from '../services/documentTextExtractor';
 
 function crc32(buffer: Buffer): number {
@@ -52,6 +52,14 @@ assert.equal(extractDocumentText(Buffer.from('\ufeffHello Vortex'), 'text/plain'
 
 const pdf = Buffer.from('%PDF-1.4\nstream\n(Hello PDF) Tj\nendstream\n%%EOF', 'latin1');
 assert.equal(extractDocumentText(pdf, 'application/pdf'), 'Hello PDF');
+
+const compressedPdfText = Buffer.from('[(First) 120 (Second)] TJ (Third) Tj', 'latin1');
+const compressedPdf = Buffer.concat([
+  Buffer.from('%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n', 'latin1'),
+  deflateSync(compressedPdfText),
+  Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1'),
+]);
+assert.equal(extractDocumentText(compressedPdf, 'application/pdf'), 'First Second Third');
 
 const docx = zipSingle('word/document.xml', '<w:document><w:body><w:p><w:r><w:t>Vortex DOCX</w:t></w:r></w:p></w:body></w:document>');
 assert.equal(extractDocumentText(docx, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), 'Vortex DOCX');
