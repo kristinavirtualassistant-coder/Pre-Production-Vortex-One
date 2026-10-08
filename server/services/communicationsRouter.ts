@@ -70,7 +70,11 @@ router.get('/timeline', async (req: AuthRequest, res) => {
       leadId:req.query.leadId as string || undefined,
       ownerId:req.query.ownerId as string || undefined,
       propertyId:req.query.propertyId as string || undefined,
-      limit:req.query.limit as string || undefined,
+      limit:req.query.limit === undefined ? undefined : (() => {
+        const raw = req.query.limit;
+        if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) throw new Error('limit must be a positive integer');
+        return raw;
+      })(),
     })});
   } catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load communications timeline' }); }
 });
@@ -251,9 +255,24 @@ router.get('/tracking/unsubscribe/:token', async (req,res) => {
   try {
     const message=await pool.query("SELECT organization_id,to_address FROM communication_messages WHERE tracking_token=$1 AND channel='email' LIMIT 1",[req.params.token]);
     if(!message.rowCount || !message.rows[0].to_address) return res.status(404).send('Invalid unsubscribe link');
+    const token = encodeURIComponent(req.params.token);
+    const action = '/api/communications/tracking/unsubscribe/' + token + '/confirm';
+    res.status(200).send('<html><body style="font-family:system-ui;padding:40px"><h2>Unsubscribe</h2><p>Click the button below to stop further email outreach.</p><form method="POST" action="' + action + '"><button type="submit">Confirm unsubscribe</button></form></body></html>');
+  } catch(e:any) { res.status(500).send('Unable to process unsubscribe request'); }
+});
+
+/**
+ * Apply an email unsubscribe only after explicit recipient confirmation.
+ */
+router.post('/tracking/unsubscribe/:token/confirm', async (req,res) => {
+  const pool=getPgPool();
+  if(!pool) return res.status(503).send('Communications unavailable');
+  try {
+    const message=await pool.query("SELECT organization_id,to_address FROM communication_messages WHERE tracking_token=$1 AND channel='email' LIMIT 1",[req.params.token]);
+    if(!message.rowCount || !message.rows[0].to_address) return res.status(404).send('Invalid unsubscribe link');
     await suppress(pool,message.rows[0].organization_id,'email',message.rows[0].to_address,'unsubscribe','email-link');
     res.status(200).send('<html><body style="font-family:system-ui;padding:40px"><h2>You have been unsubscribed.</h2><p>You will not receive further Vortex One email outreach at this address.</p></body></html>');
-  } catch(e:any) { res.status(500).send('Unable to process unsubscribe request'); }
+  } catch { res.status(500).send('Unable to process unsubscribe request'); }
 });
 
 /**
