@@ -2,7 +2,7 @@ import http from 'node:http';
 import { createHmac, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Pool } from 'pg';
-import { getPgPool } from '../../db/db';
+import { getRawPgPool } from '../../db/db';
 import { hashPassword } from '../../services/postgresqlAuth';
 import { ensurePostgreSQLAuthSchema } from '../../db/postgresqlAuthSchema';
 
@@ -25,7 +25,7 @@ export async function startTestApp(opts: { frontend?: boolean } = {}): Promise<T
 }
 
 export function requirePool(): Pool {
-  const pool = getPgPool();
+  const pool = getRawPgPool();
   if (!pool) throw new Error('Security HTTP tests require PostgreSQL (set DATABASE_URL / SQL_*)');
   return pool;
 }
