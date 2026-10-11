@@ -58,7 +58,7 @@ assert.ok(!/express|app\.(get|post)/.test(provision), 'provisioning is a script,
 
 // ---- migration shape
 const migrations = read('server/db/migrations.ts');
-for (const needle of ['uq_platform_owner_singleton', 'trg_platform_audit_immutable', 'guard_platform_owner_changes', 'organizations_status_valid']) assert.ok(migrations.includes(needle), `migration 046 defines ${needle}`);
+for (const needle of ['uq_platform_owner_singleton', 'trg_platform_audit_immutable', 'guard_platform_owner_changes', 'organizations_status_valid']) assert.ok(migrations.includes(needle), `migration 047 defines ${needle}`);
 assert.ok(!/users_role_valid[\s\S]{0,200}platform_owner/.test(migrations), 'platform_owner is not a valid users.role');
 
 console.log('Owner portal source guards passed.');

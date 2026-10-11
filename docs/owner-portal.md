@@ -62,7 +62,7 @@ REVOKE UPDATE, DELETE, TRUNCATE ON platform_audit_logs FROM <runtime_role>;
 The triggers already make the audit log append-only and the owner table provisioning-only even for administrators; the revokes
 remove the runtime role's ability to even attempt it (the security test runner applies the same revokes).
 
-## Schema changes (migration 046, idempotent)
+## Schema changes (migration 047, idempotent)
 
 | Object | Change |
 |---|---|
