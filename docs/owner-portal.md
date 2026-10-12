@@ -34,6 +34,20 @@ Platform owner       -> /owner portal (MFA-verified session)        -> allowed
   `requireOrganizationAdmin(param?)`, `requireOrganizationMember(param?)`. The organization is always taken from the session;
   a client-supplied id is only compared against it.
 
+## Separate services (APP_SURFACE)
+
+The same image runs as two services on two hostnames, selected by `APP_SURFACE`:
+
+| `APP_SURFACE` | Hostname | Serves | Absent (404) |
+|---|---|---|---|
+| `platform` | `app.<domain>` | Customer platform | `/owner`, `/api/owner/*` |
+| `owner` | `owner.<domain>` | Owner Portal shell, `POST /api/auth/login`, `/api/auth/mfa/verify`, `/api/auth/logout`, `/api/owner/*`, health probes | Every other `/api` route (sign-up, password reset, customer API, webhooks, billing), `/internal/*`; other pages redirect to `/owner` |
+| unset / `combined` | local development and tests | Both | Nothing |
+
+Each hostname gets its own host-only session cookie, so signing in to one never affects the other. The owner service runs no
+background timers. An unknown value refuses to start. The gate is `server/security/appSurface.ts`, installed before every
+route; tests: `server/test/security/surfaceOwner.http.test.ts`, `surfacePlatform.http.test.ts`.
+
 ## Provisioning the owner (operator procedure)
 
 1. The future owner creates a normal account, verifies the email address and enables MFA (account security panel).

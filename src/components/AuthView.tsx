@@ -30,6 +30,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
     if (invite) { setInviteToken(invite); setMode('signup'); }
     else if (verify) { setRecoveryToken(verify); setMode('verify'); }
     else if (reset) { setRecoveryToken(reset); setMode('reset'); }
+    else if (params.get('signup') === '1') setMode('signup'); // "Start free" links from the marketing site
   }, []);
   React.useEffect(() => { if (mfaChallengeToken) setMode('mfa'); }, [mfaChallengeToken]);
   React.useEffect(() => { if (verificationRequired) setMode('verify'); }, [verificationRequired]);

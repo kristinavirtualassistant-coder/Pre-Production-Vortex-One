@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="iconBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1120"></stop>
+      <stop offset="100%" stop-color="#020617"></stop>
+    </linearGradient>
+    <linearGradient id="iconGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"></stop>
+      <stop offset="50%" stop-color="#6366f1"></stop>
+      <stop offset="100%" stop-color="#a855f7"></stop>
+    </linearGradient>
+    <linearGradient id="iconGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"></stop>
+      <stop offset="100%" stop-color="#4facfe"></stop>
+    </linearGradient>
+    <filter id="iconGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur"></feGaussianBlur>
+      <feMerge>
+        <feMergeNode in="blur"></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#iconBg)"></rect>
+  <rect width="512" height="512" rx="112" fill="none" stroke="#1e293b" stroke-width="4"></rect>
+
+  <g transform="translate(256, 256) scale(1.6)" filter="url(#iconGlow)">
+    <path d="M 0,-110 C 70,-110 115,-65 115,0 C 115,45 85,85 45,102 C 38,105 28,95 32,88 C 65,72 88,40 88,0 C 88,-50 50,-84 0,-84 C -50,-84 -88,-50 -88,0 C -88,25 -76,48 -58,64 C -51,70 -58,80 -65,75 C -88,55 -104,28 -104,0 C -104,-65 -58,-110 0,-110 Z" fill="url(#iconGrad1)"></path>
+    <path d="M 0,-70 C 42,-70 70,-42 70,0 C 70,28 50,52 24,64 C 18,67 11,59 15,53 C 35,43 48,24 48,0 C 48,-28 26,-48 0,-48 C -26,-48 -48,-28 -48,0 C -48,14 -41,26 -30,34 C -24,39 -29,48 -35,44 C -50,33 -60,18 -60,0 C -60,-40 -34,-70 0,-70 Z" fill="url(#iconGrad2)"></path>
+    <path d="M -8,-25 L 5,-38 L 5,38 L -5,38 L -5,-15 L -12,-10 Z" fill="#ffffff"></path>
+    <circle cx="5" cy="-38" r="4" fill="#38bdf8"></circle>
+    <circle cx="0" cy="0" r="14" fill="#818cf8" opacity="0.7"></circle>
+    <circle cx="0" cy="0" r="6" fill="#ffffff"></circle>
+  </g>
+</svg>

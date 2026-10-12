@@ -46,6 +46,8 @@ MFA-enabled owner is provisioned, by design.
 
 ## Required environment variables (names only)
 
+- `APP_SURFACE`: `platform` for the customer platform service, `owner` for the Owner Portal service (see `docs/owner-portal.md`). Unset serves both.
+
 | Variable | Purpose |
 |---|---|
 | `NODE_ENV=production` | enables production code paths and startup guards |

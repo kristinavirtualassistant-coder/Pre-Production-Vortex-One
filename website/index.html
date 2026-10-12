@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vortex One — AI PropTech operating system</title>
+<meta name="description" content="CRM, dialer, campaigns, property and owner intelligence, workflows and AI agents for real-estate operations teams, in one command center.">
+<link rel="icon" type="image/svg+xml" href="assets/vortex-one-icon.svg">
+<meta property="og:title" content="Vortex One — AI PropTech operating system">
+<meta property="og:description" content="Every lead, one command center: CRM, dialer, campaigns, owner intelligence, workflows and AI agents.">
+<meta property="og:image" content="/assets/vortex-one-logo-dark.png">
+<style>
+/* Vortex One design tokens (light / dark). */
+:root{
+  --bg-100:#f6f5f2;--bg-200:#ffffff;--bg-300:oklch(98.4% .003 247.858);--bg-400:oklch(96.8% .007 247.896);
+  --line-100:oklch(92.9% .013 255.508);--line-200:oklch(86.9% .022 252.894);
+  --ink-100:oklch(20.8% .042 265.755);--ink-200:oklch(37.2% .044 257.287);--ink-300:oklch(55.4% .046 257.417);
+  --accent:oklch(51.1% .262 276.966);--accent-hover:oklch(45.7% .24 277.023);--accent-text:oklch(51.1% .262 276.966);
+  --accent-subtle:oklch(96.2% .018 272.314);--on-accent:#ffffff;--focus:oklch(58.5% .233 277.117);
+  --success:#12805c;--success-subtle:#ecf8f2;
+  --brand-navy:#0b1120;--brand-night:#020617;--brand-sky:#38bdf8;--brand-indigo:#6366f1;--brand-violet:#a855f7;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans",Arial,sans-serif;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;
+  --radius-lg:8px;--radius-xl:12px;--radius-2xl:16px;--radius-3xl:24px;--radius-full:9999px;
+  --shadow-sm:0 1px 3px 0 rgba(0,0,0,.1),0 1px 2px -1px rgba(0,0,0,.1);--shadow-card:0 18px 50px rgba(17,24,39,.08);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg-100:oklch(12.9% .042 264.695);--bg-200:oklch(20.8% .042 265.755);--bg-300:oklch(27.9% .041 260.031);--bg-400:oklch(37.2% .044 257.287);
+  --line-100:oklch(27.9% .041 260.031);--line-200:oklch(37.2% .044 257.287);
+  --ink-100:#ffffff;--ink-200:oklch(86.9% .022 252.894);--ink-300:oklch(70.4% .04 256.788);
+  --accent:oklch(58.5% .233 277.117);--accent-hover:oklch(51.1% .262 276.966);--accent-text:oklch(67.3% .182 276.935);
+  --accent-subtle:oklch(25.7% .09 281.288);--focus:oklch(67.3% .182 276.935);
+  --success:oklch(76.5% .177 163.223);--success-subtle:oklch(26.2% .051 172.552);--shadow-card:0 18px 50px rgba(0,0,0,.45);
+}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg-100);color:var(--ink-100);font-family:var(--font-sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-text)}
+a:focus-visible,.btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 var(--space-4)}
+@media (min-width:768px){.wrap{padding:0 var(--space-8)}}
+.eyebrow{font-size:11px;line-height:16px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-300);margin:0 0 var(--space-3)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);font:inherit;font-size:15px;line-height:20px;font-weight:600;padding:10px var(--space-5);border-radius:var(--radius-xl);border:1px solid transparent;text-decoration:none;cursor:pointer;transition:background-color .15s,border-color .15s}
+.btn-primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-sm)}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-secondary{background:var(--bg-200);color:var(--ink-100);border-color:var(--line-200)}
+.btn-secondary:hover{background:var(--bg-300)}
+.btn-ghost-dark{background:transparent;color:#fff;border-color:rgba(255,255,255,.25)}
+.btn-ghost-dark:hover{background:rgba(255,255,255,.08)}
+
+/* Header */
+header.site{position:sticky;top:0;z-index:10;background:color-mix(in oklab,var(--brand-navy) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.08)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:64px;gap:var(--space-4)}
+.brand{display:flex;align-items:center;gap:var(--space-3);text-decoration:none;color:#fff;font-weight:800;letter-spacing:.3em;font-size:14px;white-space:nowrap}
+.brand img{width:32px;height:32px}
+.brand b{color:var(--brand-sky);font-weight:800}
+.nav-links{display:none;gap:var(--space-6)}
+.nav-links a{color:rgba(255,255,255,.8);text-decoration:none;font-size:14px;font-weight:500}
+.nav-links a:hover{color:#fff}
+.nav-cta{display:flex;gap:var(--space-2)}
+.nav-cta .btn{padding:8px var(--space-4);font-size:14px}
+.signin-link{display:none}
+@media (min-width:860px){.nav-links{display:flex}.signin-link{display:inline-flex}}
+
+/* Hero (brand ground) */
+.hero{background:radial-gradient(1200px 500px at 70% -10%,rgba(99,102,241,.35),transparent 60%),linear-gradient(180deg,var(--brand-navy),var(--brand-night));color:#fff;padding:var(--space-8) 0 72px}
+.hero-grid{display:grid;gap:40px;align-items:center}
+@media (min-width:960px){.hero-grid{grid-template-columns:1.05fr .95fr;padding-top:var(--space-8)}}
+.hero .eyebrow{color:rgba(255,255,255,.65)}
+.hero h1{font-size:clamp(34px,6vw,52px);line-height:1.08;font-weight:900;letter-spacing:-.025em;margin:0 0 var(--space-5)}
+.hero h1 span{background:linear-gradient(90deg,var(--brand-sky),var(--brand-indigo),var(--brand-violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{font-size:18px;color:rgba(255,255,255,.78);max-width:540px;margin:0 0 var(--space-8)}
+.hero-actions{display:flex;flex-wrap:wrap;gap:var(--space-3)}
+.hero-note{margin-top:var(--space-4);font-size:13px;color:rgba(255,255,255,.6)}
+.hero-logo{border-radius:var(--radius-3xl);width:100%;height:auto;box-shadow:0 30px 80px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.08)}
+
+/* Product preview card */
+.preview{margin-top:var(--space-6);background:var(--bg-200);color:var(--ink-100);border:1px solid var(--line-100);border-radius:var(--radius-2xl);padding:var(--space-5);box-shadow:var(--shadow-card)}
+.preview-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)}
+.preview-head h3{margin:0;font-size:16px;font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);border-radius:var(--radius-full);padding:2px 10px;font-size:12px;line-height:16px;font-weight:600;background:var(--accent-subtle);color:var(--accent-text)}
+.badge::before{content:"";width:6px;height:6px;border-radius:var(--radius-full);background:currentColor}
+.badge.ok{background:var(--success-subtle);color:var(--success)}
+.row{display:grid;grid-template-columns:1fr auto;gap:var(--space-3);align-items:center;padding:var(--space-3) 0;border-top:1px solid var(--line-100);font-size:14px}
+.row strong{font-weight:600}
+.row small{display:block;color:var(--ink-300);font-size:12px}
+.score{display:flex;align-items:center;gap:var(--space-2);font-variant-numeric:tabular-nums;font-weight:700}
+.track{width:64px;height:6px;border-radius:var(--radius-full);background:var(--bg-400);overflow:hidden}
+.fill{height:100%;background:var(--accent);border-radius:var(--radius-full)}
+.fill.hot{background:var(--success)}
+
+/* Sections */
+section{padding:72px 0}
+.section-head{max-width:640px;margin-bottom:40px}
+.section-head h2{font-size:clamp(26px,4vw,34px);line-height:1.15;font-weight:800;letter-spacing:-.025em;margin:0 0 var(--space-3)}
+.section-head p{color:var(--ink-200);margin:0;font-size:17px}
+.grid{display:grid;gap:var(--space-4)}
+@media (min-width:640px){.grid.cols-2{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:960px){.grid.cols-3{grid-template-columns:repeat(3,1fr)}.grid.cols-4{grid-template-columns:repeat(4,1fr)}}
+@media (min-width:640px) and (max-width:959px){.grid.cols-3,.grid.cols-4{grid-template-columns:repeat(2,1fr)}}
+.card{background:var(--bg-200);border:1px solid var(--line-100);border-radius:var(--radius-2xl);padding:var(--space-6)}
+.card h3{font-size:18px;line-height:28px;font-weight:600;margin:var(--space-4) 0 var(--space-2)}
+.card p{margin:0;color:var(--ink-200);font-size:15px}
+.icon{width:40px;height:40px;border-radius:var(--radius-full);display:grid;place-items:center;background:var(--accent-subtle);color:var(--accent-text)}
+.icon svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+.steps{counter-reset:step}
+.step{position:relative;padding-left:56px}
+.step::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;width:40px;height:40px;border-radius:var(--radius-full);display:grid;place-items:center;background:var(--accent);color:var(--on-accent);font-weight:700}
+.step h3{margin:6px 0 var(--space-2);font-size:18px}
+.step p{margin:0;color:var(--ink-200)}
+
+.alt{background:var(--bg-200);border-top:1px solid var(--line-100);border-bottom:1px solid var(--line-100)}
+.alt .card{background:var(--bg-100)}
+ul.checks{list-style:none;margin:var(--space-4) 0 0;padding:0;display:grid;gap:var(--space-2);font-size:15px;color:var(--ink-200)}
+ul.checks li{display:flex;gap:var(--space-2)}
+ul.checks li::before{content:"";flex:none;margin-top:8px;width:6px;height:6px;border-radius:var(--radius-full);background:var(--accent)}
+
+/* Pricing */
+.plan{display:flex;flex-direction:column}
+.plan .name{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-200)}
+.plan .price{font-size:36px;font-weight:900;letter-spacing:-.025em;margin:var(--space-2) 0 0;font-variant-numeric:tabular-nums}
+.plan .price small{font-size:14px;font-weight:500;color:var(--ink-300);letter-spacing:0}
+.plan .trial{font-size:13px;color:var(--ink-300);margin:0}
+.plan ul{flex:1}
+.plan .btn{margin-top:var(--space-6)}
+.plan.featured{border:2px solid var(--accent);box-shadow:var(--shadow-card)}
+.plan.featured .badge{align-self:flex-start;margin-bottom:var(--space-2)}
+.fineprint{margin-top:var(--space-6);font-size:13px;color:var(--ink-300)}
+
+/* CTA band */
+.cta{background:linear-gradient(135deg,var(--brand-navy),#1e1b4b);color:#fff;border-radius:var(--radius-3xl);padding:48px var(--space-6);text-align:center}
+.cta h2{font-size:clamp(26px,4vw,34px);margin:0 0 var(--space-3);font-weight:800;letter-spacing:-.025em}
+.cta p{margin:0 auto var(--space-6);max-width:520px;color:rgba(255,255,255,.75)}
+
+footer{padding:40px 0;border-top:1px solid var(--line-100);color:var(--ink-300);font-size:14px}
+.foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:var(--space-4)}
+.foot nav{display:flex;flex-wrap:wrap;gap:var(--space-5)}
+.foot a{color:var(--ink-200);text-decoration:none}
+.foot a:hover{color:var(--ink-100)}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap nav">
+    <a class="brand" href="/" aria-label="Vortex One home"><img src="assets/vortex-one-icon.svg" alt="" width="32" height="32">VORTEX <b>ONE</b></a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#trust">Security</a>
+      <a href="#pricing">Pricing</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-ghost-dark signin-link" href="https://app.remoteaccountmanagers.online/">Sign in</a>
+      <a class="btn btn-primary" href="https://app.remoteaccountmanagers.online/?signup=1">Start free</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">AI PropTech operating system</p>
+        <h1>Every lead, <span>one command center.</span></h1>
+        <p class="lead">Vortex One brings your CRM, dialer, campaigns, property and owner intelligence, workflows and AI agents into one workspace, so your team spends the day talking to owners instead of switching tabs.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="https://app.remoteaccountmanagers.online/?signup=1">Create your workspace</a>
+          <a class="btn btn-ghost-dark" href="#features">See what's inside</a>
+        </div>
+        <p class="hero-note">Free plan available. Paid plans include a 14-day trial.</p>
+      </div>
+      <div>
+        <img class="hero-logo" src="assets/vortex-one-logo-dark.png" alt="Vortex One — AI PropTech operating system" width="4170" height="1470">
+        <div class="preview" aria-label="Example call queue">
+          <div class="preview-head"><h3>Today's call queue</h3><span class="badge">Example</span></div>
+          <div class="row"><div><strong>1428 Elm Ave, Phoenix AZ</strong><small>Callback requested after 4 pm</small></div><div class="score">82<div class="track"><div class="fill hot" style="width:82%"></div></div></div></div>
+          <div class="row"><div><strong>77 Harbor Rd, Tampa FL</strong><small>High equity · absentee owner</small></div><div class="score">68<div class="track"><div class="fill" style="width:68%"></div></div></div></div>
+          <div class="row"><div><strong>310 Ridge Ct, Austin TX</strong><small>Follow-up due today</small></div><div class="score">54<div class="track"><div class="fill" style="width:54%"></div></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Features</p>
+        <h2>Everything a real-estate operations team runs on</h2>
+        <p>One workspace for the full cycle: find the property, reach the owner, follow up on time, and see what's working.</p>
+      </div>
+      <div class="grid cols-3">
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><h3>CRM and pipeline</h3><p>Leads, contacts, notes, tasks and a pipeline board, with every call and message on the record.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.18 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div><h3>Dialer</h3><p>Manual and batch dialing with dispositions, call timers and transcripts. Do-not-call requests are honored everywhere the contact appears.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div><h3>Campaigns</h3><p>Email, SMS and call campaigns with eligibility rules, scheduling and engagement tracking.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></div><h3>Property and owner intelligence</h3><p>Search properties and public records, enrich owner details, and score leads so callers start with the warmest ones.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a2 2 0 0 1 2 2V14"/></svg></div><h3>Workflows</h3><p>Automate follow-ups, assignments and data syncs with versioned workflows, schedules, retries and run logs.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8M9 14h.01M15 14h.01"/></svg></div><h3>AI agents</h3><p>Agents that summarize calls, draft follow-ups and help qualify leads. AI output is labeled as AI, and the AI caller always says it is an AI.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="alt">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How it works</p>
+        <h2>Up and running in an afternoon</h2>
+      </div>
+      <div class="grid cols-3 steps">
+        <div class="step"><h3>Create your workspace</h3><p>Sign up, verify your email and invite your team. Each company gets its own private workspace.</p></div>
+        <div class="step"><h3>Bring in your leads</h3><p>Import a list or search properties, then let enrichment and scoring sort the queue.</p></div>
+        <div class="step"><h3>Work the queue</h3><p>Dial, follow up and automate the rest. Analytics show which campaigns and callers convert.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trust">
+    <div class="wrap">
+      <div class="grid cols-2" style="align-items:start">
+        <div class="section-head" style="margin-bottom:0">
+          <p class="eyebrow">Security</p>
+          <h2>Built for teams that handle owner data</h2>
+          <p>Your workspace is yours alone. Access is decided on the server, never in the browser.</p>
+        </div>
+        <div class="card">
+          <ul class="checks" style="margin-top:0">
+            <li>Each company's data is isolated at the database level.</li>
+            <li>Roles for admins, managers, agents and members control who can see and change what.</li>
+            <li>Multi-factor authentication, session management and sign-in protection.</li>
+            <li>Activity is audit-logged.</li>
+            <li>Do-not-call requests are honored immediately.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing" class="alt">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Pricing</p>
+        <h2>Start free, upgrade when your team grows</h2>
+        <p>Monthly plans. Paid plans start with a 14-day trial.</p>
+      </div>
+      <div class="grid cols-4">
+        <div class="card plan"><p class="name">Free</p><p class="price">$0<small> /month</small></p><p class="trial">For trying it out</p>
+          <ul class="checks"><li>Up to 5 users</li><li>250 calls / month</li><li>500 emails, 100 SMS / month</li><li>250 AI actions / month</li><li>500 MB storage</li></ul>
+          <a class="btn btn-secondary" href="https://app.remoteaccountmanagers.online/?signup=1">Start free</a></div>
+        <div class="card plan"><p class="name">Starter</p><p class="price">$49<small> /month</small></p><p class="trial">14-day trial</p>
+          <ul class="checks"><li>Up to 10 users</li><li>2,000 calls / month</li><li>5,000 emails, 1,000 SMS / month</li><li>2,500 AI actions / month</li><li>500 enrichment credits / month</li><li>5 GB storage</li></ul>
+          <a class="btn btn-secondary" href="https://app.remoteaccountmanagers.online/?signup=1">Start trial</a></div>
+        <div class="card plan featured"><span class="badge">Most teams</span><p class="name">Professional</p><p class="price">$149<small> /month</small></p><p class="trial">14-day trial</p>
+          <ul class="checks"><li>Up to 50 users</li><li>10,000 calls / month</li><li>25,000 emails, 5,000 SMS / month</li><li>10,000 AI actions / month</li><li>5,000 enrichment credits / month</li><li>50 GB storage</li></ul>
+          <a class="btn btn-primary" href="https://app.remoteaccountmanagers.online/?signup=1">Start trial</a></div>
+        <div class="card plan"><p class="name">Enterprise</p><p class="price">$499<small> /month</small></p><p class="trial">14-day trial</p>
+          <ul class="checks"><li>Unlimited users</li><li>High-volume calling, email and SMS</li><li>High-volume AI and enrichment</li><li>Expanded storage</li></ul>
+          <a class="btn btn-secondary" href="https://app.remoteaccountmanagers.online/?signup=1">Start trial</a></div>
+      </div>
+      <p class="fineprint">Prices in USD. Telephony, SMS and data-provider usage may be billed by those providers under your own accounts.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="cta">
+        <h2>Put every lead in one place</h2>
+        <p>Create your workspace in a few minutes. No card needed for the free plan.</p>
+        <a class="btn btn-primary" href="https://app.remoteaccountmanagers.online/?signup=1">Create your workspace</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>© <span id="y">2026</span> Vortex One</span>
+    <nav aria-label="Footer">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://app.remoteaccountmanagers.online/">Sign in</a>
+    </nav>
+  </div>
+</footer>
+<script>document.getElementById('y').textContent = new Date().getFullYear();</script>
+</body>
+</html>
