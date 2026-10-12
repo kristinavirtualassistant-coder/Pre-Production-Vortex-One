@@ -10,6 +10,8 @@ import { api, cleanupTestTenants, createTestTenant, pass, requirePool, startTest
 
 const app = await startTestApp();
 const pool = requirePool();
+// Earlier suites share the Postgres limiter buckets (same source IP); this suite runs the real limits (multiplier 1), so start clean.
+await pool.query('DELETE FROM rate_limit_buckets');
 const tenant = await createTestTenant(app, 'rate', 'admin');
 const run = randomUUID().slice(0, 8);
 const ip = (n: string) => ({ 'x-forwarded-for': `203.0.113.${(parseInt(n, 36) % 200) + 1}`, 'x-test-run': run });

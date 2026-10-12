@@ -8,6 +8,7 @@ import { matchTotpStep, appUrl, clearSessionCookie, createOneTimeToken, createTo
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
 import { can } from '../security/permissionMatrix';
+import { recordFailedOwnerLogin } from '../services/platformAuditService';
 import { sessionIdleHours } from '../security/sessionPolicy';
 
 export interface AuthRequest extends Request {
@@ -109,12 +110,17 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   const result = await pool.query(
     `SELECT u.id, u.organization_id, u.email, u.name, u.role, u.password_hash, u.disabled_at, u.email_verified_at, u.mfa_enabled,
-            o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings
+            o.name AS organization_name,o.slug AS organization_slug,o.settings AS organization_settings,o.status AS organization_status
      FROM users u JOIN organizations o ON o.id=u.organization_id
      WHERE lower(u.email)=$1 LIMIT 1`, [email]);
   const user = result.rows[0];
   if (!user || user.disabled_at || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
+    void recordFailedOwnerLogin(email, req, 'invalid_credentials_or_disabled');
     return res.status(401).json({ error: 'Invalid email or password' });
+  }
+  if (user.organization_status && user.organization_status !== 'active') {
+    // Credentials were valid, so it is safe to tell the user why they cannot sign in.
+    return res.status(403).json({ error: 'This organization is not active. Contact Vortex One support.', code: 'ORGANIZATION_NOT_ACTIVE' });
   }
   if (!user.email_verified_at) return res.status(403).json({ error: 'Email address must be verified before signing in', code: 'EMAIL_NOT_VERIFIED' });
   if (user.mfa_enabled) {
@@ -451,8 +457,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     if(!token)return res.status(401).json({error:'Unauthorized: Missing session'});
     const tokenHash=hashSessionToken(token);
     const {rows}=await pool.query(`SELECT u.id,u.organization_id,u.email,u.name,u.role
-      FROM auth_sessions s JOIN users u ON u.id=s.user_id
-      WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL
+      FROM auth_sessions s JOIN users u ON u.id=s.user_id JOIN organizations org ON org.id=u.organization_id
+      WHERE s.token_hash=$1 AND s.expires_at>CURRENT_TIMESTAMP AND s.revoked_at IS NULL AND org.status='active'
         AND s.last_seen_at>CURRENT_TIMESTAMP-make_interval(secs=>$2::float8)
         AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL LIMIT 1`,[tokenHash,sessionIdleHours()*3600]);
     const dbUser=rows[0];

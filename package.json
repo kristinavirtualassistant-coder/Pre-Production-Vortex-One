@@ -21,7 +21,8 @@
     "test:e2e:smoke": "tsx server/test/browserSmoke.test.ts",
     "test:ai": "tsx server/test/realAgentRuntime.test.ts && tsx server/test/agentProviderMock.test.ts && tsx server/test/productionAgents.test.ts",
     "worker": "tsx server/workers/run.ts",
-    "start:worker": "node dist/worker.cjs"
+    "start:worker": "node dist/worker.cjs",
+    "owner:provision": "tsx scripts/provision-platform-owner.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

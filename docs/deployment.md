@@ -38,6 +38,12 @@ One Docker image (`Dockerfile`) contains both entrypoints.
 The auth schema (`users`, `auth_sessions`, …) is part of the migration chain (migration 012); the runtime role never runs DDL
 in production.
 
+## Owner portal provisioning and grants
+
+After the first deploy: revoke runtime write access to `platform_owners` / modify access to `platform_audit_logs` and provision the single
+platform owner exactly as described in `docs/owner-portal.md` (`npm run owner:provision`). The owner portal is unusable until an
+MFA-enabled owner is provisioned, by design.
+
 ## Required environment variables (names only)
 
 | Variable | Purpose |

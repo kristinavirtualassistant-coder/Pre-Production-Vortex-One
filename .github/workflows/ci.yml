@@ -102,6 +102,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      - run: npx puppeteer browsers install chrome
+      # The owner-portal browser suite drives the built app.
+      - run: npm run build
       # Creates the non-superuser vortex_app role, migrates as admin, then runs the HTTP security suites with
       # NODE_ENV=production against the real Express app.
       - run: npm run test:security
