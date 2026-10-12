@@ -42,8 +42,8 @@ async function findOrCreateFolder(token: string, name: string): Promise<string> 
   return created.id;
 }
 
-async function findOrCreateSpreadsheet(token: string, folderId: string): Promise<string> {
-  const q = encodeURIComponent(`mimeType='application/vnd.google-apps.spreadsheet' and name='Vortex One Backup' and trashed=false`);
+export async function findOrCreateSpreadsheet(token: string, folderId: string): Promise<string> {
+  const q = encodeURIComponent(`mimeType='application/vnd.google-apps.spreadsheet' and name='Vortex One Backup' and trashed=false and '${folderId}' in parents`);
   const found = await googleJson(
     `https://www.googleapis.com/drive/v3/files?q=${q}&pageSize=1&fields=files(id,name,parents)`,
     token,
@@ -59,8 +59,14 @@ async function findOrCreateSpreadsheet(token: string, folderId: string): Promise
   });
 
   if (created.spreadsheetId && folderId) {
+    // The Sheets API creates the file in Drive root; Drive only moves a file when its old parents are removed.
+    const current = await googleJson(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(created.spreadsheetId)}?fields=parents`,
+      token,
+    );
+    const removeParents = ((current.parents as string[] | undefined) || []).filter((id) => id !== folderId).join(',');
     await googleJson(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(created.spreadsheetId)}?addParents=${encodeURIComponent(folderId)}&fields=id,parents`,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(created.spreadsheetId)}?addParents=${encodeURIComponent(folderId)}${removeParents ? `&removeParents=${encodeURIComponent(removeParents)}` : ''}&fields=id,parents`,
       token,
       { method: 'PATCH', body: JSON.stringify({}) },
     );
