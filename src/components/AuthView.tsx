@@ -45,11 +45,20 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
         addToast('MFA verification successful.', 'success');
         onSuccess?.();
       } else if (mode === 'verify') {
-        const response = await fetch('/api/auth/verify-email', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:recoveryToken}) });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || 'Email verification failed');
-        addToast('Email verified. You can now sign in.', 'success');
-        setMode('signin');
+        if (!recoveryToken) {
+          const response = await fetch('/api/auth/verification/request', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:email.trim().toLowerCase()}) });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || 'Unable to request verification email');
+          addToast('If an unverified account exists for that address, a verification email has been sent.', 'success');
+          setMode('signin');
+        } else {
+          const response = await fetch('/api/auth/verify-email', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:recoveryToken}) });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || 'Email verification failed');
+          addToast('Email verified. You can now sign in.', 'success');
+          setRecoveryToken('');
+          setMode('signin');
+        }
       } else if (mode === 'reset') {
         if (recoveryPassword.length < 12) throw new Error('Password must be at least 12 characters.');
         const response = await fetch('/api/auth/password-reset/confirm', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:recoveryToken,password:recoveryPassword}) });
@@ -125,7 +134,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
           )}
 
           {mode === 'mfa' && <p className="mb-5 text-sm text-slate-400">Enter the six-digit authenticator code. A backup code can also be used.</p>}
-          {mode === 'verify' && <p className="mb-5 text-sm text-slate-400">Use the verification link sent to your email.</p>}
+          {mode === 'verify' && <p className="mb-5 text-sm text-slate-400">{recoveryToken ? 'Use the verification link sent to your email.' : 'Enter your email to request a fresh verification link.'}</p>}
           {mode === 'forgot' && <p className="mb-5 text-sm text-slate-400">Enter your email. The response is the same whether an account exists or not.</p>}
           <form onSubmit={submit} className="space-y-4">
             {mode === 'signup' && (
@@ -148,7 +157,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
               </>
             )}
 
-            {(mode === 'signin' || mode === 'signup' || mode === 'forgot') && <label className="block text-sm text-slate-300">
+            {(mode === 'signin' || mode === 'signup' || mode === 'forgot' || (mode === 'verify' && !recoveryToken)) && <label className="block text-sm text-slate-300">
               Email
               <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-slate-950 px-3">
                 <Mail className="h-4 w-4 text-slate-500" />
@@ -172,9 +181,9 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
 
             {mode === 'mfa' && <label className="block text-sm text-slate-300">Authenticator or backup code<input inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
             {mode === 'reset' && <label className="block text-sm text-slate-300">New password<input type="password" autoComplete="new-password" value={recoveryPassword} onChange={(e) => setRecoveryPassword(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
-            {(mode === 'verify' || mode === 'reset') && <label className="block text-sm text-slate-300">Verification/reset token<input value={recoveryToken} onChange={(e) => setRecoveryToken(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
+            {((mode === 'verify' && !!recoveryToken) || mode === 'reset') && <label className="block text-sm text-slate-300">Verification/reset token<input value={recoveryToken} onChange={(e) => setRecoveryToken(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none" required /></label>}
             <button type="submit" disabled={submitting || loading} className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60">
-              {submitting || loading ? 'Processing…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : mode === 'mfa' ? 'Verify MFA' : mode === 'verify' ? 'Verify email' : mode === 'reset' ? 'Reset password' : 'Send recovery email'}
+              {submitting || loading ? 'Processing…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : mode === 'mfa' ? 'Verify MFA' : mode === 'verify' ? (recoveryToken ? 'Verify email' : 'Resend verification email') : mode === 'reset' ? 'Reset password' : 'Send recovery email'}
             </button>
           </form>
           {mode === 'signin' && <div className="mt-4 flex justify-between text-xs"><button type="button" onClick={() => setMode('forgot')} className="text-cyan-400 hover:text-cyan-300">Forgot password?</button><button type="button" onClick={() => setMode('verify')} className="text-slate-400 hover:text-white">Verify email</button></div>}
