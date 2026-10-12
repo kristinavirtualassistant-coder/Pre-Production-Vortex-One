@@ -3478,11 +3478,14 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
         followUpTaskId: result.followUpTaskId,
       });
     } catch (err: any) {
-      const message = clientErrorMessage(err, 'Failed to apply call disposition');
-      if (message === 'Call not found') return res.status(404).json({ error: message });
-      if (message.startsWith('Invalid call disposition:') || message.startsWith('followUpAt ')) {
-        return res.status(400).json({ error: message });
+      // Branch on the raw message (these are the disposition service's own validation errors and may echo the
+      // submitted value, e.g. "Invalid call disposition: NO_ANSWER"); everything else goes through the safe filter.
+      const raw = typeof err?.message === 'string' ? err.message : '';
+      if (raw === 'Call not found') return res.status(404).json({ error: raw });
+      if (raw.startsWith('Invalid call disposition:') || raw.startsWith('followUpAt ')) {
+        return res.status(400).json({ error: raw.slice(0, 200) });
       }
+      const message = clientErrorMessage(err, 'Failed to apply call disposition');
       res.status(500).json({ error: message });
     }
   });

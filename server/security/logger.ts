@@ -39,16 +39,30 @@ const INTERNAL_ERROR_NAMES = new Set(['TypeError', 'ReferenceError', 'SyntaxErro
 const INTERNAL_MESSAGE = /(ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|getaddrinfo|fetch failed|relation "|column "|syntax error at|violates .* constraint|duplicate key|permission denied for|password authentication|certificate|self[- ]signed|\bat \S+:\d+:\d+|\/(app|home|usr|var|tmp|opt)\/|node_modules|postgres(ql)?:\/\/|Bearer\s|whsec_|sk_(live|test)_)/i;
 
 /**
+ * Deployment/configuration failures: "X is not configured", "... not set", "missing credentials", and any
+ * environment-variable-style name (UPPER_SNAKE_CASE such as APP_URL or STRIPE_PRICE_PRO). These describe how the
+ * server is set up, which is useful to an operator (it is logged) but must not be shown to end users.
+ */
+const CONFIGURATION_MESSAGE = /\bnot configured\b|\bnot set\b|\bmissing (required )?(env(ironment)?( variables?)?|configuration|config|credentials?|api key|secret)\b/i;
+/** Case-sensitive on purpose: matches APP_URL / STRIPE_PRICE_PRO but not snake_case field names such as run_at. */
+const ENV_VAR_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
+
+/** True when a message describes missing server configuration or names an environment variable. */
+export function isConfigurationErrorMessage(message: string): boolean {
+  return CONFIGURATION_MESSAGE.test(message) || ENV_VAR_NAME.test(message);
+}
+
+/**
  * True when an error is an unexpected/internal failure whose message must not reach a client: PostgreSQL driver errors,
  * Node system errors, wrapped provider/HTTP errors, JavaScript runtime errors, explicit 5xx errors, and any message that
- * contains infrastructure detail. Deliberate application errors (e.g. `throw new Error('run_at is required')`) and errors
+ * contains infrastructure or configuration detail ("APP_URL is not configured", env-var names). Deliberate application errors (e.g. `throw new Error('run_at is required')`) and errors
  * carrying an explicit 4xx status are NOT internal, so their messages remain visible to the user.
  */
 export function isInternalError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return true;
   const e = error as Record<string, any>;
   const message = typeof e.message === 'string' ? e.message : '';
-  if (!message || message.length > 300 || INTERNAL_MESSAGE.test(message)) return true;
+  if (!message || message.length > 300 || INTERNAL_MESSAGE.test(message) || isConfigurationErrorMessage(message)) return true;
   const status = typeof e.statusCode === 'number' ? e.statusCode : typeof e.status === 'number' ? e.status : undefined;
   if (status !== undefined && status >= 400 && status < 500) return false;
   if (status !== undefined && status >= 500) return true;

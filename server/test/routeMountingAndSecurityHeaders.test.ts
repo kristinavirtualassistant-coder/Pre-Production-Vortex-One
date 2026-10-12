@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { analyticsRouter } from '../routes/analytics';
 import { appointmentsRouter } from '../routes/appointments';
 import { securityHeaders, ENFORCED_CSP } from '../middleware/securityHeaders';
-import { clientErrorMessage, isInternalError } from '../security/logger';
+import { clientErrorMessage, isConfigurationErrorMessage, isInternalError } from '../security/logger';
 
 // 1. Source guard: a literal "\n" inside a // comment once swallowed `app.use('/api/analytics', ...)`, so the
 //    analytics API was never registered. No line comment in server.ts may contain an escaped newline followed by code.
@@ -71,6 +71,74 @@ for (const error of [pgError, socketError, typeError, leakyMessage, providerErro
 assert.equal(clientErrorMessage(new Error('Cron expressions must use five fields'), 'Failed'), 'Cron expressions must use five fields');
 assert.equal(clientErrorMessage(Object.assign(new Error('Plan limit reached'), { statusCode: 402 }), 'Failed'), 'Plan limit reached');
 assert.equal(clientErrorMessage(Object.assign(new Error('Upstream unavailable'), { statusCode: 503 }), 'Failed'), 'Failed');
+
+// 5. Configuration errors (CodeRabbit review on PR #95): "X is not configured" and environment-variable names describe
+//    server setup and must never reach the browser, e.g. /api/billing/checkout returning "APP_URL is not configured".
+const configurationMessages = [
+  'APP_URL is not configured',
+  'STRIPE_PRICE_PROFESSIONAL is not configured',
+  'STRIPE_SECRET_KEY is not configured',
+  'TWILIO_FROM_NUMBER is not configured',
+  'OPENAI_API_KEY is not configured',
+  'Email provider is not configured: missing SMTP_HOST',
+  'Email provider is not configured: missing smtp host',
+  'RingCentral credentials not configured or SDK unavailable',
+  'File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.',
+  'INTEGRATION_ENCRYPTION_KEY is required in production',
+  'RINGCENTRAL_FROM_NUMBER is required for RingOut',
+  'Agent lead_scorer is not configured',
+  'Webhook signing secret not set',
+  'Request failed: missing credentials',
+];
+for (const message of configurationMessages) {
+  assert.equal(isConfigurationErrorMessage(message), true, `configuration message detected: ${message}`);
+  assert.equal(isInternalError(new Error(message)), true, `configuration message is internal: ${message}`);
+  assert.equal(clientErrorMessage(new Error(message), 'Unable to create checkout session'), 'Unable to create checkout session', `hidden: ${message}`);
+  // An explicit 4xx status must not let configuration detail through either.
+  assert.equal(clientErrorMessage(Object.assign(new Error(message), { statusCode: 400 }), 'Fallback'), 'Fallback', `4xx still hidden: ${message}`);
+}
+
+// Ordinary validation messages, including snake_case field names, must stay visible (the env-var rule is case-sensitive).
+for (const message of [
+  'run_at is required',
+  'next_run_at must be a valid date',
+  'Cron expressions must use five fields',
+  'limit must be a positive integer',
+  'No Stripe customer exists for this organization',
+  'Invalid approval decision',
+  'Settings saved but campaign is not scheduled',
+]) {
+  assert.equal(isConfigurationErrorMessage(message), false, `not configuration: ${message}`);
+  assert.equal(clientErrorMessage(new Error(message), 'Fallback'), message, `visible: ${message}`);
+}
+
+// The real billing service errors behind /api/billing/checkout and /api/billing/portal are hidden end to end.
+const savedAppUrl = process.env.APP_URL;
+delete process.env.APP_URL;
+try {
+  const { createCheckoutSession, createPortalSession } = await import('../services/billingService');
+  const fakePool = { query: async () => ({ rows: [{ organization_id: 'org_test', billing_customer_id: 'cus_test' }] }) } as any;
+  const checkoutError = await createCheckoutSession(fakePool, 'org_test', 'professional').then(() => null, (error) => error);
+  assert.ok(checkoutError, 'checkout must fail without STRIPE_PRICE_PROFESSIONAL');
+  assert.match(checkoutError.message, /STRIPE_PRICE_PROFESSIONAL is not configured/);
+  assert.equal(clientErrorMessage(checkoutError, 'Unable to create checkout session'), 'Unable to create checkout session');
+  const portalError = await createPortalSession(fakePool, 'org_test').then(() => null, (error) => error);
+  assert.ok(portalError, 'portal session must fail without APP_URL');
+  assert.match(portalError.message, /APP_URL is not configured/);
+  assert.equal(clientErrorMessage(portalError, 'Unable to create billing portal session'), 'Unable to create billing portal session');
+  // A genuine business error from the same service stays visible.
+  const noCustomerPool = { query: async () => ({ rows: [] }) } as any;
+  const noCustomer = await createPortalSession(noCustomerPool, 'org_test').then(() => null, (error) => error);
+  assert.equal(clientErrorMessage(noCustomer, 'Fallback'), 'No Stripe customer exists for this organization');
+} finally {
+  if (savedAppUrl === undefined) delete process.env.APP_URL; else process.env.APP_URL = savedAppUrl;
+}
+
+// The disposition handler branches on the raw service message, so echoing a value such as NO_ANSWER keeps its 400.
+assert.ok(
+  /const raw = typeof err\?\.message === 'string' \? err\.message : '';\s*if \(raw === 'Call not found'\)[\s\S]{0,200}raw\.startsWith\('Invalid call disposition:'\)/.test(serverSource),
+  'call disposition handler must classify on the raw error message before filtering it',
+);
 
 console.log('routeMountingAndSecurityHeaders.test passed');
 process.exit(0);
