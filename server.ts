@@ -5,7 +5,6 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 
 import { initializeDatabase, getDatabaseStatus, inMemoryStore, getPgPool, seedInitialData } from './server/db/db';
 import { getAllAgents, getAgent, registerAgent, updateAgent } from './server/agents/registry';
@@ -4374,6 +4373,8 @@ ${transcript}`;
   if (!serveFrontend) {
     // API-only application (tests, serverless API handler)
   } else if (process.env.NODE_ENV !== 'production') {
+    // vite is a devDependency: load it only in development so the production image (npm ci --omit=dev) can start.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
