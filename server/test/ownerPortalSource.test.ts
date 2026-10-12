@@ -46,15 +46,22 @@ assert.match(server, /app\.use\('\/api\/owner', ownerRouter\)/);
 assert.ok(server.indexOf("app.use('/api/owner', ownerRouter)") > server.indexOf("app.use('/api', (req: AuthRequest"), 'owner routes sit behind the shared session authentication');
 
 // ---- no code path writes platform_owners or the audit log except the provisioning script / insert-only service
+const PROVISIONING_MODULE = path.join('server', 'security', 'platformOwnerProvisioning.ts');
 for (const file of walk('server').concat(['server.ts']).filter((f) => f.endsWith('.ts') && !f.includes('/test/') && !f.includes('migrations.ts'))) {
   const s = read(file);
-  assert.ok(!/(INSERT INTO|UPDATE|DELETE FROM)\s+platform_owners/i.test(s), `${file} must not write platform_owners`);
+  if (file !== PROVISIONING_MODULE) assert.ok(!/(INSERT INTO|UPDATE|DELETE FROM)\s+platform_owners/i.test(s), `${file} must not write platform_owners`);
+  // Only the boot path (db.ts) may use the provisioning module; no route, middleware or service can reach it.
+  if (/platformOwnerProvisioning/.test(s) && file !== PROVISIONING_MODULE) assert.equal(file, path.join('server', 'db', 'db.ts'), `${file} must not import owner provisioning`);
   assert.ok(!/(UPDATE|DELETE FROM)\s+platform_audit_logs/i.test(s), `${file} must not modify platform_audit_logs`);
 }
 const provision = read('scripts/provision-platform-owner.ts');
 assert.match(provision, /PLATFORM_PROVISIONING_DATABASE_URL/);
-assert.match(provision, /vortex_one\.platform_provisioning/);
 assert.ok(!/express|app\.(get|post)/.test(provision), 'provisioning is a script, not an HTTP surface');
+const provisioning = read(PROVISIONING_MODULE);
+assert.match(provisioning, /vortex_one\.platform_provisioning/);
+assert.ok(!/express|Request|Response|req\.|res\./.test(provisioning), 'owner provisioning has no HTTP surface');
+assert.match(provisioning, /requireMfa: true/, 'the env bootstrap always requires MFA');
+assert.ok(!/replace:\s*true/.test(provisioning), 'the env bootstrap never replaces an existing owner');
 
 // ---- migration shape
 const migrations = read('server/db/migrations.ts');

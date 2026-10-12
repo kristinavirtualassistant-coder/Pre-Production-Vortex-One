@@ -7,6 +7,7 @@ import { Pool, PoolClient } from 'pg';
 import { MIGRATIONS } from './migrations';
 import { shouldSkipPostgresMigrations } from './migrationPolicy';
 import { getTenantContext } from './tenantContext';
+import { bootstrapPlatformOwnerFromEnv } from '../security/platformOwnerProvisioning';
 import type { CampaignContactRecord } from '../dialer/types';
 import {
   Property,
@@ -1389,6 +1390,9 @@ export async function initializeDatabase(): Promise<DatabaseStatus> {
           }
           await client.query('COMMIT');
         }
+
+        // One-time owner bootstrap from trusted server config; a no-op unless PLATFORM_OWNER_BOOTSTRAP_EMAIL is set.
+        await bootstrapPlatformOwnerFromEnv(client);
 
         currentDbStatus = {
           connected: true,

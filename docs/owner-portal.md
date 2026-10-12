@@ -48,6 +48,13 @@ Platform owner       -> /owner portal (MFA-verified session)        -> allowed
    is passed (a deliberate transfer), and writes an `owner.provisioned` audit row.
 3. The owner signs in at `/owner/login`.
 
+**Alternative when no administrative database connection is reachable (one-time bootstrap):** set
+`PLATFORM_OWNER_BOOTSTRAP_EMAIL=<owner email>` in the server's environment and restart. After migrations, the server makes
+that account the owner **only if no owner exists yet**, with the same checks (verified, MFA enabled, not disabled) and an
+`owner.provisioned` audit row (`via: env-bootstrap`). It never replaces an existing owner, is a no-op on later boots, and a
+failure is logged without stopping the server. Remove the variable once the owner exists. It writes through the migration
+connection (`SQL_ADMIN_*`, else the runtime user), so it needs a role that may write `platform_owners`.
+
 There is intentionally no UI for any of this.
 
 ## Database grants (required)
