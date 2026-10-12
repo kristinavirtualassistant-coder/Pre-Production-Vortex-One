@@ -113,10 +113,13 @@ for (const message of [
 }
 
 // The real billing service errors behind /api/billing/checkout and /api/billing/portal are hidden end to end.
-const savedAppUrl = process.env.APP_URL;
-delete process.env.APP_URL;
+// billingService captures the STRIPE_PRICE_* variables at module load and server.ts has already imported it above, so
+// clear the billing configuration and load a fresh module instance (unique URL) that sees the unconfigured state.
+const billingEnvNames = ['APP_URL', 'STRIPE_PRICE_STARTER', 'STRIPE_PRICE_PROFESSIONAL', 'STRIPE_PRICE_ENTERPRISE', 'STRIPE_SECRET_KEY'];
+const savedBillingEnv = Object.fromEntries(billingEnvNames.map((name) => [name, process.env[name]]));
+for (const name of billingEnvNames) delete process.env[name];
 try {
-  const { createCheckoutSession, createPortalSession } = await import('../services/billingService');
+  const { createCheckoutSession, createPortalSession } = await import(`../services/billingService.ts?unconfigured=${Date.now()}`);
   const fakePool = { query: async () => ({ rows: [{ organization_id: 'org_test', billing_customer_id: 'cus_test' }] }) } as any;
   const checkoutError = await createCheckoutSession(fakePool, 'org_test', 'professional').then(() => null, (error) => error);
   assert.ok(checkoutError, 'checkout must fail without STRIPE_PRICE_PROFESSIONAL');
@@ -131,7 +134,9 @@ try {
   const noCustomer = await createPortalSession(noCustomerPool, 'org_test').then(() => null, (error) => error);
   assert.equal(clientErrorMessage(noCustomer, 'Fallback'), 'No Stripe customer exists for this organization');
 } finally {
-  if (savedAppUrl === undefined) delete process.env.APP_URL; else process.env.APP_URL = savedAppUrl;
+  for (const [name, value] of Object.entries(savedBillingEnv)) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
 }
 
 // The disposition handler branches on the raw service message, so echoing a value such as NO_ANSWER keeps its 400.
