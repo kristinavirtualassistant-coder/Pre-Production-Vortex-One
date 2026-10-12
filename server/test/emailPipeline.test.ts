@@ -54,10 +54,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 try {
   const resendResult = await sendEmail({ to: 'a@example.com', subject: 'Resend test', text: 'test body' });
   assert.equal(resendResult.messageId, 're_test_message_1');
-  assert.equal(resendRequest?.url, 'https://api.resend.com/emails');
-  assert.equal(resendRequest?.authorization, 'Bearer re_test_key_not_a_secret');
-  assert.equal(resendRequest?.body.from, 'Vortex One <sender@example.com>');
-  assert.deepEqual(resendRequest?.body.to, ['a@example.com']);
+  const capturedRequest = resendRequest as { url: string; authorization: string | null; body: any } | null;
+  assert.ok(capturedRequest, 'Resend request was captured');
+  assert.equal(capturedRequest.url, 'https://api.resend.com/emails');
+  assert.equal(capturedRequest.authorization, 'Bearer re_test_key_not_a_secret');
+  assert.equal(capturedRequest.body.from, 'Vortex One <sender@example.com>');
+  assert.deepEqual(capturedRequest.body.to, ['a@example.com']);
   resendStatus = 401;
   await assert.rejects(sendEmail({ to: 'a@example.com', subject: 's', text: 't' }), /RESEND_HTTP_401/);
   console.log('  ✓ Resend HTTPS API: sender, auth header, message ID, and redacted provider errors');
