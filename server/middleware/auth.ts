@@ -279,7 +279,7 @@ async function handleVerifyEmail(req: AuthRequest, res: Response, pool: NonNulla
 async function handleRequestEmailVerification(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   const email=typeof req.body?.email==='string'?req.body.email.trim().toLowerCase():'';
   // Always return the same response to avoid disclosing account existence or verification state.
-  if(/^\\S+@\\S+\\.\\S+$/.test(email)){
+  if(/^\S+@\S+\.\S+$/.test(email)){
     const user=(await pool.query(
       'SELECT id FROM users WHERE lower(email)=$1 AND disabled_at IS NULL AND email_verified_at IS NULL LIMIT 1',
       [email],
