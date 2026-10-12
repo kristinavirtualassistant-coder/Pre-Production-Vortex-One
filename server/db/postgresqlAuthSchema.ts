@@ -5,14 +5,15 @@ let schemaReady: Promise<void> | null = null;
 
 const REQUIRED_AUTH_TABLES = ['auth_sessions', 'organization_invites', 'webhook_endpoints', 'webhook_deliveries', 'voicemail_library'];
 
+// Checks the connection's current schema (search_path), so the app also works when its tables live outside `public`.
 async function authSchemaPresent(pool: Pool): Promise<boolean> {
   const tables = await pool.query(
-    `SELECT COUNT(*)::int AS present FROM unnest($1::text[]) AS t(name) WHERE to_regclass('public.' || t.name) IS NOT NULL`,
+    `SELECT COUNT(*)::int AS present FROM unnest($1::text[]) AS t(name) WHERE to_regclass(quote_ident(current_schema()) || '.' || t.name) IS NOT NULL`,
     [REQUIRED_AUTH_TABLES],
   );
   if (Number(tables.rows[0]?.present) !== REQUIRED_AUTH_TABLES.length) return false;
   const column = await pool.query(
-    `SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash'`,
+    `SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'password_hash'`,
   );
   return column.rowCount === 1;
 }

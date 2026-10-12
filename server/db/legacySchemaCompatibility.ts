@@ -54,7 +54,7 @@ export async function persistLegacyCall(
   const result = await client.query(
     `SELECT column_name, is_nullable, column_default
        FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'calls'
+      WHERE table_schema = current_schema() AND table_name = 'calls'
       ORDER BY ordinal_position`,
   ) as { rows: SchemaColumn[] };
 
