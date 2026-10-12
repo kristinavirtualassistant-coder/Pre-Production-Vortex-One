@@ -20,7 +20,7 @@ Reference branch: main
 | Cache | Partial | cacheService.ts uses in-process Map plus disk persistence | Not equivalent to distributed Redis |
 | CI | Partial | ci.yml runs npm ci, lint, build, test | No explicit integration/security stages identified |
 | Package management | Resolved | package-lock.json is the sole committed lockfile and CI uses npm ci | Keep npm as the authoritative package-manager workflow |
-| Infrastructure | Reconciled | Firebase Hosting + Cloud Functions 2nd gen configuration and Supabase database contract exist | Complete first production deploy and smoke test |
+| Infrastructure | Reconciled | Single Node service + worker container (see docs/deployment.md) with a PostgreSQL/Supabase database contract | Complete first production deploy and smoke test |
 | Environment config | Present | .env.example exists | Formal production secret/environment contract needed |
 | API health | Present | /api/health checks PostgreSQL | Dedicated readiness contract needs verification |
 | Correlation IDs | Unverified | Not established from inspected entrypoint | M1 requirement remains unverified |
@@ -41,7 +41,7 @@ Reference branch: main
 - Durable PostgreSQL jobs.
 - Dialer state-machine and provider-boundary tests.
 - Property intelligence and CRM services.
-- Firebase Hosting + Cloud Functions deployment assets.
+- Dockerfile (web + worker from one image) and docs/deployment.md.
 - Backup/deployment documentation.
 - Existing production-reliability and security plans.
 
@@ -50,7 +50,7 @@ Reference branch: main
 The repository is not a blank foundation and should not be rewritten wholesale.
 
 Current major M1 gaps:
-1. Complete Firebase production deployment and smoke tests.
+1. Complete the first production deployment of the container image and run the smoke tests in docs/deployment.md.
 2. Formal Express vs NestJS decision.
 3. Formal Prisma vs existing SQL data-access decision.
 4. Redis-backed infrastructure.

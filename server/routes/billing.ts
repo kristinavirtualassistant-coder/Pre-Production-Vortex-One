@@ -1,3 +1,5 @@
+import { safeErrorMessage } from '../security/logger';
+import { requirePermission } from '../security/permissions';
 import { Router } from 'express';
 import type { AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/auth';
@@ -32,7 +34,7 @@ router.get('/plans', (_req, res) => {
   res.json(PLAN_CATALOG);
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -41,32 +43,32 @@ router.get('/', async (req, res) => {
     if (!billing) return res.status(404).json({ error: 'Billing account not found' });
     res.json({ ...billing, plans: PLAN_CATALOG });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load billing' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load billing') });
   }
 });
 
-router.get('/usage', async (req, res) => {
+router.get('/usage', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
     res.json(await getUsageSummary(pool, organizationId(req as AuthRequest)));
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load billing usage' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load billing usage') });
   }
 });
 
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', requirePermission('billing:read'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
     const limit = Number(req.query.limit || 50);
     res.json(await listBillingInvoices(pool, organizationId(req as AuthRequest), limit));
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to load invoice history' });
+    res.status(500).json({ error: safeErrorMessage(error, 'Failed to load invoice history') });
   }
 });
 
-router.post('/checkout', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/checkout', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   const plan = String(req.body?.plan || '').toLowerCase();
@@ -86,7 +88,7 @@ router.post('/checkout', requireRole(['admin', 'executive']), async (req, res) =
   }
 });
 
-router.post('/portal', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/portal', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {
@@ -96,7 +98,7 @@ router.post('/portal', requireRole(['admin', 'executive']), async (req, res) => 
   }
 });
 
-router.post('/cancel', requireRole(['admin', 'executive']), async (req, res) => {
+router.post('/cancel', requirePermission('billing:manage'), async (req, res) => {
   const pool = poolOr503(res);
   if (!pool) return;
   try {

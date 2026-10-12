@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 
-const repoRoot = new URL('../..', import.meta.url);
+// Paths below are relative to this directory (server/test/).
+const repoRoot = new URL('./', import.meta.url);
 
 describe('Public records ingestion', () => {
   it('exposes the authoritative public-record ingestion service', async () => {
@@ -25,7 +26,8 @@ describe('Public records ingestion', () => {
     assert.match(source, /identityScore/);
     assert.match(source, /runnerUpScore/);
     assert.match(source, /owner_ownerships/);
-    assert.match(source, /uq_owner_source_records_org_provider_hash/);
+    const migrationSource = await readFile(new URL('../db/migrations.ts', repoRoot), 'utf8');
+    assert.match(migrationSource, /uq_owner_source_records_org_provider_hash/);
   });
 
   it('persists only explicit source relationships', async () => {

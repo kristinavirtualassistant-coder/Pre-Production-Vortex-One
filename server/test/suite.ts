@@ -38,6 +38,7 @@ import './callActionTenantBoundary.test';
 import './agentOperationsService.test';
 import './phase6AgentOperationsBoundary.test';
 import './rbacRouteBoundary.test';
+import './ssrfGuard.test';
 import './analyticsValueEventBoundary.test';
 import './manualDialService.test';
 import './realAgentRuntime.test';
@@ -87,6 +88,10 @@ async function runAllTests() {
   // a telephony call fixture before exercising FK-constrained services.
   const pgPool = getPgPool();
   if (pgPool) {
+    // Make the suite repeatable: remove CRM rows left by an earlier run of this suite in the fixture organization.
+    for (const table of ['leads', 'properties', 'property_owners']) {
+      await pgPool.query(`DELETE FROM ${table} WHERE organization_id = 'org_test'`).catch(() => {});
+    }
     await pgPool.query(`
       INSERT INTO organizations (id, name, slug)
       VALUES
@@ -106,7 +111,13 @@ async function runAllTests() {
 
   // Test Group 1: Database Migration System Integrity
   console.log('[Group 1: Database Migration System]');
-  assert(MIGRATIONS.length === 38, 'Migration list contains 38 defined migrations', `Expected 38, got ${MIGRATIONS.length}`);
+  // Append-only guard: bump EXPECTED_MIGRATION_COUNT deliberately when a migration is added.
+  const EXPECTED_MIGRATION_COUNT = 47;
+  assert(MIGRATIONS.length === EXPECTED_MIGRATION_COUNT, `Migration list contains ${EXPECTED_MIGRATION_COUNT} defined migrations`, `Expected ${EXPECTED_MIGRATION_COUNT}, got ${MIGRATIONS.length}`);
+  assert(new Set(MIGRATIONS.map((migration) => migration.version)).size === MIGRATIONS.length, 'Migration versions are unique');
+  assert(MIGRATIONS.some((migration) => migration.version === 12 && migration.name === '012_auth_webhook_voicemail_foundation'), 'Auth foundation migration 12 is part of the migration chain');
+  assert(MIGRATIONS.some((migration) => migration.version === 41 && migration.name === '041_add_campaign_scheduling_columns'), 'Campaign scheduling migration 41 present');
+  assert(MIGRATIONS.some((migration) => migration.version === 42 && migration.name === '042_add_totp_replay_protection'), 'TOTP replay protection migration 42 present');
   assert(MIGRATIONS.some((migration) => migration.version === 14 && migration.name === '014_create_integration_connections'), 'Integration migration 14 present', 'Expected integration migration 14 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 15 && migration.name === '015_create_durable_workflow_runs'), 'Workflow run migration 15 present', 'Expected workflow run migration 15 to be present');
   assert(MIGRATIONS.some((migration) => migration.version === 16 && migration.name === '016_create_shared_rate_limit_buckets'), 'Rate-limit migration 16 present', 'Expected rate-limit migration 16 to be present');
@@ -222,8 +233,10 @@ async function runAllTests() {
   if (!getPgPool()) {
     assert(true, 'Webhook ingestion requires PostgreSQL (skipped without database)');
   } else {
+    // Unique per run so the suite is repeatable against a database that already holds earlier runs.
+    const webhookEventId = `evt_unique_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const webhookResult1 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
-      eventId: 'evt_unique_101',
+      eventId: webhookEventId,
       telephonyCallId: 'call_501',
       status: 'completed',
       duration_seconds: 90,
@@ -231,7 +244,7 @@ async function runAllTests() {
     assert(webhookResult1.status === 'processed', 'First webhook event is processed');
 
     const webhookResult2 = await WebhookHandler.processWebhook('ringcentral', 'org_cmc_realty', {
-      eventId: 'evt_unique_101',
+      eventId: webhookEventId,
       telephonyCallId: 'call_501',
       status: 'completed',
       duration_seconds: 90,
@@ -781,6 +794,7 @@ async function runAllTests() {
   assert(serverIntegrityReport.organization_id === TEST_ORG_ID, 'Server integrity report scoped to default org');
   assert(serverIntegrityReport.total_properties > 0, 'Server datastore has properties checked');
   assert(serverIntegrityReport.total_owners > 0, 'Server datastore has owners checked');
+  if (serverIntegrityReport.isValid !== true) console.log('Integrity issues:', JSON.stringify(serverIntegrityReport.issues?.slice(0, 5)));
   assert(serverIntegrityReport.isValid === true, 'Authoritative server datastore passes referential integrity check');
 
   // =========================================================================
@@ -1049,7 +1063,11 @@ async function runAllTests() {
   assert(laSearchResult.success === true, 'LA County Assessor search returned success');
 }
 
-runAllTests().catch((error) => {
+runAllTests().then(() => {
+  console.log(`\nTest summary: ${passedTests} passed, ${failedTests} failed`);
+  // A failed assertion must fail the process (and therefore CI), not only print a ✗ line.
+  if (failedTests > 0) process.exitCode = 1;
+}).catch((error) => {
   console.error('Test suite failed:', error);
   process.exitCode = 1;
 });

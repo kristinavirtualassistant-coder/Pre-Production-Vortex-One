@@ -3,6 +3,8 @@
  * Handles automated version tracking, transactional migrations, and table bootstrap
  */
 
+import { POSTGRESQL_AUTH_MIGRATION } from './postgresqlAuthMigration';
+
 export interface Migration {
   version: number;
   name: string;
@@ -472,6 +474,11 @@ export const MIGRATIONS: Migration[] = [
     ALTER TABLE call ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_call_org_idempotency ON call(organization_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
   `, },
+  // Version 12 was historically missing from this chain: the authentication/webhook/voicemail foundation was
+  // created lazily at request time by whichever database role served the first login. It is now part of the
+  // ordered, admin-applied migration chain. The SQL is fully idempotent (IF NOT EXISTS), so databases that
+  // already received it through the old lazy bootstrap simply re-run it as a no-op.
+  { version: 12, name: '012_auth_webhook_voicemail_foundation', sql: POSTGRESQL_AUTH_MIGRATION.sql },
   {
     version: 13,
     name: '013_create_email_outreach_schema',
@@ -1426,7 +1433,6 @@ export const MIGRATIONS: Migration[] = [
         ON backup_events(organization_id, status, created_at DESC);
     `,
   },
-
   {
     version: 37,
     name: '037_extend_workflow_delivery_idempotency',
@@ -1499,5 +1505,237 @@ export const MIGRATIONS: Migration[] = [
         ON owner_enrichment_conflicts(organization_id, owner_id, status, created_at DESC);
     `,
   },
+  {
+    version: 41,
+    name: '041_add_campaign_scheduling_columns',
+    // Code paths read and write these columns but no earlier migration created them, so the features failed on any
+    // database built from the chain: campaign scheduling (CampaignManager) and call note edits (PATCH /api/calls/:id,
+    // POST /api/calls/:id/notes write call.updated_at).
+    sql: `
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE campaign ADD COLUMN IF NOT EXISTS scheduled_by VARCHAR(255);
+      ALTER TABLE call ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      CREATE INDEX IF NOT EXISTS idx_campaign_due_schedule ON campaign(scheduled_at) WHERE status = 'scheduled';
+    `,
+  },
+  {
+    version: 42,
+    name: '042_add_totp_replay_protection',
+    // The last accepted TOTP time-step per user: a code (or an earlier step) can never be accepted twice.
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_last_totp_step BIGINT;
+    `,
+  },
+  {
+    version: 43,
+    name: '043_bind_oauth_state_to_browser',
+    // The OAuth state is bound to the browser that started the flow (HttpOnly nonce cookie), so a callback URL
+    // cannot be completed from a different browser (login-CSRF / account-linking attack).
+    sql: `
+      ALTER TABLE integration_oauth_states ADD COLUMN IF NOT EXISTS browser_nonce_hash VARCHAR(64);
+    `,
+  },
+  {
+    version: 44,
+    name: '044_email_outreach_delivery_safety',
+    // 'manual_review' / 'suppressed' are terminal states; provider_attempted_at is written BEFORE the provider call so a
+    // crash after the provider accepted the message can never lead to a second send (see emailWorker).
+    sql: `
+      ALTER TABLE email_outreach ADD COLUMN IF NOT EXISTS provider_attempted_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE email_outreach DROP CONSTRAINT IF EXISTS email_outreach_status_check;
+      ALTER TABLE email_outreach ADD CONSTRAINT email_outreach_status_check
+        CHECK (status IN ('queued','processing','sent','failed','manual_review','suppressed'));
+    `,
+  },
+  {
+    version: 45,
+    name: '045_create_property_refresh_schedules',
+    // The property refresh worker (schedulerWorker / propertyRefreshScheduler) reads and writes these tables, but no
+    // earlier migration created them, so every worker tick failed on a database built from the migration chain.
+    sql: `
+      CREATE TABLE IF NOT EXISTS property_refresh_schedules (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        target_property_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        target_selection_mode VARCHAR(30) NOT NULL DEFAULT 'selected'
+          CHECK (target_selection_mode IN ('selected','all','high_equity','absentee_only','county_filter')),
+        county_filter VARCHAR(255),
+        interval_hours INTEGER NOT NULL DEFAULT 24 CHECK (interval_hours > 0),
+        cron_expression VARCHAR(100),
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','running')),
+        last_run_at TIMESTAMP WITH TIME ZONE,
+        next_run_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_run_status VARCHAR(20),
+        last_run_summary TEXT,
+        last_run_refreshed_count INTEGER,
+        enrichment_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_due
+        ON property_refresh_schedules(status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_schedules_org
+        ON property_refresh_schedules(organization_id, status);
+
+      CREATE TABLE IF NOT EXISTS property_refresh_logs (
+        id VARCHAR(64) PRIMARY KEY,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        schedule_id VARCHAR(64) NOT NULL REFERENCES property_refresh_schedules(id) ON DELETE CASCADE,
+        executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        properties_processed INTEGER NOT NULL DEFAULT 0,
+        properties_updated INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL,
+        details TEXT,
+        valuation_delta NUMERIC(18,2) DEFAULT 0,
+        equity_delta NUMERIC(18,2) DEFAULT 0,
+        errors JSONB NOT NULL DEFAULT '[]'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS idx_property_refresh_logs_org_schedule
+        ON property_refresh_logs(organization_id, schedule_id, executed_at DESC);
+    `,
+  },
+  {
+    version: 46,
+    name: '046_database_integrity_constraints',
+    // Constraints are added NOT VALID so they bind every NEW write immediately without failing on historical rows; run
+    // ALTER TABLE ... VALIDATE CONSTRAINT after cleaning any legacy data.
+    sql: `
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_valid') THEN
+          ALTER TABLE users ADD CONSTRAINT users_role_valid
+            CHECK (role IN ('member','agent','manager','executive','admin')) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'jobs_attempts_non_negative') THEN
+          ALTER TABLE jobs ADD CONSTRAINT jobs_attempts_non_negative CHECK (attempts >= 0 AND max_attempts >= 1) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'processed_events_organization_fk') THEN
+          ALTER TABLE processed_events ADD CONSTRAINT processed_events_organization_fk
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE NOT VALID;
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_last_seen ON auth_sessions(last_seen_at);
+    `,
+  },
+  {
+    version: 47,
+    name: '047_platform_owner_control_plane',
+    // Platform-owner control plane. Reuses users / organizations / auth_sessions; adds NO credentials table.
+    //  * organizations.status           - lifecycle (active | suspended | deactivated); enforced at request time.
+    //  * platform_owners                - the single authorised platform-owner identity (a users row). It is NOT a
+    //                                     users.role value, so no role endpoint can grant it. Writes are blocked by a
+    //                                     trigger unless the session sets vortex_one.platform_provisioning = 'on', which
+    //                                     only scripts/provision-platform-owner.ts does.
+    //  * platform_audit_logs            - append-only owner/control-plane audit trail (UPDATE/DELETE/TRUNCATE blocked).
+    //  * platform_support_sessions      - explicit, time-boxed, audited support access windows.
+    //  * platform_backup_runs           - backup outcomes written by backup jobs; the owner portal only reports these.
+    sql: `
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status_reason TEXT;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status_changed_by VARCHAR(64);
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_status_valid') THEN
+          ALTER TABLE organizations ADD CONSTRAINT organizations_status_valid
+            CHECK (status IN ('active','suspended','deactivated'));
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_organization_role ON users(organization_id, role);
+      CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at DESC);
+
+      CREATE TABLE IF NOT EXISTS platform_owners (
+        user_id VARCHAR(64) PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+        provisioned_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        provisioned_by VARCHAR(100) NOT NULL DEFAULT 'operator'
+      );
+      -- Exactly one platform owner: every row maps to the same constant index key.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_owner_singleton ON platform_owners ((TRUE));
+
+      CREATE OR REPLACE FUNCTION guard_platform_owner_changes()
+      RETURNS TRIGGER LANGUAGE plpgsql AS $$
+      BEGIN
+        IF COALESCE(current_setting('vortex_one.platform_provisioning', true), '') <> 'on' THEN
+          RAISE EXCEPTION 'platform_owners can only be changed by the trusted provisioning script';
+        END IF;
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END;
+      $$;
+      DROP TRIGGER IF EXISTS trg_platform_owners_guard ON platform_owners;
+      CREATE TRIGGER trg_platform_owners_guard
+        BEFORE INSERT OR UPDATE OR DELETE ON platform_owners
+        FOR EACH ROW EXECUTE FUNCTION guard_platform_owner_changes();
+      DROP TRIGGER IF EXISTS trg_platform_owners_guard_truncate ON platform_owners;
+      CREATE TRIGGER trg_platform_owners_guard_truncate
+        BEFORE TRUNCATE ON platform_owners
+        FOR EACH STATEMENT EXECUTE FUNCTION guard_platform_owner_changes();
+
+      CREATE TABLE IF NOT EXISTS platform_audit_logs (
+        id VARCHAR(64) PRIMARY KEY,
+        actor_user_id VARCHAR(64),
+        actor_role VARCHAR(30) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        target_type VARCHAR(50),
+        target_id VARCHAR(128),
+        organization_id VARCHAR(64),
+        result VARCHAR(20) NOT NULL CHECK (result IN ('success','denied','failure')),
+        ip_address VARCHAR(64),
+        user_agent VARCHAR(500),
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      -- Deliberately no foreign keys: the trail must outlive the users/organizations it describes.
+      CREATE INDEX IF NOT EXISTS idx_platform_audit_created ON platform_audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_platform_audit_org ON platform_audit_logs(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_platform_audit_actor ON platform_audit_logs(actor_user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_platform_audit_action ON platform_audit_logs(action, created_at DESC);
+
+      CREATE OR REPLACE FUNCTION prevent_platform_audit_mutation()
+      RETURNS TRIGGER LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'platform_audit_logs is append-only';
+      END;
+      $$;
+      DROP TRIGGER IF EXISTS trg_platform_audit_immutable ON platform_audit_logs;
+      CREATE TRIGGER trg_platform_audit_immutable
+        BEFORE UPDATE OR DELETE ON platform_audit_logs
+        FOR EACH ROW EXECUTE FUNCTION prevent_platform_audit_mutation();
+      DROP TRIGGER IF EXISTS trg_platform_audit_immutable_truncate ON platform_audit_logs;
+      CREATE TRIGGER trg_platform_audit_immutable_truncate
+        BEFORE TRUNCATE ON platform_audit_logs
+        FOR EACH STATEMENT EXECUTE FUNCTION prevent_platform_audit_mutation();
+
+      CREATE TABLE IF NOT EXISTS platform_support_sessions (
+        id VARCHAR(64) PRIMARY KEY,
+        owner_user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        organization_id VARCHAR(64) NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        ended_at TIMESTAMP WITH TIME ZONE,
+        ended_reason VARCHAR(30),
+        CHECK (expires_at > started_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_sessions_active ON platform_support_sessions(owner_user_id, expires_at) WHERE ended_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_support_sessions_org ON platform_support_sessions(organization_id, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS platform_backup_runs (
+        id VARCHAR(64) PRIMARY KEY,
+        target VARCHAR(30) NOT NULL CHECK (target IN ('postgresql','google_sheets','google_drive')),
+        status VARCHAR(20) NOT NULL CHECK (status IN ('running','success','failure')),
+        started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        finished_at TIMESTAMP WITH TIME ZONE,
+        error TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_platform_backup_runs_target ON platform_backup_runs(target, started_at DESC);
+    `,
+  },
+
  ];
 

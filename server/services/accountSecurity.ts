@@ -1,3 +1,4 @@
+import { purgeExpiredSessions, sessionAbsoluteDays } from '../security/sessionPolicy';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { Pool } from 'pg';
@@ -5,7 +6,6 @@ import { sendEmail } from './emailService';
 import { hashSessionToken } from './postgresqlAuth';
 
 const SESSION_COOKIE = process.env.NODE_ENV === 'production' ? '__Host-vortex_session' : 'vortex_session';
-const SESSION_DAYS = 7;
 const TOKEN_BYTES = 32;
 
 function envKey(name: string): Buffer {
@@ -44,7 +44,7 @@ export function getSessionToken(req: Request): string | null {
 
 export function setSessionCookie(res: Response, token: string): void {
   const secure = process.env.NODE_ENV === 'production';
-  const maxAge = SESSION_DAYS * 24 * 60 * 60 * 1000;
+  const maxAge = sessionAbsoluteDays() * 24 * 60 * 60 * 1000;
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Max-Age=${Math.floor(maxAge / 1000)}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
 }
 
@@ -61,10 +61,17 @@ export async function issueSession(
   options: { mfaVerified?: boolean } = {},
 ): Promise<string> {
   const token = createOneTimeToken();
+  // Rotation: a session presented with this request (e.g. a stale cookie) is revoked when a new one is issued,
+  // so a pre-set or leaked session identifier cannot survive a fresh authentication.
+  const presented = getSessionToken(req);
+  if (presented) {
+    await pool.query('UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [hashSessionToken(presented)]).catch(() => {});
+  }
+  if (Math.random() < 0.02) void purgeExpiredSessions(pool).catch(() => {});
   await pool.query(
     `INSERT INTO auth_sessions
       (id, user_id, token_hash, expires_at, user_agent, ip_address, mfa_verified_at)
-     VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '7 days', $4, $5, CASE WHEN $6 THEN CURRENT_TIMESTAMP ELSE NULL END)`,
+     VALUES ($1, $2, $3, CURRENT_TIMESTAMP + make_interval(days => $7::int), $4, $5, CASE WHEN $6 THEN CURRENT_TIMESTAMP ELSE NULL END)`,
     [
       `sess_${randomUUID()}`,
       userId,
@@ -72,6 +79,7 @@ export async function issueSession(
       String(req.headers['user-agent'] || '').slice(0, 500),
       req.ip || null,
       options.mfaVerified === true,
+      Math.ceil(sessionAbsoluteDays()),
     ],
   );
   setSessionCookie(res, token);
@@ -160,14 +168,19 @@ export function totpCode(secret: string, timestamp = Date.now()): string {
   return String(binary % 1_000_000).padStart(6, '0');
 }
 
-export function verifyTotp(secret: string, code: string, timestamp = Date.now()): boolean {
-  if (!/^\d{6}$/.test(code)) return false;
+/** Returns the matched 30-second time-step (for replay protection) or null when the code is not valid. */
+export function matchTotpStep(secret: string, code: string, timestamp = Date.now()): number | null {
+  if (!/^\d{6}$/.test(code)) return null;
   const current = Number(code);
   for (let drift = -1; drift <= 1; drift += 1) {
-    const expected = Number(totpCode(secret, timestamp + drift * 30_000));
-    if (current === expected) return true;
+    const at = timestamp + drift * 30_000;
+    if (current === Number(totpCode(secret, at))) return Math.floor(at / 1000 / 30);
   }
-  return false;
+  return null;
+}
+
+export function verifyTotp(secret: string, code: string, timestamp = Date.now()): boolean {
+  return matchTotpStep(secret, code, timestamp) !== null;
 }
 
 export function generateBackupCodes(count = 10): string[] {

@@ -7,6 +7,9 @@ export interface TenantDbContext {
   rollbackOnly: boolean;
 }
 
+/** Transaction-local setting carrying the authenticated organization; the single name any future RLS policy must read. */
+export const TENANT_GUC = 'vortex_one.organization_id';
+
 const storage = new AsyncLocalStorage<TenantDbContext>();
 
 export function getTenantContext(): TenantDbContext | undefined {
@@ -19,7 +22,7 @@ export function enterTenantContext(context: TenantDbContext): void {
 
 export async function beginTenantContext(client: PoolClient, organizationId: string): Promise<TenantDbContext> {
   await client.query('BEGIN');
-  await client.query('SELECT set_config($1, $2, true)', ['vortex.organization_id', organizationId]);
+  await client.query('SELECT set_config($1, $2, true)', [TENANT_GUC, organizationId]);
   return { organizationId, client, rollbackOnly: false };
 }
 

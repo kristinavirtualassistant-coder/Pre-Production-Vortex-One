@@ -8,3 +8,9 @@ coverage
 *.log
 .DS_Store
 screenshots
+
+# Local/secret/build artifacts never belong in the image context
+coverage
+*.pem
+*.key
+.superpowers

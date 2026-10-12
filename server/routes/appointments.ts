@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getPgPool } from '../db/db';
 import { requireOrganizationId } from '../services/organizationContext';
 import type { AuthRequest } from '../middleware/auth';
+import { requirePermission } from '../security/permissions';
 
 const STATUSES = new Set(['scheduled','confirmed','completed','cancelled','no_show']);
 export const appointmentsRouter = Router();
@@ -26,7 +27,7 @@ appointmentsRouter.get('/', async (req, res) => {
   } catch (error: any) { res.status(400).json({ error: error?.message || 'Failed to list appointments' }); }
 });
 
-appointmentsRouter.post('/', async (req, res) => {
+appointmentsRouter.post('/', requirePermission('appointments:write'), async (req, res) => {
   try {
     const organizationId = tenant(req as AuthRequest);
     const pool = getPgPool();
@@ -56,7 +57,7 @@ appointmentsRouter.post('/', async (req, res) => {
   } catch (error: any) { res.status(400).json({ error: error?.message || 'Failed to create appointment' }); }
 });
 
-appointmentsRouter.patch('/:id', async (req, res) => {
+appointmentsRouter.patch('/:id', requirePermission('appointments:write'), async (req, res) => {
   try {
     const organizationId = tenant(req as AuthRequest);
     const pool = getPgPool();

@@ -150,7 +150,7 @@ export async function archiveRingCentralRecording(input:{organizationId:string;c
     `INSERT INTO file_assets
       (id,organization_id,entity_type,entity_id,category,original_name,storage_bucket,storage_path,mime_type,size_bytes,metadata,status)
      VALUES ($1,$2,'call',$3,'call_recording',$4,$5,$6,'audio/mpeg',0,$7::jsonb,'pending')
-     ON CONFLICT (id) DO UPDATE SET metadata=EXCLUDED.metadata,status='pending',deleted_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+     ON CONFLICT (id) DO UPDATE SET metadata=EXCLUDED.metadata,status='pending',deleted_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE file_assets.organization_id=EXCLUDED.organization_id`,
     [fileId,organizationId,callId,`call-recording-${safeRecordingId}.mp3`,getFileStorageBucket(),buildStoragePath(organizationId,'call',callId,fileId,'call-recording.mp3'),JSON.stringify(metadata)],
   );
 

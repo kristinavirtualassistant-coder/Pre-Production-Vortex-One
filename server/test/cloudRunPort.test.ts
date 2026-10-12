@@ -4,5 +4,6 @@ import test from 'node:test';
 
 test('server binds to configured PORT when provided', () => {
   const source = fs.readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
-  assert.match(source, /const PORT = Number\(process\.env\.PORT\) \|\| 3000;/);
+  assert.match(source, /const PORT = Number\(process\.env\.PORT \|\| 8080\);/, 'startServer honors the PORT assigned by the platform');
+  assert.match(source, /app\.listen\(PORT, '0\.0\.0\.0'/, 'startServer binds all interfaces on that port');
 });

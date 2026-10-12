@@ -1,3 +1,4 @@
+import { resumeWorkflowAfterApproval } from './workflowApprovals';
 import type { Pool, PoolClient } from 'pg';
 import type { ApprovalRequest, Task, Workflow } from '../../src/types';
 
@@ -208,6 +209,7 @@ export async function decideApproval(pool: Pool, organizationId: string, id: str
     );
     if (!result.rows.length) { await client.query('ROLLBACK'); return null; }
     await audit(client, organizationId, `human_approval_${status}`, { approval_id: id, decision });
+    await resumeWorkflowAfterApproval(client, organizationId, result.rows[0]);
     await client.query('COMMIT'); return mapApproval(result.rows[0]);
   } catch (err) { await client.query('ROLLBACK'); throw err; } finally { client.release(); }
 }

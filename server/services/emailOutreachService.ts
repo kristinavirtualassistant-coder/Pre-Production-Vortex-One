@@ -14,7 +14,7 @@ export interface QueueEmailOutreachResult {
 }
 
 export function renderTemplate(text: string, context: Record<string, string | number | undefined>): string {
-  return text.replace(/{{\\s*([a-zA-Z0-9_]+)\\s*}}/g, (match, key: string) => {
+  return text.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (match, key: string) => {
     const value = context[key];
     return value === undefined || value === null ? match : String(value);
   });
@@ -54,7 +54,7 @@ export async function queueEmailOutreach(
     const leadRow = lead.rows[0];
     const emails = Array.isArray(leadRow.email_addresses) ? leadRow.email_addresses : [];
     const recipient = (emails.find((e: any) => typeof e?.email === 'string' && /@/.test(e.email))?.email || '').trim().toLowerCase();
-    if (!/^\\S+@\\S+\\.\\S+$/.test(recipient)) {
+    if (!/^\S+@\S+\.\S+$/.test(recipient)) {
       await client.query('ROLLBACK');
       throw new Error('Lead does not have a valid email address');
     }
