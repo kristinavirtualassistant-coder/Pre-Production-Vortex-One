@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../security/logger';
 import { requirePermission } from '../security/permissions';
 import { randomUUID } from 'node:crypto';
 import { Router, type Response } from 'express';
@@ -49,7 +50,7 @@ function org(req: AuthRequest): string {
 router.get('/threads', async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   try { res.json({ threads: await listThreads(pool, org(req), req.query.channel as any || undefined) }); }
-  catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load threads' }); }
+  catch (e:any) { res.status(500).json({ error:clientErrorMessage(e, 'Failed to load threads') }); }
 });
 
 /**
@@ -58,7 +59,7 @@ router.get('/threads', async (req: AuthRequest, res) => {
 router.get('/threads/:id/messages', async (req: AuthRequest, res) => {
   const pool = poolOrFail(res); if (!pool) return;
   try { res.json({ messages: await listThreadMessages(pool, org(req), req.params.id) }); }
-  catch (e:any) { res.status(500).json({ error:e.message || 'Failed to load conversation' }); }
+  catch (e:any) { res.status(500).json({ error:clientErrorMessage(e, 'Failed to load conversation') }); }
 });
 
 /**
@@ -77,7 +78,7 @@ router.get('/timeline', async (req: AuthRequest, res) => {
         return raw;
       })(),
     })});
-  } catch (e:any) { const message=e.message || 'Failed to load communications timeline'; res.status(/^limit must be a positive integer$/.test(message) ? 400 : 500).json({ error:message }); }
+  } catch (e:any) { const message=clientErrorMessage(e, 'Failed to load communications timeline'); res.status(/^limit must be a positive integer$/.test(message) ? 400 : 500).json({ error:message }); }
 });
 
 /**
@@ -95,7 +96,7 @@ router.post('/email/send', requireRole(['admin','executive','manager','agent']),
       inReplyTo:body.inReplyTo,idempotencyKey:body.idempotencyKey,
     });
     res.status(202).json({status:'queued',jobId});
-  } catch (e:any) { res.status(400).json({error:e.message || 'Failed to queue email'}); }
+  } catch (e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to queue email')}); }
 });
 
 /**
@@ -115,7 +116,7 @@ router.post('/sms/send', requireRole(['admin','executive','manager','agent']), a
       userId:req.dbUser!.id,to:body.to,body:body.body,from:body.from,leadId:body.leadId,ownerId:body.ownerId,propertyId:body.propertyId,idempotencyKey:body.idempotencyKey,
     });
     res.status(202).json({status:'queued',jobId});
-  } catch (e:any) { res.status(400).json({error:e.message || 'Failed to queue SMS'}); }
+  } catch (e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to queue SMS')}); }
 });
 
 /**
@@ -126,7 +127,7 @@ router.post('/email/sync', requirePermission('inbox:sync'), async (req: AuthRequ
   const provider=req.body?.provider || req.query.provider;
   if(!['google-workspace','microsoft-365'].includes(provider)) return res.status(400).json({error:'provider is required'});
   try { res.json({imported:await syncEmail(pool,org(req),req.dbUser!.id,provider)}); }
-  catch(e:any) { res.status(400).json({error:e.message || 'Email sync failed'}); }
+  catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Email sync failed')}); }
 });
 
 /**
@@ -142,7 +143,7 @@ router.get('/numbers', async (req: AuthRequest,res) => {
       numbers=await pool.query('SELECT * FROM messaging_numbers WHERE organization_id=$1 ORDER BY phone_number',[org(req)]);
     }
     res.json({numbers:numbers.rows});
-  } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load messaging numbers'}); }
+  } catch(e:any) { res.status(500).json({error:clientErrorMessage(e, 'Failed to load messaging numbers')}); }
 });
 
 /**
@@ -151,7 +152,7 @@ router.get('/numbers', async (req: AuthRequest,res) => {
 router.post('/numbers/sync', requireRole(['admin','executive','manager']), async (req: AuthRequest,res) => {
   const pool=poolOrFail(res); if(!pool)return;
   try { res.json({numbers:await listTwilioNumbers(pool,org(req))}); }
-  catch(e:any) { res.status(400).json({error:e.message || 'Twilio number sync failed'}); }
+  catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Twilio number sync failed')}); }
 });
 
 /**
@@ -162,7 +163,7 @@ router.get('/suppressions', async (req: AuthRequest,res) => {
   try {
     const result=await pool.query('SELECT id,channel,contact_key,reason,source,created_at FROM communication_suppressions WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500',[org(req)]);
     res.json({suppressions:result.rows});
-  } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load suppressions'}); }
+  } catch(e:any) { res.status(500).json({error:clientErrorMessage(e, 'Failed to load suppressions')}); }
 });
 
 /**
@@ -172,7 +173,7 @@ router.post('/suppressions', requirePermission('suppressions:write'), async (req
   const pool=poolOrFail(res); if(!pool)return;
   if(!['email','sms','voice','all'].includes(req.body?.channel) || !req.body?.contactKey) return res.status(400).json({error:'channel and contactKey are required'});
   try { res.status(201).json(await suppress(pool,org(req),req.body.channel,req.body.contactKey,req.body.reason || 'manual opt-out',req.body.source || 'user')); }
-  catch(e:any) { res.status(400).json({error:e.message || 'Failed to create suppression'}); }
+  catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to create suppression')}); }
 });
 
 /**
@@ -187,7 +188,7 @@ router.get('/templates', async (req: AuthRequest,res) => {
     if(channel && ['email','sms'].includes(channel)){ values.push(channel); where.push('channel=$' + values.length); }
     const result=await pool.query('SELECT id,name,description,channel,category,subject,body,variables,tags,is_default,version,created_at,updated_at FROM outreach_templates WHERE ' + where.join(' AND ') + ' ORDER BY is_default DESC,updated_at DESC LIMIT 250',values);
     res.json({templates:result.rows});
-  } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load templates'}); }
+  } catch(e:any) { res.status(500).json({error:clientErrorMessage(e, 'Failed to load templates')}); }
 });
 
 /**
@@ -204,7 +205,7 @@ router.post('/templates', requireRole(['admin','executive','manager']), async (r
       ['tpl_' + randomUUID(),org(req),String(body.name).trim(),body.description || null,body.channel,body.category || 'custom',body.channel === 'email' ? (body.subject || '') : null,String(body.body),JSON.stringify(variables),JSON.stringify(Array.isArray(body.tags)?body.tags:[]),Boolean(body.is_default),req.dbUser!.id],
     );
     res.status(201).json(result.rows[0]);
-  } catch(e:any) { res.status(400).json({error:e.message || 'Failed to create template'}); }
+  } catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to create template')}); }
 });
 
 /**
@@ -218,7 +219,7 @@ router.get('/sequences', async (req: AuthRequest,res) => {
       [org(req)],
     );
     res.json({sequences:result.rows});
-  } catch(e:any) { res.status(500).json({error:e.message || 'Failed to load sequences'}); }
+  } catch(e:any) { res.status(500).json({error:clientErrorMessage(e, 'Failed to load sequences')}); }
 });
 
 /**
@@ -229,7 +230,7 @@ router.post('/sequences', requireRole(['admin','executive','manager']), async (r
   const input=req.body || {};
   if(!input.name || !Array.isArray(input.steps) || !input.steps.length) return res.status(400).json({error:'name and at least one sequence step are required'});
   try { res.status(201).json({id:await createSequence(pool,org(req),req.dbUser!.id,input)}); }
-  catch(e:any) { res.status(400).json({error:e.message || 'Failed to create sequence'}); }
+  catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to create sequence')}); }
 });
 
 /**
@@ -239,7 +240,7 @@ router.post('/sequences/:id/enroll', requireRole(['admin','executive','manager',
   const pool=poolOrFail(res); if(!pool)return;
   if(!req.body?.leadId) return res.status(400).json({error:'leadId is required'});
   try { res.status(201).json({enrollmentId:await enrollSequence(pool,org(req),req.dbUser!.id,req.params.id,req.body.leadId)}); }
-  catch(e:any) { res.status(400).json({error:e.message || 'Failed to enroll lead'}); }
+  catch(e:any) { res.status(400).json({error:clientErrorMessage(e, 'Failed to enroll lead')}); }
 });
 
 /**
@@ -320,7 +321,7 @@ router.post('/webhooks/twilio/status', async (req,res) => {
     const callbackUrl = (process.env.APP_URL || (req.protocol + '://' + req.get('host'))).replace(/\/$/,'') + req.originalUrl;
     await handleTwilioStatus(pool,callbackUrl,req.body || {},req.get('X-Twilio-Signature') || undefined);
     res.status(204).send();
-  } catch(e:any) { res.status(403).json({error:e.message || 'Webhook rejected'}); }
+  } catch(e:any) { res.status(403).json({error:clientErrorMessage(e, 'Webhook rejected')}); }
 });
 
 export default router;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getPgPool } from '../db/db';
 import type { AuthRequest } from '../middleware/auth';
 import { requirePermission } from '../security/permissions';
-import { safeErrorMessage } from '../security/logger';
+import { safeErrorMessage, clientErrorMessage } from '../security/logger';
 import { externalWebhookService } from '../services/externalWebhookService';
 
 /** External HTTP/HTTPS webhook endpoint management. Mounted at /api/webhooks behind requireAuth. */
@@ -24,7 +24,7 @@ router.post('/', requirePermission('webhooks:manage'), async (req, res) => {
     const endpoint = await externalWebhookService.createEndpoint({ ...req.body, organizationId });
     res.status(201).json(endpoint);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Failed to create webhook endpoint' });
+    res.status(400).json({ error: clientErrorMessage(err, 'Failed to create webhook endpoint') });
   }
 });
 
@@ -35,7 +35,7 @@ router.put('/:id', requirePermission('webhooks:manage'), async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Webhook endpoint not found' });
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Failed to update webhook endpoint' });
+    res.status(400).json({ error: clientErrorMessage(err, 'Failed to update webhook endpoint') });
   }
 });
 
@@ -57,7 +57,7 @@ router.post('/:id/test', requirePermission('webhooks:test'), async (req, res) =>
     if (!delivery) return res.status(404).json({ error: 'Webhook endpoint not found' });
     res.json(delivery);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Webhook test failed' });
+    res.status(400).json({ error: clientErrorMessage(err, 'Webhook test failed') });
   }
 });
 

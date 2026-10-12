@@ -1,4 +1,4 @@
-import { safeErrorMessage } from '../security/logger';
+import { safeErrorMessage, clientErrorMessage } from '../security/logger';
 import { requirePermission } from '../security/permissions';
 import { Router } from 'express';
 import type { AuthRequest } from '../middleware/auth';
@@ -84,7 +84,7 @@ router.post('/checkout', requirePermission('billing:manage'), async (req, res) =
     );
     res.status(201).json(result);
   } catch (error: any) {
-    res.status(error.statusCode || 400).json({ error: error.message || 'Unable to create checkout session' });
+    res.status(error.statusCode || 400).json({ error: clientErrorMessage(error, 'Unable to create checkout session') });
   }
 });
 
@@ -94,7 +94,7 @@ router.post('/portal', requirePermission('billing:manage'), async (req, res) => 
   try {
     res.json(await createPortalSession(pool, organizationId(req as AuthRequest)));
   } catch (error: any) {
-    res.status(error.statusCode || 400).json({ error: error.message || 'Unable to create billing portal session' });
+    res.status(error.statusCode || 400).json({ error: clientErrorMessage(error, 'Unable to create billing portal session') });
   }
 });
 
@@ -104,7 +104,7 @@ router.post('/cancel', requirePermission('billing:manage'), async (req, res) => 
   try {
     res.json(await cancelSubscription(pool, organizationId(req as AuthRequest)));
   } catch (error: any) {
-    res.status(error.statusCode || 400).json({ error: error.message || 'Unable to cancel subscription' });
+    res.status(error.statusCode || 400).json({ error: clientErrorMessage(error, 'Unable to cancel subscription') });
   }
 });
 

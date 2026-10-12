@@ -43,11 +43,12 @@ import { listAgentMemories, upsertAgentMemory } from './server/agents/agentMemor
 import { createCheckoutSession, createPortalSession, verifyStripeWebhook, processStripeWebhookEvent, enforceUsageLimit } from './server/services/billingService';
 import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
+import { securityHeaders } from './server/middleware/securityHeaders';
 import { requirePermission } from './server/security/permissions';
 import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
 import { TENANT_GUC } from './server/db/tenantContext';
 import { isDemoModeEnabled } from './server/security/demoMode';
-import { logError, safeErrorMessage } from './server/security/logger';
+import { logError, safeErrorMessage, clientErrorMessage, isInternalError } from './server/security/logger';
 import { integrationsRouter, integrationOAuthCallbackRouter } from './server/routes/integrations';
 import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebhook } from './server/routes/machineEndpoints';
 import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
@@ -75,6 +76,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   // req.ip (used by every rate limiter) is only correct behind a proxy when the hop count is configured.
   app.set('trust proxy', resolveTrustProxy());
   app.disable('x-powered-by');
+
+  // Baseline browser security headers on every response (see server/middleware/securityHeaders.ts).
+  app.use(securityHeaders({ production: isProduction }));
 
   // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
   app.use(stripClientIdentityHeaders);
@@ -104,7 +108,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     if (isProduction) throw err;
   }
 
-  // --- API Routes ---\n\n  app.use('/api/analytics', requireAuth, analyticsRouter);
+  // --- API Routes ---
+  app.use('/api/analytics', requireAuth, analyticsRouter);
   app.use('/api/appointments', requireAuth, appointmentsRouter);
   // Health & DB Status
   app.get('/api/health', (req, res) => {
@@ -347,7 +352,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const userId=(req as AuthRequest).dbUser?.id;
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow versioning'});
     try { res.status(201).json(await createWorkflowVersion(pool,orgId,req.params.id,userId,Boolean(req.body?.publish))); }
-    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to create workflow version')}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to create workflow version'))}); }
   });
 
   app.get('/api/workflows/:id/versions', async (req, res) => {
@@ -362,7 +367,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow publishing'});
     try { res.json(await publishWorkflowVersion(pool,orgId,req.params.id,req.params.versionId)); }
-    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to publish workflow version')}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to publish workflow version'))}); }
   });
 
   app.post('/api/workflows/:id/schedules', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -370,7 +375,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     if(!pool||!userId) return res.status(503).json({error:'PostgreSQL is required for workflow scheduling'});
     if(!(await getWorkflow(pool,orgId,req.params.id))) return res.status(404).json({error:'Not found'});
     try { res.status(201).json(await scheduleWorkflow(pool,orgId,req.params.id,userId,req.body||{})); }
-    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to schedule workflow')}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to schedule workflow'))}); }
   });
 
   app.patch('/api/workflows/:id/schedules/:scheduleId', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -379,7 +384,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     const status=String(req.body?.status||'');
     if(!['active','paused','cancelled'].includes(status)) return res.status(400).json({error:'status must be active, paused, or cancelled'});
     try { res.json(await updateWorkflowScheduleStatus(pool,orgId,req.params.scheduleId,status as 'active'|'paused'|'cancelled')); }
-    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to update workflow schedule')}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to update workflow schedule'))}); }
   });
 
   app.post('/api/workflows/:id/schedules/:scheduleId/run-now', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
@@ -388,7 +393,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     try {
       const result=await runWorkflowScheduleNow(pool,orgId,req.params.scheduleId);
       res.status(202).json(result);
-    } catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to queue workflow')}); }
+    } catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to queue workflow'))}); }
   });
 
   app.get('/api/workflows/:id/schedules', async (req, res) => {
@@ -415,7 +420,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
     const pool=getPgPool(); const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
     if(!pool) return res.status(503).json({error:'PostgreSQL is required for workflow retry'});
     try { res.status(202).json(await retryWorkflowRun(pool,orgId,req.params.id)); }
-    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(err.message||'Failed to retry workflow')}); }
+    catch(err:any){ res.status(httpStatusForError(err)===404?404:400).json({error:httpStatusForError(err)===404?'Not found':(clientErrorMessage(err, 'Failed to retry workflow'))}); }
   });
 
   app.get('/api/workflow-runs/:id/steps', async (req, res) => {
@@ -1115,7 +1120,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('Database property search error:', err);
-      res.status(err?.statusCode || 500).json({ error: err.message || 'Property search failed', code: err?.code });
+      res.status(err?.statusCode || 500).json({ error: clientErrorMessage(err, 'Property search failed'), ...(isInternalError(err) ? {} : { code: err?.code }) });
     }
   });
 
@@ -1461,7 +1466,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('[native-map-search] failed:', err);
-      return res.status(500).json({ error: err?.message || 'Native map search failed', code: 'MAP_SEARCH_FAILED' });
+      return res.status(500).json({ error: clientErrorMessage(err, 'Native map search failed'), code: 'MAP_SEARCH_FAILED' });
     }
   });
 
@@ -1639,7 +1644,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
     } catch (err: any) {
       console.error('Error batch updating properties:', err);
-      res.status(500).json({ error: err?.message || 'Failed to batch update properties' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to batch update properties') });
     }
   });
 
@@ -2654,7 +2659,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
         if(u.rows[0]) leads.push({...u.rows[0],owner_name:r.owner_name||'',property_address:r.property_address||''});
       }
       res.json({success:true,rescoredCount:leads.length,leads});
-    } catch(err:any) { console.error('PostgreSQL lead scoring error:',err); res.status(503).json({error:err.message||'Lead scoring unavailable'}); }
+    } catch(err:any) { console.error('PostgreSQL lead scoring error:',err); res.status(503).json({error:clientErrorMessage(err, 'Lead scoring unavailable')}); }
   });
 
   // Create Lead Manually
@@ -2988,7 +2993,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const updated = await CampaignManager.scheduleCampaign(orgId, req.params.id, scheduledAt, timezone, scheduledBy);
       res.json(updated);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -2998,7 +3003,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const updated = await CampaignManager.cancelSchedule(orgId, req.params.id);
       res.json(updated);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3008,7 +3013,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const result = await CampaignManager.startCampaign(orgId, req.params.id, req.body.agentUserId || 'agent_1');
       res.json(result);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3018,7 +3023,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       await CampaignManager.pauseCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'paused', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3028,7 +3033,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       await CampaignManager.stopCampaign(orgId, req.params.id);
       res.json({ success: true, status: 'completed', campaignId: req.params.id });
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3059,7 +3064,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const result = await CampaignManager.addContacts(orgId, req.params.id, contacts);
       res.status(201).json(result);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3076,7 +3081,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       });
       res.json(result);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3093,7 +3098,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const result = await startDialingEngine({ organizationId: orgId, campaignId: req.params.id, sessionId: req.body.session_id, concurrency, callStrategyBrief: req.body.call_strategy_brief });
       res.json(result);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3104,7 +3109,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
       const result = await CampaignManager.shuffleQueue(orgId, req.params.id);
       res.json(result);
     } catch (err: any) {
-      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : err.message });
+      res.status(httpStatusForError(err)).json({ error: httpStatusForError(err) === 404 ? 'Not found' : clientErrorMessage(err, 'Campaign request failed') });
     }
   });
 
@@ -3321,20 +3326,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
   // --- Dialer Metrics API (PostgreSQL authoritative) ---
 app.get('/api/dialer/metrics', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Dialer metrics require PostgreSQL'}); const result=await pool.query(`SELECT CURRENT_DATE::text AS date, COUNT(*)::int AS call_volume, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_calls, COALESCE(AVG(duration_seconds) FILTER (WHERE status = 'completed'),0)::float AS avg_talk_time FROM call WHERE organization_id=$1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'`,[orgId]); const row=result.rows[0]||{}; const volume=Number(row.call_volume)||0; const completed=Number(row.completed_calls)||0; return res.json([{organization_id:orgId,date:row.date,call_volume:volume,success_rate:volume?Number(((completed/volume)*100).toFixed(1)):0,avg_talk_time:Number(row.avg_talk_time)||0,abandonment_rate:volume?Number((((volume-completed)/volume)*100).toFixed(1)):0}]); }
-  catch(err:any){return res.status(503).json({error:err.message||'Dialer metrics unavailable'});}
+  catch(err:any){return res.status(503).json({error:clientErrorMessage(err, 'Dialer metrics unavailable')});}
 });
 // --- Voicemail Drop Library API (PostgreSQL authoritative) ---
 app.get('/api/dialer/voicemails', async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`SELECT id,organization_id,label,url,created_at FROM voicemail_library WHERE organization_id=$1 ORDER BY created_at DESC`,[orgId]); return res.json(result.rows); }
-  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+  catch(err:any){return res.status(503).json({error:clientErrorMessage(err, 'Voicemail library unavailable')});}
 });
 app.post('/api/dialer/voicemails', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const label=String(req.body?.label||'').trim(); const url=String(req.body?.url||'').trim(); if(!label||!url)return res.status(400).json({error:'label and url are required'}); const id=`vm_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; const result=await pool.query(`INSERT INTO voicemail_library (id,organization_id,label,url) VALUES ($1,$2,$3,$4) RETURNING id,organization_id,label,url,created_at`,[id,orgId,label,url]); return res.status(201).json(result.rows[0]); }
-  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+  catch(err:any){return res.status(503).json({error:clientErrorMessage(err, 'Voicemail library unavailable')});}
 });
 app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
   try { const orgId=requireOrganizationId((req as AuthRequest).dbUser?.organization_id); const pool=getPgPool(); if(!pool)return res.status(503).json({error:'Voicemail library requires PostgreSQL'}); const result=await pool.query(`DELETE FROM voicemail_library WHERE id=$1 AND organization_id=$2 RETURNING id`,[req.params.id,orgId]); if(!result.rowCount)return res.status(404).json({error:'Voicemail not found'}); return res.json({success:true,deletedId:result.rows[0].id}); }
-  catch(err:any){return res.status(503).json({error:err.message||'Voicemail library unavailable'});}
+  catch(err:any){return res.status(503).json({error:clientErrorMessage(err, 'Voicemail library unavailable')});}
 });
   app.post('/api/calls/:id/drop-voicemail', requireRole(['admin', 'executive', 'manager']), async (req, res) => {
     const pool = getPgPool();
@@ -3473,7 +3478,7 @@ app.delete('/api/dialer/voicemails/:id', requireRole(['admin', 'executive', 'man
         followUpTaskId: result.followUpTaskId,
       });
     } catch (err: any) {
-      const message = err?.message || 'Failed to apply call disposition';
+      const message = clientErrorMessage(err, 'Failed to apply call disposition');
       if (message === 'Call not found') return res.status(404).json({ error: message });
       if (message.startsWith('Invalid call disposition:') || message.startsWith('followUpAt ')) {
         return res.status(400).json({ error: message });
@@ -4229,7 +4234,7 @@ ${transcript}`;
       }));
       res.json({ agents: configured, defaults: getAllAgents() });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to list AI agents' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to list AI agents') });
     }
   });
 
@@ -4268,7 +4273,7 @@ ${transcript}`;
       );
       res.status(201).json(result.rows[0]);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to save AI agent' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to save AI agent') });
     }
   });
 
@@ -4287,7 +4292,7 @@ ${transcript}`;
       });
       res.status(result.status === 'failed' ? 502 : 200).json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Agent execution failed' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Agent execution failed') });
     }
   });
 
@@ -4297,7 +4302,7 @@ ${transcript}`;
       const runs = await listAgentRuns(orgId, Number(req.query.limit) || 50);
       res.json(runs);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to list agent runs' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to list agent runs') });
     }
   });
 
@@ -4308,7 +4313,7 @@ ${transcript}`;
       if (!run) return res.status(404).json({ error: 'Agent run not found' });
       res.json(run);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to load agent run' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to load agent run') });
     }
   });
 
@@ -4319,7 +4324,7 @@ ${transcript}`;
       if (!result) return res.status(404).json({ error: 'Agent run not found' });
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to cancel agent run' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to cancel agent run') });
     }
   });
 
@@ -4342,7 +4347,7 @@ ${transcript}`;
       const result = await continueApprovedAgentRun(orgId, req.params.runId, approvalId, (req as AuthRequest).dbUser?.id);
       res.json({ approval, result });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to process agent approval' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to process agent approval') });
     }
   });
 
@@ -4351,7 +4356,7 @@ ${transcript}`;
       const orgId = requireOrganizationId((req as AuthRequest).dbUser?.organization_id);
       res.json(await listAgentMemories(orgId, req.params.agentId, Number(req.query.limit) || 100));
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to load agent memory' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to load agent memory') });
     }
   });
 
@@ -4365,7 +4370,7 @@ ${transcript}`;
         memoryKey, content, importance: req.body?.importance, metadata: req.body?.metadata,
       }));
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to save agent memory' });
+      res.status(500).json({ error: clientErrorMessage(err, 'Failed to save agent memory') });
     }
   });
 
