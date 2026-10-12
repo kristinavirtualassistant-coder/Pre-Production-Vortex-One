@@ -52,6 +52,7 @@ import { integrationsRouter, integrationOAuthCallbackRouter } from './server/rou
 import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebhook } from './server/routes/machineEndpoints';
 import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
 import { ownerRouter } from './server/routes/owner';
+import { appSurfaceGate, resolveAppSurface } from './server/security/appSurface';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -67,8 +68,10 @@ export interface CreateAppOptions {
  * serverless handler or exercised over real HTTP in tests. `startServer()` below binds the port.
  */
 export async function createApp(options: CreateAppOptions = {}): Promise<express.Express> {
+  const surface = resolveAppSurface();
   const serveFrontend = options.serveFrontend ?? true;
-  const backgroundTimers = options.backgroundTimers ?? true;
+  // The Owner Portal service never runs customer background work.
+  const backgroundTimers = (options.backgroundTimers ?? true) && surface !== 'owner';
   const app = express();
   const isProduction = process.env.NODE_ENV === 'production';
 
@@ -78,6 +81,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
   // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
   app.use(stripClientIdentityHeaders);
+
+  // Platform and Owner Portal run as separate services: each refuses the other's routes before anything else runs.
+  app.use(appSurfaceGate(surface));
 
   registerStripeWebhook(app);
 
@@ -4471,6 +4477,6 @@ export async function startServer() {
   const PORT = Number(process.env.PORT || 8080);
   const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Vortex One platform running on http://0.0.0.0:${PORT}`);
+    console.log(`Vortex One (${resolveAppSurface()} surface) running on http://0.0.0.0:${PORT}`);
   });
 }
