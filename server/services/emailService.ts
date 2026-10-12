@@ -13,7 +13,7 @@ export interface EmailSendResult {
   messageId: string;
 }
 
-/** Minimal transport contract (satisfied by nodemailer) so tests and alternative providers can be injected. */
+/** Minimal SMTP transport contract for tests and legacy SMTP providers. */
 export interface EmailTransport {
   sendMail(message: {
     from: string;
@@ -41,7 +41,7 @@ function singleLine(value: string): string {
 let injectedTransport: EmailTransport | null = null;
 let cachedTransport: Transporter | null = null;
 
-/** Replaces the SMTP transport (tests, alternative providers). Pass null to restore SMTP. */
+/** Replaces SMTP transport for tests. Pass null to restore provider selection. */
 export function setEmailTransport(transport: EmailTransport | null): void {
   injectedTransport = transport;
 }
@@ -68,9 +68,50 @@ function smtpTransport(): EmailTransport {
   return cachedTransport as unknown as EmailTransport;
 }
 
+async function sendWithResend(message: EmailMessage, from: string): Promise<EmailSendResult> {
+  const apiKey = required('RESEND_API_KEY');
+  let response: Response;
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to: [singleLine(message.to)],
+        subject: singleLine(message.subject),
+        text: message.text,
+        ...(message.html ? { html: message.html } : {}),
+        ...(message.headers ? { headers: message.headers } : {}),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    const name = (error as { name?: string })?.name;
+    throw new Error(`Email delivery failed (${name === 'TimeoutError' ? 'ETIMEDOUT' : 'NETWORK_ERROR'})`);
+  }
+
+  if (!response.ok) {
+    // Do not expose provider response bodies or credentials in application errors.
+    throw new Error(`Email delivery failed (RESEND_HTTP_${response.status})`);
+  }
+
+  let result: { id?: string };
+  try {
+    result = await response.json() as { id?: string };
+  } catch {
+    throw new Error('Email delivery failed (RESEND_INVALID_RESPONSE)');
+  }
+  if (!result.id) throw new Error('Email delivery failed (RESEND_INVALID_RESPONSE)');
+  return { messageId: result.id };
+}
+
 export async function sendEmail(message: EmailMessage): Promise<EmailSendResult> {
   if (!EMAIL_PATTERN.test(message.to)) throw new Error('Invalid recipient email');
-  const from = singleLine(message.from?.trim() || required('SMTP_FROM'));
+  const from = singleLine(message.from?.trim() || process.env.RESEND_FROM?.trim() || process.env.SMTP_FROM?.trim() || required('RESEND_FROM'));
+  if (!injectedTransport && process.env.RESEND_API_KEY?.trim()) return sendWithResend(message, from);
   const transport = injectedTransport ?? smtpTransport();
   let info: Awaited<ReturnType<EmailTransport['sendMail']>>;
   try {
