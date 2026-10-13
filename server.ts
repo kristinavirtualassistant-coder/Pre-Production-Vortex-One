@@ -53,6 +53,8 @@ import { registerStripeWebhook, registerSchedulerTrigger, registerTelephonyWebho
 import { webhookEndpointsRouter } from './server/routes/webhookEndpoints';
 import { ownerRouter } from './server/routes/owner';
 import { appSurfaceGate, resolveAppSurface } from './server/security/appSurface';
+import { ownerMfaRequired } from './server/security/platformAuthorization';
+const isProductionEnv = () => process.env.NODE_ENV === 'production';
 import * as limits from './server/middleware/limits';
 import { assertOwned, isOwned, type OwnedTable } from './server/security/tenantGuards';
 
@@ -69,6 +71,9 @@ export interface CreateAppOptions {
  */
 export async function createApp(options: CreateAppOptions = {}): Promise<express.Express> {
   const surface = resolveAppSurface();
+  if (isProductionEnv() && surface !== 'platform' && !ownerMfaRequired()) {
+    console.warn('OWNER_PORTAL_REQUIRE_MFA=false: the Owner Portal accepts password-only sign-in.');
+  }
   const serveFrontend = options.serveFrontend ?? true;
   // The Owner Portal service never runs customer background work.
   const backgroundTimers = (options.backgroundTimers ?? true) && surface !== 'owner';

@@ -23,7 +23,9 @@ Platform owner       -> /owner portal (MFA-verified session)        -> allowed
   authentication. It looks the caller up in `platform_owners` (joined to an enabled user in an active organization). It never reads
   a role, owner flag or organization id from the request. Non-owners get a generic `403` and the attempt is audited.
 * **MFA.** In production the owner must have MFA enabled **and** the current session must have been MFA-verified. A session
-  created before MFA was enabled does not qualify.
+  created before MFA was enabled does not qualify. The owner can deliberately turn this off with
+  `OWNER_PORTAL_REQUIRE_MFA=false` (password-only owner sign-in, also accepted by the bootstrap); the server logs a warning
+  at startup while it is off. Re-enable by removing the variable or setting it to `true`.
 * **No second authentication system.** `/owner/login` calls the existing `/api/auth/login` and `/api/auth/mfa/verify`.
   Sessions are the existing HttpOnly cookie (idle/absolute limits, rotation, revocation, brute-force limits all apply). Nothing is
   stored in browser storage.

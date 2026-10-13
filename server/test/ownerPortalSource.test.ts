@@ -60,7 +60,7 @@ assert.ok(!/express|app\.(get|post)/.test(provision), 'provisioning is a script,
 const provisioning = read(PROVISIONING_MODULE);
 assert.match(provisioning, /vortex_one\.platform_provisioning/);
 assert.ok(!/express|Request|Response|req\.|res\./.test(provisioning), 'owner provisioning has no HTTP surface');
-assert.match(provisioning, /requireMfa: true/, 'the env bootstrap always requires MFA');
+assert.match(provisioning, /requireMfa: ownerMfaRequired\(/, 'the env bootstrap follows the owner MFA policy');
 assert.ok(!/replace:\s*true/.test(provisioning), 'the env bootstrap never replaces an existing owner');
 
 // ---- migration shape

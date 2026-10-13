@@ -5,6 +5,7 @@
  * The database itself still enforces a single owner and rejects writes without the provisioning session flag.
  */
 import { randomUUID } from 'node:crypto';
+import { ownerMfaRequired } from './platformAuthorization';
 
 export interface ProvisioningClient {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
@@ -73,7 +74,7 @@ export type BootstrapOutcome =
 
 /**
  * One-time owner bootstrap from server configuration. Only acts while NO owner exists, so it can never take over
- * or replace an existing owner; it always requires a verified, MFA-enabled, active account. Never throws: a
+ * or replace an existing owner; it requires a verified, active account, and MFA unless the owner MFA policy is off. Never throws: a
  * failure is logged and the server keeps starting. Remove the variable once the owner exists.
  */
 export async function bootstrapPlatformOwnerFromEnv(
@@ -95,7 +96,7 @@ export async function bootstrapPlatformOwnerFromEnv(
       return { status: 'skipped_owner_exists' };
     }
     const result = await provisionPlatformOwner(client, { email }, {
-      provisionedBy: 'env-bootstrap', requireMfa: true, auditDetails: { source: 'PLATFORM_OWNER_BOOTSTRAP_EMAIL' },
+      provisionedBy: 'env-bootstrap', requireMfa: ownerMfaRequired({ ...process.env, ...env }), auditDetails: { source: 'PLATFORM_OWNER_BOOTSTRAP_EMAIL' },
     });
     log.log(`Platform owner bootstrap: user ${result.userId} is now the platform owner. Remove PLATFORM_OWNER_BOOTSTRAP_EMAIL.`);
     return { status: result.status, userId: result.userId };
