@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../security/logger';
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { getPgPool } from '../db/db';
@@ -24,7 +25,7 @@ appointmentsRouter.get('/', async (req, res) => {
     params.push(Math.min(Math.max(Number(req.query.limit || 100), 1), 250));
     const result = await pool.query('SELECT * FROM appointments WHERE ' + where.join(' AND ') + ' ORDER BY scheduled_at ASC LIMIT $' + params.length, params);
     res.json({ appointments: result.rows });
-  } catch (error: any) { res.status(400).json({ error: error?.message || 'Failed to list appointments' }); }
+  } catch (error: any) { res.status(400).json({ error: clientErrorMessage(error, 'Failed to list appointments') }); }
 });
 
 appointmentsRouter.post('/', requirePermission('appointments:write'), async (req, res) => {
@@ -54,7 +55,7 @@ appointmentsRouter.post('/', requirePermission('appointments:write'), async (req
       ['appt_' + randomUUID(),organizationId,leadId || null,campaignId || null,assignedUserId || null,new Date(scheduledAt).toISOString(),status,outcome || null,notes || null],
     );
     res.status(201).json({ appointment: result.rows[0] });
-  } catch (error: any) { res.status(400).json({ error: error?.message || 'Failed to create appointment' }); }
+  } catch (error: any) { res.status(400).json({ error: clientErrorMessage(error, 'Failed to create appointment') }); }
 });
 
 appointmentsRouter.patch('/:id', requirePermission('appointments:write'), async (req, res) => {
@@ -92,5 +93,5 @@ appointmentsRouter.patch('/:id', requirePermission('appointments:write'), async 
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Appointment not found' });
     res.json({ appointment: result.rows[0] });
-  } catch (error: any) { res.status(400).json({ error: error?.message || 'Failed to update appointment' }); }
+  } catch (error: any) { res.status(400).json({ error: clientErrorMessage(error, 'Failed to update appointment') }); }
 });

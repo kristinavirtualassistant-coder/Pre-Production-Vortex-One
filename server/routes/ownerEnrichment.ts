@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../security/logger';
 import { ResourceNotFoundError } from '../errors';
 import { Router } from 'express';
 import { type AuthRequest, requireRole } from '../middleware/auth';
@@ -33,7 +34,7 @@ export function createOwnerEnrichmentRouter(): Router {
       );
       return res.json({ owners: result.rows, count: result.rows.length });
     } catch (error: any) {
-      return res.status(400).json({ error: error?.message || 'Unable to list owners' });
+      return res.status(400).json({ error: clientErrorMessage(error, 'Unable to list owners') });
     }
   });
 
@@ -42,7 +43,7 @@ export function createOwnerEnrichmentRouter(): Router {
       const org = requireOrganizationId(req.dbUser?.organization_id);
       return res.json({ providers: await OwnerEnrichmentService.listProviders(org) });
     } catch (error: any) {
-      return res.status(503).json({ error: error?.message || 'Unable to list enrichment providers' });
+      return res.status(503).json({ error: clientErrorMessage(error, 'Unable to list enrichment providers') });
     }
   });
 
@@ -52,7 +53,7 @@ export function createOwnerEnrichmentRouter(): Router {
       const profile = await OwnerEnrichmentService.getOwnerProfile(org, String(req.params.id));
       return res.json(profile);
     } catch (error: any) {
-      return res.status(404).json({ error: error?.message || 'Owner not found' });
+      return res.status(404).json({ error: clientErrorMessage(error, 'Owner not found') });
     }
   });
 
@@ -69,7 +70,7 @@ export function createOwnerEnrichmentRouter(): Router {
       });
       return res.status(200).json(result);
     } catch (error: any) {
-      return res.status(error instanceof ResourceNotFoundError ? 404 : 400).json({ error: error?.message || 'Owner enrichment failed' });
+      return res.status(error instanceof ResourceNotFoundError ? 404 : 400).json({ error: clientErrorMessage(error, 'Owner enrichment failed') });
     }
   });
 
@@ -80,7 +81,7 @@ export function createOwnerEnrichmentRouter(): Router {
       if (!job) return res.status(404).json({ error: 'Enrichment job not found' });
       return res.json({ job });
     } catch (error: any) {
-      return res.status(400).json({ error: error?.message || 'Unable to retrieve enrichment job' });
+      return res.status(400).json({ error: clientErrorMessage(error, 'Unable to retrieve enrichment job') });
     }
   });
 

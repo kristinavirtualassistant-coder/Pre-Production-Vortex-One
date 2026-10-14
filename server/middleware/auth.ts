@@ -1,3 +1,4 @@
+import { clientErrorMessage } from '../security/logger';
 import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
@@ -519,12 +520,12 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       const plan=String(req.body?.plan||'') as 'starter'|'professional'|'enterprise';
       if(!['starter','professional','enterprise'].includes(plan))return res.status(400).json({error:'Invalid billing plan'});
       try{return res.json(await createCheckoutSession(pool,dbUser.organization_id,plan,dbUser.email));}
-      catch(error:any){return res.status(502).json({error:error.message||'Unable to create checkout session'});}
+      catch(error:any){return res.status(502).json({error:clientErrorMessage(error, 'Unable to create checkout session')});}
     }
     if(req.path==='/organization/billing/portal'&&req.method==='POST'){
       if(!['admin','executive'].includes(dbUser.role))return res.status(403).json({error:'Organization administrator access required'});
       try{return res.json(await createPortalSession(pool,dbUser.organization_id));}
-      catch(error:any){return res.status(502).json({error:error.message||'Unable to create billing portal session'});}
+      catch(error:any){return res.status(502).json({error:clientErrorMessage(error, 'Unable to create billing portal session')});}
     }
 
     try {
