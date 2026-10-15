@@ -197,6 +197,7 @@ export function secureEqual(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/** Sends a security-related email, preferring SECURITY_EMAIL_FROM, then RESEND_FROM, then SMTP_FROM for the sender address. */
 export async function sendSecurityEmail(args: {
   to: string;
   subject: string;

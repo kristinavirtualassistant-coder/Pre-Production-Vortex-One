@@ -7,6 +7,7 @@ interface AuthViewProps {
   onSuccess?: () => void;
 }
 
+/** Combined sign-in/sign-up/MFA/password-reset/email-verification screen, driven by the `mode` state. */
 export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
   const { signInWithEmail, signUpWithEmail, verifyMfa, requestPasswordReset, loading, error, clearError, mfaChallengeToken, verificationRequired } = useAuth();
   const { addToast } = useToast();
@@ -35,6 +36,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
   React.useEffect(() => { if (mfaChallengeToken) setMode('mfa'); }, [mfaChallengeToken]);
   React.useEffect(() => { if (verificationRequired) setMode('verify'); }, [verificationRequired]);
 
+  /** Handles the form submit for the current `mode`, including the verify-mode split between requesting a new link (no token yet) and confirming one. */
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     clearError();

@@ -40,6 +40,7 @@ let resendRequest: { url: string; authorization: string | null; body: any } | nu
 process.env.RESEND_API_KEY = 're_test_key_not_a_secret';
 process.env.RESEND_FROM = 'Vortex One <sender@example.com>';
 setEmailTransport(null);
+/** Mocks the Resend HTTPS API: captures the outgoing request and returns a stubbed success/failure response. */
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   resendRequest = {
     url: String(input),

@@ -68,6 +68,7 @@ function smtpTransport(): EmailTransport {
   return cachedTransport as unknown as EmailTransport;
 }
 
+/** Sends via the Resend HTTPS API. Errors are reduced to a stable code so provider responses and credentials never leak into application errors. */
 async function sendWithResend(message: EmailMessage, from: string): Promise<EmailSendResult> {
   const apiKey = required('RESEND_API_KEY');
   let response: Response;
@@ -108,6 +109,7 @@ async function sendWithResend(message: EmailMessage, from: string): Promise<Emai
   return { messageId: result.id };
 }
 
+/** Sends an email via Resend when RESEND_API_KEY is configured (and no transport is injected), otherwise falls back to SMTP. */
 export async function sendEmail(message: EmailMessage): Promise<EmailSendResult> {
   if (!EMAIL_PATTERN.test(message.to)) throw new Error('Invalid recipient email');
   const from = singleLine(message.from?.trim() || process.env.RESEND_FROM?.trim() || process.env.SMTP_FROM?.trim() || required('RESEND_FROM'));
