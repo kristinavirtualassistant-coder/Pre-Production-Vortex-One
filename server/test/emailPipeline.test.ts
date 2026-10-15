@@ -31,6 +31,45 @@ behavior = 'ok';
 sent.length = 0;
 console.log('  ✓ email transport: header injection, recipient validation, error redaction');
 
+// --- Resend HTTPS API (no SMTP socket required)
+const originalFetch = globalThis.fetch;
+const originalResendKey = process.env.RESEND_API_KEY;
+const originalResendFrom = process.env.RESEND_FROM;
+let resendStatus = 200;
+let resendRequest: { url: string; authorization: string | null; body: any } | null = null;
+process.env.RESEND_API_KEY = 're_test_key_not_a_secret';
+process.env.RESEND_FROM = 'Vortex One <sender@example.com>';
+setEmailTransport(null);
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  resendRequest = {
+    url: String(input),
+    authorization: new Headers(init?.headers).get('Authorization'),
+    body: JSON.parse(String(init?.body || '{}')),
+  };
+  return new Response(JSON.stringify(resendStatus === 200 ? { id: 're_test_message_1' } : { message: 'invalid API key' }), {
+    status: resendStatus,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}) as typeof fetch;
+try {
+  const resendResult = await sendEmail({ to: 'a@example.com', subject: 'Resend test', text: 'test body' });
+  assert.equal(resendResult.messageId, 're_test_message_1');
+  const capturedRequest = resendRequest as { url: string; authorization: string | null; body: any } | null;
+  assert.ok(capturedRequest, 'Resend request was captured');
+  assert.equal(capturedRequest.url, 'https://api.resend.com/emails');
+  assert.equal(capturedRequest.authorization, 'Bearer re_test_key_not_a_secret');
+  assert.equal(capturedRequest.body.from, 'Vortex One <sender@example.com>');
+  assert.deepEqual(capturedRequest.body.to, ['a@example.com']);
+  resendStatus = 401;
+  await assert.rejects(sendEmail({ to: 'a@example.com', subject: 's', text: 't' }), /RESEND_HTTP_401/);
+  console.log('  ✓ Resend HTTPS API: sender, auth header, message ID, and redacted provider errors');
+} finally {
+  globalThis.fetch = originalFetch;
+  if (originalResendKey === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = originalResendKey;
+  if (originalResendFrom === undefined) delete process.env.RESEND_FROM; else process.env.RESEND_FROM = originalResendFrom;
+  setEmailTransport(transport);
+}
+
 // --- worker against PostgreSQL
 await initializeDatabase();
 const pool = getPgPool();

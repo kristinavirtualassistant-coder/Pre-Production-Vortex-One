@@ -206,7 +206,7 @@ export async function sendSecurityEmail(args: {
     to: args.to,
     subject: args.subject,
     text: args.text,
-    from: process.env.SECURITY_EMAIL_FROM?.trim() || process.env.SMTP_FROM?.trim(),
+    from: process.env.SECURITY_EMAIL_FROM?.trim() || process.env.RESEND_FROM?.trim() || process.env.SMTP_FROM?.trim(),
   });
 }
 

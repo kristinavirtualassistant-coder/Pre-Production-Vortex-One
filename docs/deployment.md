@@ -58,9 +58,10 @@ MFA-enabled owner is provisioned, by design.
 | `AUTH_ENCRYPTION_KEY` (base64, 32 bytes) | TOTP secret encryption |
 | `INTEGRATION_ENCRYPTION_KEY` (base64, 32 bytes) | OAuth token encryption and tracking-link signing |
 | `APP_URL` | public origin (links in emails, OAuth redirects) |
+| `RESEND_API_KEY`, `RESEND_FROM` | recommended transactional email provider; uses HTTPS API and avoids SMTP port connectivity issues |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_*` | billing |
 | `SCHEDULER_TRIGGER_SECRET` | machine auth for the scheduler endpoint |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | outbound email |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | optional legacy SMTP fallback when `RESEND_API_KEY` is unset |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VORTEX_FILES_BUCKET` | file storage |
 | `TRUST_PROXY` | reverse-proxy hop count so rate limits see the real client IP |
 
@@ -75,7 +76,7 @@ See `.env.example` for the complete list. Never put secrets in `VITE_*` variable
 3. Start **web** with the production environment and wait for `GET /api/ready` → `200`.
 4. Start **worker** from the same image: `docker run … vortex-one node dist/worker.cjs`.
 5. Point a reverse proxy/TLS terminator at the web service, set `TRUST_PROXY` to the number of proxy hops.
-6. Register the Stripe webhook (`POST /api/billing/webhook`) and the telephony webhooks; configure SMTP.
+6. Set `APP_URL` to the public HTTPS application origin. Configure Resend with a verified sender domain, `RESEND_FROM`, and a sending-only `RESEND_API_KEY`. SMTP is supported only as a fallback.
 7. Run the smoke checks below.
 
 Migrations apply automatically at startup (ordered, idempotent, recorded in `schema_migrations`). Roll forward only; take a

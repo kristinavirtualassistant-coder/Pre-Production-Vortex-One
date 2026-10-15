@@ -46,6 +46,7 @@ export function authAbuseProtection(): Router {
   router.post('/password-reset/request', passwordResetLimiter(), passwordResetAccountLimiter());
   router.post('/password-reset/confirm', passwordResetLimiter());
   router.post('/verify-email', passwordResetLimiter());
+  router.post('/verification/request', passwordResetLimiter(), passwordResetAccountLimiter());
   router.post('/mfa/verify', mfaVerifyLimiter());
   return router;
 }

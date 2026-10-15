@@ -277,6 +277,35 @@ async function handleVerifyEmail(req: AuthRequest, res: Response, pool: NonNulla
   return res.json({verified:true});
 }
 
+async function handleRequestEmailVerification(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
+  const email=typeof req.body?.email==='string'?req.body.email.trim().toLowerCase():'';
+  // Always return the same response to avoid disclosing account existence or verification state.
+  if(/^\S+@\S+\.\S+$/.test(email)){
+    const user=(await pool.query(
+      'SELECT id FROM users WHERE lower(email)=$1 AND disabled_at IS NULL AND email_verified_at IS NULL LIMIT 1',
+      [email],
+    )).rows[0];
+    if(user){
+      const token=createOneTimeToken();
+      await pool.query('DELETE FROM email_verification_tokens WHERE user_id=$1 AND used_at IS NULL',[user.id]);
+      await pool.query(
+        `INSERT INTO email_verification_tokens (id,user_id,token_hash,expires_at)
+         VALUES ($1,$2,$3,CURRENT_TIMESTAMP + INTERVAL '24 hours')`,
+        [`verify_${randomUUID()}`,user.id,hashOneTimeToken(token)],
+      );
+      try {
+        const link=`${appUrl()}/?verify=${encodeURIComponent(token)}`;
+        await sendSecurityEmail({
+          to:email,
+          subject:'Verify your Vortex One email address',
+          text:`Verify your Vortex One account within 24 hours: ${link}`,
+        });
+      } catch(error) { console.error('Verification email failed:',error); }
+    }
+  }
+  return res.json({accepted:true});
+}
+
 async function handleRequestPasswordReset(req: AuthRequest, res: Response, pool: NonNullable<ReturnType<typeof getPgPool>>) {
   const email=typeof req.body?.email==='string'?req.body.email.trim().toLowerCase():'';
   if(/^\S+@\S+\.\S+$/.test(email)){
@@ -450,6 +479,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     if(req.path==='/auth/login'&&req.method==='POST')return handleLogin(req,res,pool);
     if(req.path==='/auth/signup'&&req.method==='POST')return handleSignup(req,res,pool);
     if(req.path==='/auth/verify-email'&&req.method==='POST')return handleVerifyEmail(req,res,pool);
+    if(req.path==='/auth/verification/request'&&req.method==='POST')return handleRequestEmailVerification(req,res,pool);
     if(req.path==='/auth/password-reset/request'&&req.method==='POST')return handleRequestPasswordReset(req,res,pool);
     if(req.path==='/auth/password-reset/confirm'&&req.method==='POST')return handleResetPassword(req,res,pool);
     if(req.path==='/auth/mfa/verify'&&req.method==='POST')return handleMfaVerify(req,res,pool);
