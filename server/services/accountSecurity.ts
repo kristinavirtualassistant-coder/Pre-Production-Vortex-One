@@ -197,6 +197,7 @@ export function secureEqual(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/** Sends an account security notification using the security-specific sender, falling back to the default sender. */
 export async function sendSecurityEmail(args: {
   to: string;
   subject: string;

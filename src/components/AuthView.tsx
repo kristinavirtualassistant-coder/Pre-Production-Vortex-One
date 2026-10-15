@@ -35,6 +35,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
   React.useEffect(() => { if (mfaChallengeToken) setMode('mfa'); }, [mfaChallengeToken]);
   React.useEffect(() => { if (verificationRequired) setMode('verify'); }, [verificationRequired]);
 
+  /** Handles the active auth form's submission: sign in/up, MFA, email verification (request or confirm), password reset, or recovery request. */
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     clearError();
