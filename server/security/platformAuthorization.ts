@@ -27,11 +27,15 @@ export type PlatformOwnerRequest = AuthRequest & { platformOwner?: PlatformOwner
 
 const ORG_ADMIN_ROLES = ['admin', 'executive'];
 
-/** MFA is required for the owner in production unless explicitly disabled for non-production environments. */
+/**
+ * Owner MFA policy. Required by default in production; OWNER_PORTAL_REQUIRE_MFA=false is the owner's explicit,
+ * deliberate opt-out (password-only owner sign-in) and applies in every environment. The server logs a warning at
+ * startup while it is off.
+ */
 export function ownerMfaRequired(env: NodeJS.ProcessEnv = process.env): boolean {
   const flag = (env.OWNER_PORTAL_REQUIRE_MFA ?? '').trim().toLowerCase();
   if (flag === 'true') return true;
-  if (flag === 'false') return env.NODE_ENV !== 'production';
+  if (flag === 'false') return false;
   return env.NODE_ENV === 'production';
 }
 

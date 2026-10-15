@@ -463,7 +463,7 @@ export function getPlatformSettings() {
       setting('sessionAbsoluteDays', 'Session absolute lifetime (days)', sessionAbsoluteDays(), 'implemented', 'Customer sessions never live longer than this.'),
       setting('signupEnabled', 'Self-service organization sign-up', env.SIGNUP_ENABLED !== 'false', 'implemented', 'SIGNUP_ENABLED=false closes public organization creation.'),
       setting('signupAllowedDomains', 'Sign-up allowed domains', (env.SIGNUP_ALLOWED_DOMAINS || '').split(',').map((d) => d.trim()).filter(Boolean), 'implemented', 'Empty means any domain.'),
-      setting('ownerMfaRequired', 'Owner portal requires MFA', ownerMfaRequired(), 'implemented', 'Always on in production.'),
+      setting('ownerMfaRequired', 'Owner portal requires MFA', ownerMfaRequired(), 'implemented', 'On by default in production; OWNER_PORTAL_REQUIRE_MFA=false turns it off.'),
       setting('demoMode', 'Demo data mode', isDemoModeEnabled(), 'implemented', 'Never enabled in production.'),
       setting('rateLimitMultiplier', 'Rate-limit multiplier', Number(env.RATE_LIMIT_MULTIPLIER) > 0 ? Number(env.RATE_LIMIT_MULTIPLIER) : 1, 'implemented', 'Scales every limiter.'),
       setting('trustProxy', 'Reverse proxy configured', Boolean(env.TRUST_PROXY), 'implemented', 'Needed so rate limits see real client IPs.'),

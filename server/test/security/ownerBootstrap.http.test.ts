@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { bootstrapPlatformOwnerFromEnv } from '../../security/platformOwnerProvisioning';
+import { ownerMfaRequired } from '../../security/platformAuthorization';
 import { createTotpSecret, encryptMfaSecret } from '../../services/accountSecurity';
 import { hashPassword } from '../../services/postgresqlAuth';
 import { adminClient, loginWithMfa, ownerApi, pass, removeOwnerAsAdmin, startTestApp } from './httpHarness';
@@ -92,6 +93,31 @@ try {
     delete process.env.PLATFORM_OWNER_BOOTSTRAP_EMAIL;
     await app.close();
   }
+
+  console.log('\n--- Owner MFA opt-out (OWNER_PORTAL_REQUIRE_MFA=false) ---');
+  assert.equal(ownerMfaRequired({ NODE_ENV: 'production' }), true, 'MFA is required by default in production');
+  assert.equal(ownerMfaRequired({ NODE_ENV: 'production', OWNER_PORTAL_REQUIRE_MFA: 'false' }), false);
+  assert.equal(ownerMfaRequired({ NODE_ENV: 'production', OWNER_PORTAL_REQUIRE_MFA: 'true' }), true);
+  await removeOwnerAsAdmin();
+  const refused = await bootstrapPlatformOwnerFromEnv(admin, { PLATFORM_OWNER_BOOTSTRAP_EMAIL: noMfa.email }, quiet);
+  assert.equal(refused.status, 'failed', 'without the opt-out an MFA-less account is still refused');
+  const optedOut = await bootstrapPlatformOwnerFromEnv(admin, { PLATFORM_OWNER_BOOTSTRAP_EMAIL: noMfa.email, OWNER_PORTAL_REQUIRE_MFA: 'false' }, quiet);
+  assert.deepEqual(optedOut, { status: 'provisioned', userId: noMfa.id });
+  process.env.OWNER_PORTAL_REQUIRE_MFA = 'false';
+  const app2 = await startTestApp();
+  try {
+    const login = await fetch(`${app2.baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-session-transport': 'bearer' }, body: JSON.stringify({ email: noMfa.email.toLowerCase(), password: PASSWORD }) });
+    const body: any = await login.json();
+    assert.equal(login.status, 200, `password-only owner sign-in succeeds (got ${login.status})`);
+    const token = body.token;
+    assert.ok(token, 'a session token is issued');
+    const session = await ownerApi(app2, 'GET', '/api/owner/session', { auth: { Authorization: `Bearer ${token}` } });
+    assert.equal(session.status, 200, `the password-only owner reaches the portal when MFA is turned off (got ${session.status})`);
+  } finally {
+    delete process.env.OWNER_PORTAL_REQUIRE_MFA;
+    await app2.close();
+  }
+  pass('OWNER_PORTAL_REQUIRE_MFA=false lets a verified, password-only owner be provisioned and use the portal; default stays MFA-required');
 } finally {
   await removeOwnerAsAdmin().catch(() => {});
   await admin.query('DELETE FROM users WHERE organization_id = $1', [orgId]).catch(() => {});
