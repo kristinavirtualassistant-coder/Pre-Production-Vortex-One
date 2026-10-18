@@ -36,6 +36,15 @@ export function parseCookies(header: string | undefined): Record<string, string>
   return result;
 }
 
+/** Secure in production, or whenever the configured public URL is https (covers staging with NODE_ENV unset). */
+export function cookieSecure(): boolean {
+  return process.env.NODE_ENV === 'production' || /^https:\/\//i.test(process.env.APP_URL || '');
+}
+
+export function hasSessionCookie(req: Request): boolean {
+  return Boolean(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
+}
+
 export function getSessionToken(req: Request): string | null {
   const bearer = req.headers.authorization;
   if (bearer?.startsWith('Bearer ')) return bearer.slice(7).trim() || null;
@@ -43,13 +52,13 @@ export function getSessionToken(req: Request): string | null {
 }
 
 export function setSessionCookie(res: Response, token: string): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = cookieSecure();
   const maxAge = sessionAbsoluteDays() * 24 * 60 * 60 * 1000;
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Max-Age=${Math.floor(maxAge / 1000)}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
 }
 
 export function clearSessionCookie(res: Response): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = cookieSecure();
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
 }
 

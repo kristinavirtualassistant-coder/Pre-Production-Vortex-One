@@ -40,3 +40,10 @@ export function createSessionToken(): string {
 export function hashSessionToken(token: string): string {
   return createHash('sha256').update(`${SESSION_PEPPER}${token}`).digest('hex');
 }
+
+const DUMMY_SALT = 'a'.repeat(32);
+
+/** Spend the same scrypt cost as a real verification so unknown accounts are not distinguishable by response time. */
+export async function burnPasswordVerification(password: string): Promise<void> {
+  await scrypt(password, DUMMY_SALT, PASSWORD_KEY_LENGTH);
+}

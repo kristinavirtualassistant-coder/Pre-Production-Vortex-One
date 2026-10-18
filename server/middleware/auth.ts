@@ -3,7 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import { getPgPool } from '../db/db';
 import { getOrganizationBilling, planLimits } from '../services/billingService';
 import { ensurePostgreSQLAuthSchema } from '../db/postgresqlAuthSchema';
-import { hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
+import { burnPasswordVerification, hashPassword, hashSessionToken, verifyPassword } from '../services/postgresqlAuth';
 import { matchTotpStep, appUrl, clearSessionCookie, createOneTimeToken, createTotpSecret, createTotpUri, decryptMfaSecret, encryptMfaSecret, generateBackupCodes, getSessionToken, hashBackupCodes, hashOneTimeToken, issueSession, sendSecurityEmail, verifyTotp } from '../services/accountSecurity';
 import { createCheckoutSession, createPortalSession } from '../services/billingService';
 import { beginTenantContext, enterTenantContext, finishTenantContext } from '../db/tenantContext';
@@ -114,7 +114,10 @@ async function handleLogin(req: AuthRequest, res: Response, pool: NonNullable<Re
      FROM users u JOIN organizations o ON o.id=u.organization_id
      WHERE lower(u.email)=$1 LIMIT 1`, [email]);
   const user = result.rows[0];
-  if (!user || user.disabled_at || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
+  const passwordOk = user?.password_hash
+    ? await verifyPassword(password, user.password_hash)
+    : (await burnPasswordVerification(password), false);
+  if (!user || user.disabled_at || !passwordOk) {
     void recordFailedOwnerLogin(email, req, 'invalid_credentials_or_disabled');
     return res.status(401).json({ error: 'Invalid email or password' });
   }

@@ -6,6 +6,7 @@
  *  - Prototype-pollution keys are rejected.
  *  - Body-parser failures become safe JSON errors (no stack, no HTML).
  */
+import { hasSessionCookie } from '../services/accountSecurity';
 import express, { type ErrorRequestHandler, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 
 export const DEFAULT_JSON_LIMIT = process.env.JSON_BODY_LIMIT || '256kb';
@@ -68,3 +69,27 @@ export function resolveTrustProxy(raw = process.env.TRUST_PROXY): boolean | numb
   if (/^\d+$/.test(value)) return Number(value);
   return value;
 }
+
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * CSRF defence in depth on top of SameSite=Lax: a state-changing request that carries the session cookie must come from
+ * our own origin. Requests without the cookie (webhooks, bearer API clients) and non-browser callers that send no
+ * Origin/Sec-Fetch-Site are unaffected.
+ */
+export const sameOriginGuard: RequestHandler = (req, res, next) => {
+  if (!UNSAFE_METHODS.has(req.method) || !hasSessionCookie(req) || req.headers.authorization) return next();
+  const fetchSite = String(req.headers['sec-fetch-site'] || '');
+  if (fetchSite === 'cross-site') return res.status(403).json({ error: 'Cross-site request rejected' });
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin !== 'null') {
+    const allowed = new Set<string>();
+    try { if (process.env.APP_URL) allowed.add(new URL(process.env.APP_URL).origin); } catch { /* ignore bad APP_URL */ }
+    const host = req.headers.host;
+    if (host) { allowed.add(`https://${host}`); allowed.add(`http://${host}`); }
+    if (!allowed.has(origin)) return res.status(403).json({ error: 'Cross-origin request rejected' });
+  } else if (origin === 'null') {
+    return res.status(403).json({ error: 'Cross-origin request rejected' });
+  }
+  next();
+};

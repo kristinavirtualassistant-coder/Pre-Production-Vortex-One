@@ -45,7 +45,7 @@ import { requireSchedulerSecret } from './server/middleware/schedulerAuth';
 import { httpStatusForError } from './server/errors';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { requirePermission } from './server/security/permissions';
-import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy } from './server/middleware/requestHardening';
+import { defaultBodyParsers, largeBodyParser, rejectUnsafeBodies, jsonErrorHandler, resolveTrustProxy, sameOriginGuard } from './server/middleware/requestHardening';
 import { TENANT_GUC } from './server/db/tenantContext';
 import { isDemoModeEnabled } from './server/security/demoMode';
 import { logError, safeErrorMessage, clientErrorMessage, isInternalError } from './server/security/logger';
@@ -90,6 +90,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<express
 
   // Authorization identity comes only from the authenticated PostgreSQL user; discard client-asserted identity.
   app.use(stripClientIdentityHeaders);
+
+  // Cookie-authenticated state-changing requests must be same-origin (CSRF defence in depth).
+  app.use(sameOriginGuard);
 
   // Platform and Owner Portal run as separate services: each refuses the other's routes before anything else runs.
   app.use(appSurfaceGate(surface));
