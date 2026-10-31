@@ -39,6 +39,7 @@ import { ContextInspector } from './components/ContextInspector';
 import { CommandPalette } from './components/CommandPalette';
 import { EasyHelpModal } from './components/EasyHelpModal';
 import { GuidedTourModal } from './components/GuidedTourModal';
+import { GettingStartedView, WelcomeModal, readOrgConfirmed, useWebhooksLinked } from './components/GettingStartedView';
 import { TaskCacheModal } from './components/TaskCacheModal';
 import { CreateLeadModal } from './components/CreateLeadModal';
 import { SyncStatusFooter } from './components/SyncStatusFooter';
@@ -154,8 +155,10 @@ export default function App() {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isCreateLeadModalOpen, setIsCreateLeadModalOpen] = useState<boolean>(false);
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
-  const [isTourOpen, setIsTourOpen] = useState<boolean>(() => !localStorage.getItem('vortex_guided_tour_seen'));
+  const [isTourOpen, setIsTourOpen] = useState<boolean>(false); // first-run users get the WelcomeModal instead; the tour stays available from the header
   const [isCacheOpen, setIsCacheOpen] = useState<boolean>(false);
+  const [orgConfirmedTick, setOrgConfirmedTick] = useState<number>(0);
+  const [skipSetup, setSkipSetup] = useState<boolean>(false);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
@@ -180,6 +183,7 @@ export default function App() {
     data: null,
   });
   const { addToast } = useToast();
+  const webhooksLinked = useWebhooksLinked(activeTenant?.id || userProfile?.organization_id);
 
   const handleOpenInspector = useCallback((contentType: InspectorContentType, data: any) => {
     setInspectorState({
@@ -595,6 +599,15 @@ export default function App() {
     return <AuthView onSuccess={() => fetchAllData()} />;
   }
 
+  const setupOrgId = activeTenant?.id || userProfile?.organization_id;
+  const setupProgress = {
+    orgConfirmed: orgConfirmedTick >= 0 && readOrgConfirmed(setupOrgId),
+    listImported: (properties || []).length > 0 || (leads || []).length > 0,
+    callerVerified: (calls || []).length > 0,
+    webhooksLinked,
+  };
+  const showGettingStarted = !isLoading && !skipSetup && !(setupProgress.listImported && setupProgress.callerVerified);
+
   const pendingApprovalsCount = (approvals || []).filter((a) => a.status === 'pending').length;
 
   return (
@@ -632,7 +645,24 @@ export default function App() {
         />
 
         <main className="flex-1 overflow-y-auto bg-slate-50">
-          {(currentView === 'dashboard' || currentView === 'home') && (
+          {(currentView === 'dashboard' || currentView === 'home') && showGettingStarted && (
+            <>
+              <GettingStartedView
+                progress={setupProgress}
+                organizationId={setupOrgId}
+                organizationName={activeTenant?.name || userProfile?.organization_name}
+                onNavigate={handleNavigate}
+                onOrgConfirmed={() => setOrgConfirmedTick((t) => t + 1)}
+                onDataImported={() => fetchAllData()}
+              />
+              <div className="max-w-5xl mx-auto px-4 sm:px-6 pb-6">
+                <button onClick={() => setSkipSetup(true)} className="text-xs text-slate-500 underline hover:text-slate-700">Skip setup and view the dashboard</button>
+              </div>
+              <WelcomeModal organizationId={setupOrgId} onStart={() => undefined} />
+            </>
+          )}
+
+          {(currentView === 'dashboard' || currentView === 'home') && !showGettingStarted && (
             <CommandCenterView
               agents={agents}
               properties={properties}
