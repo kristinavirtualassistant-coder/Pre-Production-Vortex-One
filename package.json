@@ -28,7 +28,7 @@
     "@google/genai": "^2.4.0",
     "@ringcentral/sdk": "^5.0.11",
     "express": "^4.21.2",
-    "nodemailer": "^10.0.16",
+    "nodemailer": "^10.1.4",
     "pg": "^8.23.0"
   },
   "devDependencies": {
